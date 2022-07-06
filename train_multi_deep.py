@@ -416,6 +416,7 @@ class Trainer():
         torch.cuda.set_device("cuda:%d"%gpu)
 
         #define dataset & data loader
+        print('Getting train/valid set...')
         pdb_items, fb_items, compl_items, neg_items, valid_pdb, valid_homo, valid_compl, valid_neg, homo = get_train_valid_set(self.loader_param)
         pdb_IDs, pdb_weights, pdb_dict = pdb_items
         fb_IDs, fb_weights, fb_dict = fb_items
@@ -445,7 +446,8 @@ class Trainer():
                 self.n_valid_compl,'heteromers, and',
                 self.n_valid_neg,'negative heteromers',
             )
-
+        
+        print('Making train sets')
         train_set = DistilledDataset(pdb_IDs, loader_pdb, loader_pdb_fixbb, pdb_dict,
                                      compl_IDs, loader_complex, loader_complex_fixbb, compl_dict,
                                      neg_IDs, loader_complex, neg_dict,
@@ -500,6 +502,7 @@ class Trainer():
         self.hbpolys = self.hbpolys.to(gpu)
 
         # define model
+        print('Making model...')
         model = EMA(RoseTTAFoldModule(**self.model_param).to(gpu), 0.999)
 
         ddp_model = DDP(model, device_ids=[gpu], find_unused_parameters=False)
@@ -578,6 +581,8 @@ class Trainer():
         dist.destroy_process_group()
 
     def train_cycle(self, ddp_model, train_loader, optimizer, scheduler, scaler, rank, gpu, world_size, epoch):
+
+        print('Entering self.train_cycle')
         # Turn on training mode
         ddp_model.train()
         
@@ -681,17 +686,18 @@ class Trainer():
 
                         # find closest homo-oligomer pairs
                         true_crds, mask_crds = resolve_equiv_natives(pred_crds[-1], true_crds, mask_crds)
-                        mask_crds[:,~masks_1d['loss_seq_mask'][0],:] = False
+                        mask_crds[:,~masks_1d['loss_str_mask'][0],:] = False
                         # processing labels for distogram orientograms
                         mask_BB = ~(mask_crds[:,:,:3].sum(dim=-1) < 3.0) # ignore residues having missing BB atoms for loss calculation
                         mask_2d = mask_BB[:,None,:] * mask_BB[:,:,None] # ignore pairs having missing residues
                         mask_2d = mask_2d*masks_1d['loss_str_mask_2d'].to(mask_2d.device)
+                        assert torch.sum(mask_2d) > 0, "mask_2d is blank"
                         c6d, _ = xyz_to_c6d(true_crds)
                         c6d = c6d_to_bins2(c6d, same_chain, negative=negative)
 
                         prob = self.active_fn(logit_s[0]) # distogram
                         acc_s = self.calc_acc(prob, c6d[...,0], idx_pdb, mask_2d)
-
+                        
                         loss, loss_s = self.calc_loss(logit_s, c6d,
                                 logit_aa_s, msa[:, i_cycle], mask_msa[:,i_cycle], logit_exp,
                                 pred_crds, alphas, true_crds, mask_crds,
@@ -715,7 +721,7 @@ class Trainer():
                         
                     # find closest homo-oligomer pairs
                     true_crds, mask_crds = resolve_equiv_natives(pred_crds[-1], true_crds, mask_crds)
-                    mask_crds[:,~masks_1d['loss_seq_mask'][0],:] = False
+                    mask_crds[:,~masks_1d['loss_str_mask'][0],:] = False
                     # processing labels for distogram orientograms
                     mask_BB = ~(mask_crds[:,:,:3].sum(dim=-1) < 3.0) # ignore residues having missing BB atoms for loss calculation
                     mask_2d = mask_BB[:,None,:] * mask_BB[:,:,None] # ignore pairs having missing residues
@@ -725,7 +731,7 @@ class Trainer():
 
                     prob = self.active_fn(logit_s[0]) # distogram
                     acc_s = self.calc_acc(prob, c6d[...,0], idx_pdb, mask_2d)
-
+                    
                     loss, loss_s = self.calc_loss(logit_s, c6d,
                                 logit_aa_s, msa[:, i_cycle], mask_msa[:,i_cycle], logit_exp,
                                 pred_crds, alphas, true_crds, mask_crds,

@@ -72,6 +72,10 @@ def set_data_loader_params(args):
     for param in PARAMS:
         if hasattr(args, param.lower()):
             PARAMS[param] = getattr(args, param.lower())
+
+    print('This is params from get train valid')
+    for key,val in PARAMS.items():
+        print(key, val)
     return PARAMS
 
 def MSABlockDeletion(msa, ins, nb=5):
@@ -635,16 +639,7 @@ def get_spatial_crop(xyz, mask, sel, len_s, params, label, cutoff=10.0, eps=1e-6
 
 def get_spatial_crop_fixbb(xyz, mask, sel, len_s, params, cutoff=10.0, eps=1e-6):
     device = xyz.device
-    ic(xyz.shape)
-    ic(len_s)
-    for idx, res in enumerate(range(xyz.shape[0])-1):
-        ic(idx, xyz[res+1,0,0]-xyz[res,0,0])
-
-        
-    ic(sel)
     chainA_idx_max = sel[len_s[0]-1]
-    ic(chainA_idx_max)
-    ic(len_s)
 
     #choose which chain to keep whole
     if sum(len_s) < params['MAX_LENGTH']: # don't need to crop
@@ -679,9 +674,6 @@ def get_spatial_crop_fixbb(xyz, mask, sel, len_s, params, cutoff=10.0, eps=1e-6)
     _, idx = torch.topk(dist, params['CROP'], largest=False)
     sel, _ = torch.sort(sel[idx])
     n_chainA = torch.sum(torch.where(sel <= chainA_idx_max, True, False)).item()
-    ic(n_chainA)
-    ic(sel[:n_chainA])
-    ic(sel[n_chainA:])
     return sel, [chain,n_chainA] #give length of first chain, as either end or start point
 
 # merge msa & insertion statistics of two proteins having different taxID
