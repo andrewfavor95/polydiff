@@ -42,7 +42,8 @@ deltas,\
 diffused_frame_crds,\
 diffused_frames,\
 diffused_torsions,\
-diffused_FA_crds = diffuser.diffuse_pose(xyz, seq, atom_mask, diffusion_mask=diffusion_mask)
+diffused_FA_crds,\
+aa_masks = diffuser.diffuse_pose(xyz, seq, atom_mask, diffusion_mask=diffusion_mask)
 
 
 # print('Writing translation pdb')
