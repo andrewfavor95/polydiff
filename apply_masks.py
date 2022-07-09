@@ -1,5 +1,6 @@
 import torch
 from icecream import ic
+import random
 
 ic.configureOutput(includeContext=True)
 
@@ -17,8 +18,7 @@ def mask_inputs(seq,
                 loss_seq_mask=None, 
                 loss_str_mask=None, 
                 loss_str_mask_2d=None,
-                diffuser=None,
-                diffusion_mask=None):
+                diffuser=None):
     """
     Parameters:
         seq (torch.tensor, required): (B,I,L) integer sequence 
@@ -39,25 +39,51 @@ def mask_inputs(seq,
         For the t1d, this has 20aa, 1x unkown, and 1x template conf. Here, we set the masked region to 21 (unknown).
         This, we think, makes sense, as the template in normal RF training does not perfectly correspond to the MSA.
     """
-    ### Perform diffusion, pick a random t and then let that be 
-    if (not diffuser is None) and (not diffusion_mask is None):
-        kwargs = {'xyz':xyz_t,
-                  'seq':seq,
-                  'atom_mask':atom_mask,
-                  'diffusion_mask':diffusion_mask}
+    # print('Made it into mask inputs')
+    ### Perform diffusion, pick a random t and then let that be the input template and xyz_prev
+    if (not diffuser is None) :
+        # print('This is xyz_t.shape ',xyz_t.shape)
+        # print('This is seq.shape ',seq.shape)
+        # print('This is atom_mask.shape ',atom_mask.shape)
+        # print('This is input_str_mask.shape ',input_str_mask.shape)
 
-        _,_,_,_,_, diffused_fullatoms, aa_masks = diffuser.diffuse_pose(**kwargs)
+        # NOTE: assert that xyz_t is the TRUE coordinates! Should come from fixbb loader 
+        #       also assumes all 4 of seq are identical 
 
-        # now pick t 
-        t = random.randint(0,T-1)
+        
 
-        seq_mask = aa_masks[t] 
-        xyz_t    = diffused_fullatoms[t]
+        # pick t uniformly 
+        t = random.randint(0,diffuser.T-1)
+
+        kwargs = {'xyz'             :xyz_t.squeeze(),
+                  'seq'             :seq.squeeze()[0],
+                  'atom_mask'       :atom_mask.squeeze(),
+                  'diffusion_mask'  :input_str_mask.squeeze(),
+                  't':t}
+
+        _,_,_,_,_,diffused_fullatoms, aa_masks = diffuser.diffuse_pose(**kwargs)
+
+
+
+        # grab noised inputs / create masks based on time t 
+        seq_mask = aa_masks[0] 
+        xyz_t    = diffused_fullatoms[None,None]
+
+
+        # print('xyz_t shape after diffusion is done ',xyz_t.shape)
+
+        # scale confidence wrt t 
+        # multiplicitavely applied to a default conf mask of 1.0 everywhwere 
+        input_t1dconf_mask[~input_str_mask] = 1 - t/diffuser.T 
+    else:
+        print('WARNING: Diffuser not being used in apply masks')
+
+
 
     ###########
     B,_,_ = seq.shape
     assert B == 1, 'batch sizes > 1 not supported'
-    seq_mask = input_seq_mask[0]
+    #seq_mask = input_seq_mask[0] # DJ - old, commenting out bc using seq mask from diffuser 
     seq[:,:,~seq_mask] = 21 # mask token categorical value
 
     ### msa_masked ###
@@ -90,15 +116,15 @@ def mask_inputs(seq,
 
     t1d[:,:,:,21] *= input_t1dconf_mask
 
-    xyz_t[:,:,~seq_mask,3:,:] = float('nan')
+    xyz_t[:,:,~seq_mask,3:,:] = float('nan') # don't know sidechain information for masked seq 
 
     # Structure masking
-    str_mask = input_str_mask[0]
-    xyz_t[:,:,~str_mask,:,:] = float('nan')
+    # str_mask = input_str_mask[0]
+    # xyz_t[:,:,~str_mask,:,:] = float('nan')
     
     ### mask_msa ###
     ################
     # NOTE: this is for loss scoring
     mask_msa[:,:,:,~loss_seq_mask[0]] = False
     
-    return seq, msa_masked, msa_full, xyz_t, t1d, mask_msa
+    return seq, msa_masked, msa_full, xyz_t, t1d, mask_msa, t 

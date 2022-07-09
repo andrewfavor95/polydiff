@@ -17,6 +17,8 @@ from diff_util import th_min_angle, th_interpolate_angles, get_aa_schedule
 
 from chemical import INIT_CRDS 
 
+import time 
+
 from icecream import ic  
 
 torch.set_printoptions(sci_mode=False)
@@ -233,13 +235,20 @@ class SLERP():
         # bad - could certainly vectorize somehow 
         all_interps = []
         for i in range(len(xyz)):
+
             r_true = R_true[i].as_matrix()
             r_rand = R_rand[i].as_matrix()
+
+            # handle potential nans in BB frames / crds 
+            if not np.isnan(r_true).any():
             
-            if not diffusion_mask[i]:
-                key_rots = scipy_R.from_matrix(np.stack([r_true, r_rand], axis=0))
+                if not diffusion_mask[i]:
+                    key_rots = scipy_R.from_matrix(np.stack([r_true, r_rand], axis=0))
+                else:
+                    key_rots = scipy_R.from_matrix(np.stack([r_true, r_true], axis=0))
+
             else:
-                key_rots = scipy_R.from_matrix(np.stack([r_true, r_true], axis=0))
+                key_rots = scipy_R.from_matrix(np.stack([np.eye(3), np.eye(3)], axis=0))
         
             key_times = [0,1]
         
@@ -296,10 +305,11 @@ class INTERP():
         Returns:
             torch.tensor - (L,T,4,2) tensor of the sin/cos of each interpolated set of chis 
         """
+
         RAD = True # in radians 
         L = len(xyz14)
 
-        # calculate random decoding order 
+        # calculate random decoding order - linear w.r.t. time 
         decode_times, decode_order, idx2steps, aa_masks = get_aa_schedule(self.T, L, n_steps)
         idx2steps = torch.from_numpy(idx2steps)
 
@@ -370,13 +380,14 @@ class Diffuser():
         Parameters:
             
         """
+        print('**********16')
         self.T = T  
         self.b_0 = b_0
         self.b_T = b_T
         self.crd_scale = crd_scale
         self.var_scale = var_scale 
         self.aa_decode_steps=aa_decode_steps
-        self.get_allatom = ComputeAllAtomCoords()
+        # self.get_allatom = ComputeAllAtomCoords()
 
         # get backbone frame diffuser 
         if so3_type == 'slerp':
@@ -390,15 +401,16 @@ class Diffuser():
         # get chi angle diffuser 
         self.torsion_diffuser = INTERP(self.T)
 
+        print('Successful diffuser __init__')
     
-    def diffuse_pose(self, xyz, seq, atom_mask, diffusion_mask=None):
+    def diffuse_pose(self, xyz, seq, atom_mask, diffusion_mask=None, t=None):
         """
         Given full atom xyz, sequence and atom mask, diffuse the protein 
         translations, rotations, and chi angles
 
         Parameters:
             
-            xyz (L,14,3) set of coordinates 
+            xyz (L,14/27,3) set of coordinates 
 
             seq (L,) integer sequence 
 
@@ -406,32 +418,44 @@ class Diffuser():
 
             diffusion_mask (torch.tensor, required): Tensor of bools, True means NOT diffused at this residue, False means diffused
         """
+        get_allatom = ComputeAllAtomCoords().to(device=xyz.device)
         L = len(xyz)
 
         # bring to origin and scale 
-        xyz = xyz - xyz[:,1,:].mean(dim=0)
+        # check if any BB atoms are nan before centering 
+        nan_mask = ~torch.isnan(xyz.squeeze()[:,:3]).any(dim=-1).any(dim=-1)
+
+        xyz = xyz - xyz[nan_mask][:,1,:].mean(dim=0)
         xyz = xyz * self.crd_scale
 
         
         # 1 get translations 
+        tick = time.time()
         diffused_T, deltas = self.eucl_diffuser.diffuse_translations(xyz[:,:3,:].clone(), diffusion_mask=diffusion_mask)
+        print('Time to diffuse coordinates: ',time.time()-tick)
         diffused_T /= self.crd_scale
         deltas     /= self.crd_scale
 
+
         # 2 get  frames
+        tick = time.time()
         diffused_frame_crds, diffused_frames = self.so3_diffuser.diffuse_frames(xyz[:,:3,:].clone(), diffusion_mask=diffusion_mask.numpy())
         diffused_frame_crds /= self.crd_scale 
+        print('Time to diffuse frames: ',time.time()-tick)
+
 
         # 3 diffuse chi angles/planar angles and sequence information 
-        diffused_torsions,aa_masks = self.torsion_diffuser.diffuse_torsions(xyz.clone(), 
+        tick = time.time()
+        diffused_torsions,aa_masks = self.torsion_diffuser.diffuse_torsions(xyz[:,:14].clone(), 
                                                                             seq, 
-                                                                            atom_mask,
+                                                                            atom_mask[:,:14].clone(),
                                                                             diffusion_mask=diffusion_mask, 
                                                                             n_steps=self.aa_decode_steps)
+        print('Time to diffuse torsions: ',time.time()-tick)
 
 
         ##### Now combine all the diffused quantities to make full atom diffused poses 
-
+        tick = time.time()
         cum_delta = deltas.cumsum(dim=1)
         # The coordinates of the translated AND rotated frames
         diffused_BB = (torch.from_numpy(diffused_frame_crds) + cum_delta[:,:,None,:]).transpose(0,1)
@@ -442,12 +466,25 @@ class Diffuser():
 
         # Full atom diffusions at all timepoints 
         fa_stack = []
-        for t,alphas_t in enumerate(diffused_torsions_trig.transpose(0,1)):
-            xyz_bb_t = diffused_BB[t,:,:3]
+        if t is None:
+            for t,alphas_t in enumerate(diffused_torsions_trig.transpose(0,1)):
+                xyz_bb_t = diffused_BB[t,:,:3]
 
-            _,fullatom_t = self.get_allatom(seq[None], xyz_bb_t[None], alphas_t[None])
+                _,fullatom_t = get_allatom(seq[None], xyz_bb_t[None], alphas_t[None])
+                fa_stack.append(fullatom_t)
+
+        else:
+            # grab only one 
+            xyz_bb_t  = diffused_BB[t,:,:3]
+            alphas_t = diffused_torsions_trig.transpose(0,1)[t]
+
+            _,fullatom_t = get_allatom(seq[None], xyz_bb_t[None], alphas_t[None])
             fa_stack.append(fullatom_t)
+
         fa_stack = torch.stack(fa_stack, dim=0).squeeze()
+        print('fa stack before coming out of diffusion ',fa_stack.shape)
+
+        print('Time to make full atoms from diffusions:', time.time()-tick)
 
 
         return diffused_T, deltas, diffused_frame_crds, diffused_frames, diffused_torsions, fa_stack, aa_masks

@@ -66,7 +66,9 @@ def set_data_loader_params(args):
         "MAX_LENGTH" : 260,
         "MAX_COMPLEX_CHAIN" : 200,
         "TASK_NAMES" : ['seq2str'],
-        "TASK_P" : [1.0]
+        "TASK_P" : [1.0],
+        "DIFF_MASK_LOW":args.diff_mask_low,
+        "DIFF_MASK_HIGH":args.diff_mask_high,
 
     }
     for param in PARAMS:
@@ -394,16 +396,16 @@ def get_train_valid_set(params, OFFSET=1000000):
     
         # read homo-oligomer list
         homo = {}
-        with open(params['HOMO_LIST'], 'r') as f:
-            reader = csv.reader(f)
-            next(reader)
-            # read pdbA, pdbB, bioA, opA, bioB, opB
-            rows = [[r[0], r[1], int(r[2]), int(r[3]), int(r[4]), int(r[5])] for r in reader]
-        for r in rows:
-            if r[0] in homo.keys():
-                homo[r[0]].append(r[1:])
-            else:
-                homo[r[0]] = [r[1:]]
+        # with open(params['HOMO_LIST'], 'r') as f:
+        #     reader = csv.reader(f)
+        #     next(reader)
+        #     # read pdbA, pdbB, bioA, opA, bioB, opB
+        #     rows = [[r[0], r[1], int(r[2]), int(r[3]), int(r[4]), int(r[5])] for r in reader]
+        # for r in rows:
+        #     if r[0] in homo.keys():
+        #         homo[r[0]].append(r[1:])
+        #     else:
+        #         homo[r[0]] = [r[1:]]
 
         # read & clean list.csv
         with open(params['PDB_LIST'], 'r') as f:
@@ -453,62 +455,62 @@ def get_train_valid_set(params, OFFSET=1000000):
                 fb[r[2]] = [(r[:2], r[-1])]
     
         # compile complex sets
-        with open(params['COMPL_LIST'], 'r') as f:
-            reader = csv.reader(f)
-            next(reader)
-            # read complex_pdb, pMSA_hash, complex_cluster, length, taxID, assembly (bioA,opA,bioB,opB)
-            rows = [[r[0], r[3], int(r[4]), [int(plen) for plen in r[5].split(':')], r[6] , [int(r[7]), int(r[8]), int(r[9]), int(r[10])]] for r in reader
-                    if float(r[2]) <= params['RESCUT'] and
-                    parser.parse(r[1]) <= parser.parse(params['DATCUT']) and min([int(i) for i in r[5].split(":")]) < params['MAX_COMPLEX_CHAIN'] and min([int(i) for i in r[5].split(":")]) > 50] #require one chain of the hetero complexes to be smaller than a certain value so it can be kept complete. This chain must also be > 50aa long.
+        # with open(params['COMPL_LIST'], 'r') as f:
+        #     reader = csv.reader(f)
+        #     next(reader)
+        #     # read complex_pdb, pMSA_hash, complex_cluster, length, taxID, assembly (bioA,opA,bioB,opB)
+        #     rows = [[r[0], r[3], int(r[4]), [int(plen) for plen in r[5].split(':')], r[6] , [int(r[7]), int(r[8]), int(r[9]), int(r[10])]] for r in reader
+        #             if float(r[2]) <= params['RESCUT'] and
+        #             parser.parse(r[1]) <= parser.parse(params['DATCUT']) and min([int(i) for i in r[5].split(":")]) < params['MAX_COMPLEX_CHAIN'] and min([int(i) for i in r[5].split(":")]) > 50] #require one chain of the hetero complexes to be smaller than a certain value so it can be kept complete. This chain must also be > 50aa long.
 
         train_compl = {}
         valid_compl = {}
-        for r in rows:
-            if r[2] in val_compl_ids:
-                if r[2] in valid_compl.keys():
-                    valid_compl[r[2]].append((r[:2], r[-3], r[-2], r[-1])) # ((pdb, hash), length, taxID, assembly, negative?)
-                else:
-                    valid_compl[r[2]] = [(r[:2], r[-3], r[-2], r[-1])]
-            else:
-                # if subunits are included in PDB validation set, exclude them from training
-                hashA, hashB = r[1].split('_')
-                if hashA in val_hash:
-                    continue
-                if hashB in val_hash:
-                    continue
-                if r[2] in train_compl.keys():
-                    train_compl[r[2]].append((r[:2], r[-3], r[-2], r[-1]))
-                else:
-                    train_compl[r[2]] = [(r[:2], r[-3], r[-2], r[-1])]
+        # for r in rows:
+        #     if r[2] in val_compl_ids:
+        #         if r[2] in valid_compl.keys():
+        #             valid_compl[r[2]].append((r[:2], r[-3], r[-2], r[-1])) # ((pdb, hash), length, taxID, assembly, negative?)
+        #         else:
+        #             valid_compl[r[2]] = [(r[:2], r[-3], r[-2], r[-1])]
+        #     else:
+        #         # if subunits are included in PDB validation set, exclude them from training
+        #         hashA, hashB = r[1].split('_')
+        #         if hashA in val_hash:
+        #             continue
+        #         if hashB in val_hash:
+        #             continue
+        #         if r[2] in train_compl.keys():
+        #             train_compl[r[2]].append((r[:2], r[-3], r[-2], r[-1]))
+        #         else:
+        #             train_compl[r[2]] = [(r[:2], r[-3], r[-2], r[-1])]
 
         # compile negative examples
         # remove pairs if any of the subunits are included in validation set
-        with open(params['NEGATIVE_LIST'], 'r') as f:
-            reader = csv.reader(f)
-            next(reader)
-            # read complex_pdb, pMSA_hash, complex_cluster, length, taxonomy
-            rows = [[r[0],r[3],OFFSET+int(r[4]),[int(plen) for plen in r[5].split(':')],r[6]] for r in reader
-                    if float(r[2])<=params['RESCUT'] and
-                    parser.parse(r[1])<=parser.parse(params['DATCUT'])]
+        # with open(params['NEGATIVE_LIST'], 'r') as f:
+        #     reader = csv.reader(f)
+        #     next(reader)
+        #     # read complex_pdb, pMSA_hash, complex_cluster, length, taxonomy
+        #     rows = [[r[0],r[3],OFFSET+int(r[4]),[int(plen) for plen in r[5].split(':')],r[6]] for r in reader
+        #             if float(r[2])<=params['RESCUT'] and
+        #             parser.parse(r[1])<=parser.parse(params['DATCUT'])]
 
         train_neg = {}
         valid_neg = {}
-        for r in rows:
-            if r[2] in val_neg_ids:
-                if r[2] in valid_neg.keys():
-                    valid_neg[r[2]].append((r[:2], r[-2], r[-1], []))
-                else:
-                    valid_neg[r[2]] = [(r[:2], r[-2], r[-1], [])]
-            else:
-                hashA, hashB = r[1].split('_')
-                if hashA in val_hash:
-                    continue
-                if hashB in val_hash:
-                    continue
-                if r[2] in train_neg.keys():
-                    train_neg[r[2]].append((r[:2], r[-2], r[-1], []))
-                else:
-                    train_neg[r[2]] = [(r[:2], r[-2], r[-1], [])]
+        # for r in rows:
+        #     if r[2] in val_neg_ids:
+        #         if r[2] in valid_neg.keys():
+        #             valid_neg[r[2]].append((r[:2], r[-2], r[-1], []))
+        #         else:
+        #             valid_neg[r[2]] = [(r[:2], r[-2], r[-1], [])]
+        #     else:
+        #         hashA, hashB = r[1].split('_')
+        #         if hashA in val_hash:
+        #             continue
+        #         if hashB in val_hash:
+        #             continue
+        #         if r[2] in train_neg.keys():
+        #             train_neg[r[2]].append((r[:2], r[-2], r[-1], []))
+        #         else:
+        #             train_neg[r[2]] = [(r[:2], r[-2], r[-1], [])]
     
         # Get average chain length in each cluster and calculate weights
         pdb_IDs = list(train_pdb.keys())
@@ -617,6 +619,7 @@ def get_complex_crop(len_s, mask, device, params):
     return torch.cat(sel_s)
 
 def get_spatial_crop(xyz, mask, sel, len_s, params, label, cutoff=10.0, eps=1e-6):
+
     device = xyz.device
     
     # get interface residue
@@ -638,6 +641,7 @@ def get_spatial_crop(xyz, mask, sel, len_s, params, label, cutoff=10.0, eps=1e-6
     return sel
 
 def get_spatial_crop_fixbb(xyz, mask, sel, len_s, params, cutoff=10.0, eps=1e-6):
+
     device = xyz.device
     chainA_idx_max = sel[len_s[0]-1]
 
@@ -736,17 +740,17 @@ def featurize_single_chain(msa, ins, tplt, pdb, params, unclamp=False, pick_top=
     crop_idx = get_crop(len(idx), mask, msa_seed_orig.device, params, unclamp=unclamp)
     seq = seq[:,crop_idx]
     msa_seed_orig = msa_seed_orig[:,:,crop_idx]
-    msa_seed = msa_seed[:,:,crop_idx]
+    msa_seed  = msa_seed[:,:,crop_idx]
     msa_extra = msa_extra[:,:,crop_idx]
-    mask_msa = mask_msa[:,:,crop_idx]
+    mask_msa  = mask_msa[:,:,crop_idx]
     xyz_t = xyz_t[:,crop_idx]
     f1d_t = f1d_t[:,crop_idx]
-    xyz = xyz[crop_idx]
-    mask = mask[crop_idx]
-    idx = idx[crop_idx]
+    xyz   = xyz[crop_idx]
+    mask  = mask[crop_idx]
+    idx   = idx[crop_idx]
 
     # get initial coordinates
-    xyz_prev = xyz_t[0]
+    xyz_prev  = xyz_t[0]
     chain_idx = torch.ones((len(crop_idx), len(crop_idx))).long()
 
     # replace missing with blackholes & conovert NaN to zeros to avoid any NaN problems during loss calculation
@@ -759,7 +763,7 @@ def featurize_single_chain(msa, ins, tplt, pdb, params, unclamp=False, pick_top=
     return seq.long(), msa_seed_orig.long(), msa_seed.float(), msa_extra.float(), mask_msa, \
            xyz.float(), mask, idx.long(),\
            xyz_t.float(), f1d_t.float(), xyz_prev.float(), \
-           chain_idx, unclamp, False, [0, None] #0 is the complete chain
+           chain_idx, unclamp, False, [0, None], mask #0 is the complete chain
 
 def featurize_single_chain_fixbb(msa, pdb, params, unclamp=False, pick_top=False, fb=False):
     seq, msa_seed_orig, msa_seed, msa_extra, mask_msa = MSAFeaturize_fixbb(msa, params)
@@ -798,7 +802,7 @@ def featurize_single_chain_fixbb(msa, pdb, params, unclamp=False, pick_top=False
     return seq.long(), msa_seed_orig.long(), msa_seed.float(), msa_extra.float(), mask_msa, \
            xyz.float(), mask, idx.long(),\
            xyz_t.float(), f1d_t.float(), xyz_prev.float(), \
-           chain_idx, unclamp, False, [0,None]
+           chain_idx, unclamp, False, [0,None], mask
 
 # Generate input features for homo-oligomers
 def featurize_homo(msa_orig, ins_orig, tplt, pdbA, pdbid, interfaces, params, pick_top=True):
@@ -874,7 +878,7 @@ def featurize_homo(msa_orig, ins_orig, tplt, pdbA, pdbid, interfaces, params, pi
     return seq.long(), msa_seed_orig.long(), msa_seed.float(), msa_extra.float(), mask_msa, \
            xyz.float(), mask, idx.long(),\
            xyz_t.float(), f1d_t.float(), xyz_prev.float(), \
-           chain_idx, False, False, [0, None]
+           chain_idx, False, False, [0, None], mask
 
 def get_pdb(pdbfilename, plddtfilename, item, lddtcut, sccut):
     xyz, mask, res_idx = parse_pdb(pdbfilename)
@@ -981,7 +985,7 @@ def loader_fb(item, params, unclamp=False):
     return seq.long(), msa_seed_orig.long(), msa_seed.float(), msa_extra.float(), mask_msa, \
            xyz.float(), mask, idx.long(),\
            xyz_t.float(), f1d_t.float(), xyz_prev.float(), \
-           chain_idx, unclamp, False, [0, None] #0 is for complete_chain
+           chain_idx, unclamp, False, [0, None], mask #0 is for complete_chain
 
 def loader_fb_fixbb(item, params, unclamp=False, pick_top=False):
     # loads sequence/structure/plddt information
@@ -1105,7 +1109,7 @@ def loader_complex(item, L_s, taxID, assem, params, negative=False, pick_top=Tru
     return seq.long(), msa_seed_orig.long(), msa_seed.float(), msa_extra.float(), mask_msa,\
            xyz.float(), mask, idx.long(), \
            xyz_t.float(), f1d_t.float(), xyz_prev.float(), \
-           chain_idx, False, negative, [0, None] #0 is for complete_chain
+           chain_idx, False, negative, [0, None], mask #0 is for complete_chain
 
 def loader_complex_fixbb(item, L_s, taxID, assem, params, negative=False, pick_top=True):
     pdb_pair = item[0]
@@ -1185,7 +1189,7 @@ def loader_complex_fixbb(item, L_s, taxID, assem, params, negative=False, pick_t
     return seq.long(), msa_seed_orig.long(), msa_seed.float(), msa_extra.float(), mask_msa,\
            xyz.float(), mask, idx.long(), \
            xyz_t.float(), f1d_t.float(), xyz_prev.float(), \
-           chain_idx, False, False, complete_chain #complete chain is [chainA or B, length of first chain]
+           chain_idx, False, False, complete_chain, mask #complete chain is [chainA or B, length of first chain]
 
 class Dataset(data.Dataset):
     def __init__(self, IDs, loader, item_dict, params, homo, unclamp_cut=0.9, pick_top=True, p_homo_cut=-1.0):
@@ -1261,18 +1265,40 @@ class DistilledDataset(data.Dataset):
                  params,
                  p_homo_cut=0.5):
         #
-        self.pdb_IDs = pdb_IDs
-        self.pdb_dict = pdb_dict
-        self.pdb_loaders = {'seq2str':pdb_loader,'str2seq': pdb_loader_fixbb, 'str2seq_full':pdb_loader_fixbb, 'hal':pdb_loader_fixbb, 'hal_ar':pdb_loader_fixbb}
-        self.compl_IDs = compl_IDs
-        self.compl_loaders = {'seq2str':compl_loader,'str2seq': compl_loader_fixbb, 'str2seq_full':compl_loader_fixbb, 'hal':compl_loader_fixbb, 'hal_ar':compl_loader_fixbb}
-        self.compl_dict = compl_dict
-        self.neg_IDs = neg_IDs
+        self.pdb_IDs     = pdb_IDs
+        self.pdb_dict    = pdb_dict
+        self.pdb_loaders = {'seq2str':      pdb_loader,
+                            'str2seq':      pdb_loader_fixbb, 
+                            'str2seq_full': pdb_loader_fixbb, 
+                            'hal':          pdb_loader_fixbb, 
+                            'hal_ar':       pdb_loader_fixbb,
+                            'diff':         pdb_loader_fixbb}
+
+
+        self.compl_IDs     = compl_IDs
+        self.compl_dict    = compl_dict
+        self.compl_loaders = {'seq2str':     compl_loader,
+                              'str2seq':     compl_loader_fixbb, 
+                              'str2seq_full':compl_loader_fixbb, 
+                              'hal':         compl_loader_fixbb, 
+                              'hal_ar':      compl_loader_fixbb,
+                              'diff':        compl_loader_fixbb}
+
+
+        self.neg_IDs    = neg_IDs
         self.neg_loader = neg_loader
-        self.neg_dict = neg_dict
-        self.fb_IDs = fb_IDs
-        self.fb_dict = fb_dict
-        self.fb_loaders = {'seq2str':fb_loader,'str2seq': fb_loader_fixbb, 'str2seq_full':fb_loader_fixbb, 'hal':fb_loader_fixbb, 'hal_ar':fb_loader_fixbb}
+        self.neg_dict   = neg_dict
+
+
+        self.fb_IDs     = fb_IDs
+        self.fb_dict    = fb_dict
+        self.fb_loaders = { 'seq2str':      fb_loader,
+                            'str2seq':      fb_loader_fixbb, 
+                            'str2seq_full': fb_loader_fixbb, 
+                            'hal':          fb_loader_fixbb, 
+                            'hal_ar':       fb_loader_fixbb,
+                            'diff':         fb_loader_fixbb}
+
         self.homo = homo
         self.params = params
         self.p_task = params['TASK_P']
@@ -1299,6 +1325,7 @@ class DistilledDataset(data.Dataset):
             task = 'seq2str'
 
         if index >= len(self.fb_inds) + len(self.pdb_inds) + len(self.compl_inds): # from negative set
+            # print('Chose negative')
             chosen_dataset='negative'
             ID = self.neg_IDs[index-len(self.fb_inds)-len(self.pdb_inds)-len(self.compl_inds)]
             sel_idx = np.random.randint(0, len(self.neg_dict[ID]))
@@ -1306,6 +1333,7 @@ class DistilledDataset(data.Dataset):
 
         elif index >= len(self.fb_inds) + len(self.pdb_inds): # from complex set
             chosen_dataset='complex'
+            # print('Chose complex')
             ID = self.compl_IDs[index-len(self.fb_inds)-len(self.pdb_inds)]
             sel_idx = np.random.randint(0, len(self.compl_dict[ID]))
             if self.compl_dict[ID][sel_idx][0][0] in self.homo: #homooligomer so do seq2str
@@ -1315,6 +1343,7 @@ class DistilledDataset(data.Dataset):
         
         elif index >= len(self.fb_inds): # from PDB set
             chosen_dataset='pdb'
+            # print('Chose pdb')
             ID = self.pdb_IDs[index-len(self.fb_inds)]
             sel_idx = np.random.randint(0, len(self.pdb_dict[ID]))
             chosen_loader = self.pdb_loaders[task]
@@ -1324,6 +1353,7 @@ class DistilledDataset(data.Dataset):
                 out = chosen_loader(self.pdb_dict[ID][sel_idx][0], self.params, self.homo, unclamp=False, p_homo_cut=self.p_homo_cut)
         else: # from FB set
             chosen_dataset='fb'
+            # print('Chose fb')
             ID = self.fb_IDs[index]
             sel_idx = np.random.randint(0, len(self.fb_dict[ID]))
             chosen_loader = self.fb_loaders[task]
@@ -1332,7 +1362,7 @@ class DistilledDataset(data.Dataset):
             else:
                 out = chosen_loader(self.fb_dict[ID][sel_idx][0], self.params, unclamp=False)
 
-        (seq, msa, msa_masked, msa_full, mask_msa, true_crds, atom_mask, idx_pdb, xyz_t, t1d, xyz_prev, same_chain, unclamp, negative, complete_chain) = out
+        (seq, msa, msa_masked, msa_full, mask_msa, true_crds, atom_mask, idx_pdb, xyz_t, t1d, xyz_prev, same_chain, unclamp, negative, complete_chain, atom_mask) = out
 
         # get masks for example
         if complete_chain[0] == 0:
@@ -1342,9 +1372,61 @@ class DistilledDataset(data.Dataset):
                 complete_chain = [0, same_chain.shape[0] -1] #first and last index of full chain
         else:
             complete_chain=[complete_chain[1],same_chain.shape[0]-1]
+        
+        #### DJ/JW alteration: Pop any NaN residues from tensors for diffuion training 
+        # print('Printing shapes')
+        # print("seq ",seq.shape)
+        # print("msa ",msa.shape)
+        # print("msa_masked ",msa_masked.shape)
+        # print("msa_full ",msa_full.shape)
+        # print("mask_msa ",mask_msa.shape)
+        # print("true_crds ",true_crds.shape)
+        # print("atom_mask ",atom_mask.shape )
+        # print("idx_pdb ",idx_pdb.shape)
+        # print("xyz_t ",xyz_t.shape)
+        # print("t1d ",t1d.shape)
+        # print("xyz_prev ",xyz_prev.shape)
+        # print("unclamp ",unclamp)
+        # print("atom_mask ",atom_mask.shape)
+        # print('same chain ',same_chain.shape)
+        pop   = (atom_mask[:,:3]).squeeze().any(dim=-1) # will be true if any of the backbone atoms were False in atom mask 
+        N     = pop.sum()
+        pop2d = pop[None,:] * pop[:,None]
+
+        seq         = seq[:,pop]
+        msa         = msa[:,:,pop]
+        msa_masked  = msa_masked[:,:,pop]
+        msa_full    = msa_full[:,:,pop]
+        mask_msa    = mask_msa[:,:,pop]
+        true_crds   = true_crds[pop]
+        atom_mask   = atom_mask[pop]
+        idx_pdb     = idx_pdb[pop]
+        xyz_t       = xyz_t[:,pop]
+        t1d         = t1d[:,pop]
+        xyz_prev    = xyz_prev[pop]
+        same_chain  = same_chain[pop2d].reshape(N,N)
+
+
+
+
+        # print('Printing shapes after popping')
+        # print("seq ",seq.shape)
+        # print("msa ",msa.shape)
+        # print("msa_masked ",msa_masked.shape)
+        # print("msa_full ",msa_full.shape)
+        # print("mask_msa ",mask_msa.shape)
+        # print("true_crds ",true_crds.shape)
+        # print("atom_mask ",atom_mask.shape )
+        # print("idx_pdb ",idx_pdb.shape)
+        # print("xyz_t ",xyz_t.shape)
+        # print("t1d ",t1d.shape)
+        # print("xyz_prev ",xyz_prev.shape)
+        # print("unclamp ",unclamp)
+        # print("atom_mask ",atom_mask.shape)
+        # print('same chain ',same_chain.shape)
         mask_dict = generate_masks(msa, task, self.params, chosen_dataset, complete_chain)
 
-        return seq, msa, msa_masked, msa_full, mask_msa, true_crds, atom_mask, idx_pdb, xyz_t, t1d, xyz_prev, same_chain, unclamp, negative, mask_dict, task, chosen_dataset
+        return seq, msa, msa_masked, msa_full, mask_msa, true_crds, atom_mask, idx_pdb, xyz_t, t1d, xyz_prev, same_chain, unclamp, negative, mask_dict, task, chosen_dataset, atom_mask
 
 class DistributedWeightedSampler(data.Sampler):
     def __init__(self, dataset, pdb_weights, compl_weights, neg_weights, fb_weights, p_seq2str, num_example_per_epoch=25600, \
@@ -1362,8 +1444,8 @@ class DistributedWeightedSampler(data.Sampler):
 
         self.dataset = dataset
         self.num_replicas = num_replicas
-        self.num_compl_per_epoch = int(round(num_example_per_epoch*(1.0-fraction_fb)*fraction_compl))
-        self.num_neg_per_epoch = int(round(num_example_per_epoch*(1.0-fraction_fb)*fraction_compl*p_seq2str))
+        self.num_compl_per_epoch = 0 #= int(round(num_example_per_epoch*(1.0-fraction_fb)*fraction_compl))
+        self.num_neg_per_epoch = 0 #= int(round(num_example_per_epoch*(1.0-fraction_fb)*fraction_compl*p_seq2str))
         self.num_fb_per_epoch = int(round(num_example_per_epoch*(fraction_fb)))
         self.num_pdb_per_epoch = num_example_per_epoch - self.num_compl_per_epoch - self.num_neg_per_epoch - self.num_fb_per_epoch
         #print (self.num_compl_per_epoch, self.num_neg_per_epoch, self.num_fb_per_epoch, self.num_pdb_per_epoch)
@@ -1379,6 +1461,7 @@ class DistributedWeightedSampler(data.Sampler):
 
     def __iter__(self):
         # deterministically shuffle based on epoch
+        print('Just entered DistributedWeightedSampler __iter__')
         g = torch.Generator()
         g.manual_seed(self.epoch)
 

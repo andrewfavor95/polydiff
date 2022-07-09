@@ -23,6 +23,36 @@ def get_masks(L, min_length, max_length, min_flank, max_flank):
     start = random.randint(flank_width,L-flank_width-central_width-1)
     return (start,start+central_width),flank_width
 
+
+def get_diffusion_pos(L,min_length, max_length=None):
+    """
+    Random contiguous mask generation to denote which residues are being diffused 
+    and which are not. 
+
+    TODO: This does not support multi-chain diffusion training at the moment 
+
+    Returns:
+
+        start,end : indices between which residues are allowed to be diffused. 
+                    Otherwise, residues are held fixed and revealed 
+    """
+    if (max_length is None) or (max_length > L):
+        max_length = L 
+
+    assert min_length <= max_length 
+
+    # choose a length to crop 
+    chosen_length = np.random.randint(min_length, max_length)
+
+    # choose a start position - between 0 (inclusive) and L-chosen_length (exclusive)
+    start_idx = random.randint(0, L-chosen_length)
+    end_idx   = start_idx + chosen_length
+
+    return start_idx, end_idx 
+
+
+
+
 #####################################
 # Main mask generator function
 #####################################
@@ -70,6 +100,26 @@ def generate_masks(msa, task, loader_params, chosen_dataset, full_chain=None): #
         # loss_seq_mask = torch.clone(seq2str_mask) #this is not 1D
         #loss_str_mask = seq2str_str_mask
         #loss_str_mask_2d = seq2_str_mask[None, :] * seq2str_str_mask[:, None]
+
+    # dj - only perform diffusion hal on pdb and fb for now 
+    elif task == 'diff' and chosen_dataset not in ['complex','negative']:
+        """
+        Hal task but created for the diffusion-based training. 
+        """ 
+
+        # get start and end of contiguous section of diffused residues 
+        start, end = get_diffusion_pos(L, loader_params['DIFF_MASK_LOW'], loader_params['DIFF_MASK_HIGH'])
+
+        ## input masks
+        # False is diffused, True is not diffused 
+        input_str_mask[start:end+1] = False 
+        input_seq_mask     = torch.clone(input_str_mask)
+        
+        # t1dconf scaling will be taken care of by diffuser, so just leave those at 1 here 
+        input_t1dconf_mask = torch.ones(L)
+
+        ## loss masks 
+        pass # apply everywhere for now 
     
     elif task == 'hal' and chosen_dataset != 'complex':
         '''

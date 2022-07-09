@@ -10,6 +10,8 @@ SE3_PARAMS = ['num_layers_full', 'num_layers_topk', 'num_channels', 'num_degrees
               'l0_in_features_full', 'l0_in_features_topk', 'l0_out_features_full', 'l0_out_features_topk',
               'l1_in_features', 'l1_out_features', 'num_edge_features_full', 'num_edge_features_topk']
 
+
+
 def get_args():
     parser = argparse.ArgumentParser()
 
@@ -78,6 +80,28 @@ def get_args():
             help = 'Minimum fraction to be masked in str2seq_full task. Default=0.9')
     data_group.add_argument('-str2seq_full_high',type=float, default=1.0,
             help = 'Maximum fraction to be masked in str2seq_full task. Default=1.0')
+
+
+    # Diffusion args 
+    diff_group = parser.add_argument_group("diffusion parameters")
+    diff_group.add_argument('-diff_mask_low', type=int, default=20,
+            help='Minimum number of residues to diffuse if doing diffusion. Default 20')
+    diff_group.add_argument('-diff_mask_high', type=int, default=999, 
+            help='Maximum number of residues to diffuse if doing diffusion. Default 999 (all)')
+    diff_group.add_argument('-diff_b0', type=float, default=0.001, 
+            help='b_0 paramter for Euclidean diffuser.')
+    diff_group.add_argument('-diff_bT', type=float, default=0.1, 
+            help='b_T parameter for Euclidean diffuser.')
+    diff_group.add_argument('-diff_schedule_type', type=str, default='cosine', 
+            help='Type of schedule for (Euclidean) diffusion.')
+    diff_group.add_argument('-diff_so3_type', type=str, default='slerp',
+            help='Which type of SO3 diffusion to use. Default slerp')
+    diff_group.add_argument('-diff_chi_type', type=str, default='interp',
+            help='Which type of chi angle diffusion to use. Default linear interpolation.')
+    diff_group.add_argument('-diff_T', type=int, default=100, 
+            help='Total number of diffusion steps for forward diffusion.')
+    diff_group.add_argument('-aa_decode_steps', type=int, default=100, 
+            help='Total number of steps to decode amino acid identities and chi angles over.')
 
     # Trunk module properties
     trunk_group = parser.add_argument_group("Trunk module parameters")
@@ -193,6 +217,20 @@ def get_args():
     if args.crop != args.max_length:
         print("WARNING: -crop and -max_length flags are not the same. This will lead to cropping - do you want this?")
 
+    # set up diffusion params
+    diffusion_params = {}
+    for param in ['diff_mask_low',
+    'diff_mask_high',
+    'diff_b0',
+    'diff_bT',
+    'diff_schedule_type',
+    'diff_so3_type',
+    'diff_chi_type',
+    'diff_T',
+    'aa_decode_steps']:
+        diffusion_params[param] = getattr(args, param)
+    
+
     # Setup dataloader parameters:
     loader_param = data_loader.set_data_loader_params(args)
 
@@ -217,4 +255,4 @@ def get_args():
     for param in ['w_dist', 'w_str', 'w_all', 'w_aa', 'w_lddt', 'w_blen', 'w_bang', 'w_lj', 'w_hb', 'lj_lin', 'use_H']:
         loss_param[param] = getattr(args, param)
 
-    return args, trunk_param, loader_param, loss_param
+    return args, trunk_param, loader_param, loss_param, diffusion_params

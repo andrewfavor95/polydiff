@@ -23,6 +23,9 @@ from icecream import ic
 from apply_masks import mask_inputs
 import random
 
+# added for diffusion training 
+from diffusion import Diffuser
+
 # distributed data parallel
 import torch.distributed as dist
 import torch.multiprocessing as mp
@@ -47,7 +50,7 @@ LOAD_PARAM = {'shuffle': False,
               'num_workers': 4,
               'pin_memory': True}
 LOAD_PARAM2 = {'shuffle': False,
-              'num_workers': 3,
+              'num_workers': 4,
               'pin_memory': True}
 
 def add_weight_decay(model, l2_coeff):
@@ -112,7 +115,8 @@ class EMA(nn.Module):
 class Trainer():
     def __init__(self, model_name='BFF',
                  n_epoch=100, lr=1.0e-4, l2_coeff=1.0e-2, port=None, interactive=False,
-                 model_param={}, loader_param={}, loss_param={}, batch_size=1, accum_step=1, maxcycle=4):
+                 model_param={}, loader_param={}, loss_param={}, batch_size=1, accum_step=1, 
+                 maxcycle=4, diffusion_param={}):
         self.model_name = model_name #"BFF"
         #self.model_name = "%s_%d_%d_%d_%d"%(model_name, model_param['n_module'], 
         #                                    model_param['n_module_str'],
@@ -134,6 +138,18 @@ class Trainer():
         self.ACCUM_STEP = accum_step
         self.batch_size = batch_size
 
+        # For diffusion
+        print('**Making diffuser**')
+        diff_kwargs = {'T'              :diffusion_param['diff_T'],
+                       'b_0'            :diffusion_param['diff_b0'],
+                       'b_T'            :diffusion_param['diff_bT'],
+                       'schedule_type'  :diffusion_param['diff_schedule_type'],
+                       'so3_type'       :diffusion_param['diff_so3_type'],
+                       'chi_type'       :diffusion_param['diff_chi_type'],
+                       'aa_decode_steps':diffusion_param['aa_decode_steps']}
+        self.diffuser = Diffuser(**diff_kwargs)
+        print('**Made the diffuser**')
+
         # for all-atom str loss
         self.ti_dev = torsion_indices
         self.ti_flip = torsion_can_flip
@@ -149,6 +165,8 @@ class Trainer():
 
         # module torsion -> allatom
         self.compute_allatom_coords = ComputeAllAtomCoords()
+
+        #self.diffuser.get_allatom = self.compute_allatom_coords
 
         # loss & final activation function
         self.loss_fn = nn.CrossEntropyLoss(reduction='none')
@@ -354,7 +372,12 @@ class Trainer():
         checkpoint = torch.load(chk_fn, map_location=map_location)
         rename_model = False
         new_chk = {}
+        print('About to iterate through params...')
+        ctr=0
         for param in model.module.model.state_dict():
+            print('On param ',ctr,' of ',len(model.module.model.state_dict()))
+            ctr += 1
+
             if param not in checkpoint['model_state_dict']:
                 print ('missing',param)
                 rename_model=True
@@ -368,8 +391,9 @@ class Trainer():
 
         model.module.model.load_state_dict(new_chk, strict=False)
         model.module.shadow.load_state_dict(new_chk, strict=False)
+
         if resume_train and (not rename_model):
-            #print (' ... loading optimization params')
+            print (' ... loading optimization params')
             loaded_epoch = checkpoint['epoch']
             optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
             scaler.load_state_dict(checkpoint['scaler_state_dict'])
@@ -410,6 +434,7 @@ class Trainer():
             mp.spawn(self.train_model, args=(world_size,), nprocs=world_size, join=True)
 
     def train_model(self, rank, world_size):
+        print('Just entered train_model function')
         #print ("running ddp on rank %d, world_size %d"%(rank, world_size))
         gpu = rank % torch.cuda.device_count()
         dist.init_process_group(backend="nccl", world_size=world_size, rank=rank)
@@ -433,6 +458,23 @@ class Trainer():
         self.n_valid_neg = len(valid_neg.keys())
         self.n_valid_neg = (self.n_valid_neg // world_size)*world_size
 
+        # ic(type(pdb_items))
+        # ic(type(fb_items))
+        # ic(type(compl_items))
+        # ic(type(neg_items))
+
+        # ic(type(pdb_dict))
+        # ic(type(fb_dict))
+        # ic(type(compl_dict))
+        # ic(type(neg_dict))
+
+        # ic(type(pdb_IDs))
+        # ic(type(fb_IDs))
+        # ic(type(compl_IDs))
+        # ic(type(neg_IDs))
+
+
+
         if (rank==0):
             print ('Loaded',
                 len(valid_pdb.keys()),'monomers,',
@@ -453,6 +495,7 @@ class Trainer():
                                      neg_IDs, loader_complex, neg_dict,
                                      fb_IDs, loader_fb, loader_fb_fixbb, fb_dict,
                                      homo, self.loader_param)
+
         valid_pdb_set = Dataset(list(valid_pdb.keys())[:self.n_valid_pdb],
                                 loader_pdb, valid_pdb,
                                 self.loader_param, homo, p_homo_cut=-1.0)
@@ -494,12 +537,16 @@ class Trainer():
         self.l2a = self.l2a.to(gpu)
         self.aamask = self.aamask.to(gpu)
         self.compute_allatom_coords = self.compute_allatom_coords.to(gpu)
+
         self.num_bonds = self.num_bonds.to(gpu)
         self.ljlk_parameters = self.ljlk_parameters.to(gpu)
         self.lj_correction_parameters = self.lj_correction_parameters.to(gpu)
         self.hbtypes = self.hbtypes.to(gpu)
         self.hbbaseatoms = self.hbbaseatoms.to(gpu)
         self.hbpolys = self.hbpolys.to(gpu)
+
+        
+        #self.diffuser.get_allatom = self.compute_allatom_coords 
 
         # define model
         print('Making model...')
@@ -518,8 +565,12 @@ class Trainer():
         scaler = torch.cuda.amp.GradScaler(enabled=USE_AMP)
        
         # load model
-        loaded_epoch, best_valid_loss = self.load_model(ddp_model, optimizer, scheduler, scaler, 
-                                                        self.model_name, gpu, resume_train=False)
+        print('About to load model...')
+        #loaded_epoch, best_valid_loss = self.load_model(ddp_model, optimizer, scheduler, scaler, 
+        #                                                self.model_name, gpu, resume_train=False)
+        loaded_epoch = -1
+        best_valid_loss = 99999
+        print('Done loading model')
 
         if loaded_epoch >= self.n_epoch:
             DDP_cleanup()
@@ -538,7 +589,8 @@ class Trainer():
             valid_homo_sampler.set_epoch(epoch)
             valid_compl_sampler.set_epoch(epoch)
             valid_neg_sampler.set_epoch(epoch)
-          
+            
+            print('Just before calling train cycle...')
             train_tot, train_loss, train_acc = self.train_cycle(ddp_model, train_loader, optimizer, scheduler, scaler, rank, gpu, world_size, epoch)
             #valid_tot, valid_loss, valid_acc = self.valid_pdb_cycle(ddp_model, valid_pdb_loader, rank, gpu, world_size, epoch)
             #_, _, _ = self.valid_pdb_cycle(ddp_model, valid_homo_loader, rank, gpu, world_size, epoch, header="Homo")
@@ -601,12 +653,49 @@ class Trainer():
 
         counter = 0
         
-        for seq, msa, msa_masked, msa_full, mask_msa, true_crds, mask_crds, idx_pdb, xyz_t, t1d, xyz_prev, same_chain, unclamp, negative, masks_1d, chosen_task, chosen_dataset in train_loader:
+        print('About to enter train loader loop')
+        for seq, msa, msa_masked, msa_full, mask_msa, true_crds, mask_crds, idx_pdb, xyz_t, t1d, xyz_prev, same_chain, unclamp, negative, masks_1d, chosen_task, chosen_dataset, atom_mask in train_loader:
+            print('Just after data loader yields data')
+            # ic(seq)
+            # ic(msa)
+            # ic(msa_masked)
+            # ic(msa_full)
+            # ic(mask_msa)
+            # ic(true_crds)
+            # ic(mask_crds)
+            # ic(idx_pdb)
+            # ic(xyz_t)
+            # ic(t1d)
+            # ic(xyz_prev)
+            # ic(same_chain)
+            # ic(unclamp)
+            # ic(negative)
+            # ic(masks_1d)
+            # ic(chosen_task)
+            # ic(chosen_dataset)
+            # ic(atom_mask)
+            print('On counter ',counter)
+
+            # torch.save(torch.clone(xyz_t), 'xyz_t.pt')
+            # torch.save(torch.clone(seq), 'seq.pt')
+            # torch.save(torch.clone(atom_mask), 'atom_mask.pt')
+
+
+
             # for saving pdbs
             seq_original = torch.clone(seq)
 
-            # apply masks NOTE: I think this is where we should add the diffusion step
-            seq, msa_masked, msa_full, xyz_t, t1d, mask_msa = mask_inputs(seq, msa_masked, msa_full, xyz_t, t1d, mask_msa, **{k:v for k,v in masks_1d.items()})
+            # Do diffusion + apply masks 
+            start = time.time()
+            seq, msa_masked, msa_full, xyz_t, t1d, mask_msa, little_t = mask_inputs(seq, 
+                                                                          msa_masked, 
+                                                                          msa_full, 
+                                                                          xyz_t, 
+                                                                          t1d, mask_msa, 
+                                                                          atom_mask=atom_mask, 
+                                                                          diffuser=self.diffuser, 
+                                                                          **{k:v for k,v in masks_1d.items()})
+            print('Time to perform mask inputs ',time.time()-start)
             
             # for saving pdbs
             seq_masked = torch.clone(seq)
@@ -622,7 +711,7 @@ class Trainer():
 
             xyz_t = xyz_t.to(gpu, non_blocking=True)
             t1d = t1d.to(gpu, non_blocking=True)
-            
+            xyz_t = xyz_t.to(gpu, non_blocking=True)
             xyz_prev = xyz_prev.to(gpu, non_blocking=True)
 
             seq = seq.to(gpu, non_blocking=True)
@@ -738,6 +827,7 @@ class Trainer():
                                 mask_BB, mask_2d, same_chain,
                                 pred_lddts, idx_pdb, chosen_dataset[0], chosen_task[0], unclamp=unclamp, negative=negative,
                                 **self.loss_param)
+                
                 loss = loss / self.ACCUM_STEP
                 scaler.scale(loss).backward()
                 # gradient clipping
@@ -800,13 +890,18 @@ class Trainer():
             top1_sequence = (logits_argsort[:, :1])
             top1_sequence = torch.clamp(top1_sequence, 0,19)
             clamped = top1_sequence
-            if rank == 0 and chosen_task[0] != 'seq2str' and random.randint(0,100) == 0: #save every 100
-                writepdb(f'training_pdbs/test_epoch_{epoch}_{counter}_{chosen_task[0]}_{chosen_dataset[0]}_pred.pdb',pred_crds[-1,0,:,:3,:],top1_sequence[0,0,:])
-                writepdb(f'training_pdbs/test_epoch_{epoch}_{counter}_{chosen_task[0]}_{chosen_dataset[0]}_true.pdb',true_crds[0,:,:3,:],torch.clamp(seq_original[0,0,:],0,19))
-                writepdb(f'training_pdbs/test_epoch_{epoch}_{counter}_{chosen_task[0]}_{chosen_dataset[0]}_input.pdb',xyz_t[0,:,:,:3,:],torch.clamp(seq_masked[0,0,:],0,19))
-                with open(f'training_pdbs/test_epoch_{epoch}_{counter}_{chosen_task[0]}_{chosen_dataset[0]}_pred_input.txt','w') as f:
+
+
+            if chosen_task[0] != 'seq2str' and np.random.randint(0,100) == 0:
+                if not os.path.isdir('./training_pdbs/'):
+                    os.makedirs('./training_pdbs')
+                writepdb(f'training_pdbs/test_epoch_{epoch}_{counter}_{chosen_task[0]}_{chosen_dataset[0]}_t_{little_t}pred.pdb',pred_crds[-1,0,:,:3,:],top1_sequence[0,0,:])
+                writepdb(f'training_pdbs/test_epoch_{epoch}_{counter}_{chosen_task[0]}_{chosen_dataset[0]}_t_{little_t}true.pdb',true_crds[0,:,:3,:],torch.clamp(seq_original[0,0,:],0,19))
+                writepdb(f'training_pdbs/test_epoch_{epoch}_{counter}_{chosen_task[0]}_{chosen_dataset[0]}_t_{little_t}input.pdb',xyz_t[0,:,:,:3,:],torch.clamp(seq_masked[0,0,:],0,19))
+                with open(f'training_pdbs/test_epoch_{epoch}_{counter}_{chosen_task[0]}_{chosen_dataset[0]}_t_{little_t}pred_input.txt','w') as f:
                     f.write(str(masks_1d['input_str_mask'][0].cpu().detach().numpy())+'\n')
                     f.write(str(masks_1d['input_seq_mask'][0].cpu().detach().numpy())+'\n') 
+
         # write total train loss
         train_tot /= float(counter * world_size)
         train_loss /= float(counter * world_size)
@@ -1276,7 +1371,7 @@ class Trainer():
 
 if __name__ == "__main__":
     from arguments import get_args
-    args, model_param, loader_param, loss_param = get_args()
+    args, model_param, loader_param, loss_param, diffusion_param = get_args()
 
     # set random seed
     torch.manual_seed(args.seed)
@@ -1290,5 +1385,6 @@ if __name__ == "__main__":
                     loss_param=loss_param, 
                     batch_size=args.batch_size,
                     accum_step=args.accum,
-                    maxcycle=args.maxcycle)
+                    maxcycle=args.maxcycle,
+                    diffusion_param=diffusion_param)
     train.run_model_training(torch.cuda.device_count())
