@@ -3,6 +3,8 @@ import time
 import numpy as np
 from copy import deepcopy
 from collections import OrderedDict
+from datetime import date 
+import time 
 import torch
 import torch.nn as nn
 from torch.utils import data
@@ -112,11 +114,14 @@ class EMA(nn.Module):
         else:
             return self.shadow(*args, **kwargs)
 
+def get_datetime():
+    return str(date.today()) + '_' + str(time.time())
+
 class Trainer():
     def __init__(self, model_name='BFF',
                  n_epoch=100, lr=1.0e-4, l2_coeff=1.0e-2, port=None, interactive=False,
                  model_param={}, loader_param={}, loss_param={}, batch_size=1, accum_step=1, 
-                 maxcycle=4, diffusion_param={}):
+                 maxcycle=4, diffusion_param={}, outdir=f'./train_session{get_datetime()}'):
         self.model_name = model_name #"BFF"
         #self.model_name = "%s_%d_%d_%d_%d"%(model_name, model_param['n_module'], 
         #                                    model_param['n_module_str'],
@@ -128,6 +133,11 @@ class Trainer():
         self.l2_coeff = l2_coeff
         self.port = port
         self.interactive = interactive
+        self.outdir = outdir
+        if not os.path.isdir(self.outdir):
+            os.makedirs(self.outdir)
+        else:
+            sys.exit('EXITING: self.outdir already exists. Dont clobber')
         #
         self.model_param = model_param
         self.loader_param = loader_param
@@ -139,7 +149,6 @@ class Trainer():
         self.batch_size = batch_size
 
         # For diffusion
-        print('**Making diffuser**')
         diff_kwargs = {'T'              :diffusion_param['diff_T'],
                        'b_0'            :diffusion_param['diff_b0'],
                        'b_T'            :diffusion_param['diff_bT'],
@@ -148,7 +157,6 @@ class Trainer():
                        'chi_type'       :diffusion_param['diff_chi_type'],
                        'aa_decode_steps':diffusion_param['aa_decode_steps']}
         self.diffuser = Diffuser(**diff_kwargs)
-        print('**Made the diffuser**')
 
         # for all-atom str loss
         self.ti_dev = torsion_indices
@@ -362,20 +370,21 @@ class Trainer():
         return torch.stack([prec, recall, F1])
 
     def load_model(self, model, optimizer, scheduler, scaler, model_name, rank, suffix='last', resume_train=False):
+
         chk_fn = "models/%s_%s.pt"%(model_name, suffix)
         loaded_epoch = -1
         best_valid_loss = 999999.9
         if not os.path.exists(chk_fn):
             print ('no model found', model_name)
             return -1, best_valid_loss
+        print('*** FOUND MODEL CHECKPOINT ***')
         map_location = {"cuda:%d"%0: "cuda:%d"%rank}
         checkpoint = torch.load(chk_fn, map_location=map_location)
         rename_model = False
         new_chk = {}
-        print('About to iterate through params which marks successfull location of checkpoint...')
         ctr=0
         for param in model.module.model.state_dict():
-            print('On param ',ctr,' of ',len(model.module.model.state_dict()))
+            #print('On param ',ctr,' of ',len(model.module.model.state_dict()))
             ctr += 1
 
             if param not in checkpoint['model_state_dict']:
@@ -407,10 +416,10 @@ class Trainer():
         return loaded_epoch, best_valid_loss
 
     def checkpoint_fn(self, model_name, description):
-        if not os.path.exists("models"):
-            os.mkdir("models")
+        if not os.path.exists(f"{self.outdir}/models"):
+            os.mkdir(f"{self.outdir}/models")
         name = "%s_%s.pt"%(model_name, description)
-        return os.path.join("models", name)
+        return os.path.join(f"{self.outdir}/models", name)
     
     # main entry function of training
     # 1) make sure ddp env vars set
@@ -654,7 +663,6 @@ class Trainer():
         
         print('About to enter train loader loop')
         for seq, msa, msa_masked, msa_full, mask_msa, true_crds, mask_crds, idx_pdb, xyz_t, t1d, xyz_prev, same_chain, unclamp, negative, masks_1d, chosen_task, chosen_dataset, atom_mask in train_loader:
-            print('Just after data loader yields data')
             # ic(seq)
             # ic(msa)
             # ic(msa_masked)
@@ -673,7 +681,6 @@ class Trainer():
             # ic(chosen_task)
             # ic(chosen_dataset)
             # ic(atom_mask)
-            print('On counter ',counter)
 
             # torch.save(torch.clone(xyz_t), 'xyz_t.pt')
             # torch.save(torch.clone(seq), 'seq.pt')
@@ -694,7 +701,6 @@ class Trainer():
                                                                           atom_mask=atom_mask, 
                                                                           diffuser=self.diffuser, 
                                                                           **{k:v for k,v in masks_1d.items()})
-            print('Time to perform mask inputs ',time.time()-start)
             
             # for saving pdbs
             seq_masked = torch.clone(seq)
@@ -873,9 +879,14 @@ class Trainer():
                     local_tot = local_tot.cpu().detach()
                     local_loss = local_loss.cpu().detach().numpy()
                     local_acc = local_acc.cpu().detach().numpy()
+
+                    if 'diff' in chosen_task[0]:
+                        task_str = f'diff_t{little_t}'
+                    else:
+                        task_str = chosen_task[0]
                     
                     sys.stdout.write("Local %s | %s: [%04d/%04d] Batch: [%05d/%05d] Time: %16.1f | total_loss: %8.4f | %s | %.4f %.4f %.4f | Max mem %.4f\n"%(\
-                            chosen_task[0], chosen_dataset[0], epoch, self.n_epoch, counter*self.batch_size*world_size, self.n_train, train_time, local_tot, \
+                            task_str, chosen_dataset[0], epoch, self.n_epoch, counter*self.batch_size*world_size, self.n_train, train_time, local_tot, \
                             " ".join(["%8.4f"%l for l in local_loss]),\
                             local_acc[0], local_acc[1], local_acc[2], max_mem))
 
@@ -892,11 +903,11 @@ class Trainer():
 
 
             if chosen_task[0] != 'seq2str' and np.random.randint(0,100) == 0:
-                if not os.path.isdir('./training_pdbs/'):
-                    os.makedirs('./training_pdbs')
-                writepdb(f'training_pdbs/test_epoch_{epoch}_{counter}_{chosen_task[0]}_{chosen_dataset[0]}_t_{little_t}pred.pdb',pred_crds[-1,0,:,:3,:],top1_sequence[0,0,:])
-                writepdb(f'training_pdbs/test_epoch_{epoch}_{counter}_{chosen_task[0]}_{chosen_dataset[0]}_t_{little_t}true.pdb',true_crds[0,:,:3,:],torch.clamp(seq_original[0,0,:],0,19))
-                writepdb(f'training_pdbs/test_epoch_{epoch}_{counter}_{chosen_task[0]}_{chosen_dataset[0]}_t_{little_t}input.pdb',xyz_t[0,:,:,:3,:],torch.clamp(seq_masked[0,0,:],0,19))
+                if not os.path.isdir(f'./{self.outdir}/training_pdbs/'):
+                    os.makedirs(f'./{self.outdir}/training_pdbs')
+                writepdb(f'{self.outdir}/training_pdbs/test_epoch_{epoch}_{counter}_{chosen_task[0]}_{chosen_dataset[0]}_t_{little_t}pred.pdb',pred_crds[-1,0,:,:3,:],top1_sequence[0,0,:])
+                writepdb(f'{self.outdir}/training_pdbs/test_epoch_{epoch}_{counter}_{chosen_task[0]}_{chosen_dataset[0]}_t_{little_t}true.pdb',true_crds[0,:,:3,:],torch.clamp(seq_original[0,0,:],0,19))
+                writepdb(f'{self.outdir}/training_pdbs/test_epoch_{epoch}_{counter}_{chosen_task[0]}_{chosen_dataset[0]}_t_{little_t}input.pdb',xyz_t[0,:,:,:3,:],torch.clamp(seq_masked[0,0,:],0,19))
                 with open(f'training_pdbs/test_epoch_{epoch}_{counter}_{chosen_task[0]}_{chosen_dataset[0]}_t_{little_t}pred_input.txt','w') as f:
                     f.write(str(masks_1d['input_str_mask'][0].cpu().detach().numpy())+'\n')
                     f.write(str(masks_1d['input_seq_mask'][0].cpu().detach().numpy())+'\n') 
@@ -920,6 +931,7 @@ class Trainer():
                     " ".join(["%8.4f"%l for l in train_loss]),\
                     train_acc[0], train_acc[1], train_acc[2]))
             sys.stdout.flush()
+
             
         return train_tot, train_loss, train_acc
 

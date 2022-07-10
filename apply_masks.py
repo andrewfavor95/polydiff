@@ -42,10 +42,6 @@ def mask_inputs(seq,
     # print('Made it into mask inputs')
     ### Perform diffusion, pick a random t and then let that be the input template and xyz_prev
     if (not diffuser is None) :
-        print('This is xyz_t.shape ',xyz_t.shape)
-        print('This is seq.shape ',seq.shape)
-        print('This is atom_mask.shape ',atom_mask.shape)
-        print('This is input_str_mask.shape ',input_str_mask.shape)
 
 
         # NOTE: assert that xyz_t is the TRUE coordinates! Should come from fixbb loader 

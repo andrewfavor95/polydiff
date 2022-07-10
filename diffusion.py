@@ -380,7 +380,7 @@ class Diffuser():
         Parameters:
             
         """
-        print('**********16')
+        #print('**********16')
         self.T = T  
         self.b_0 = b_0
         self.b_T = b_T
@@ -432,7 +432,7 @@ class Diffuser():
         # 1 get translations 
         tick = time.time()
         diffused_T, deltas = self.eucl_diffuser.diffuse_translations(xyz[:,:3,:].clone(), diffusion_mask=diffusion_mask)
-        print('Time to diffuse coordinates: ',time.time()-tick)
+        #print('Time to diffuse coordinates: ',time.time()-tick)
         diffused_T /= self.crd_scale
         deltas     /= self.crd_scale
 
@@ -441,7 +441,7 @@ class Diffuser():
         tick = time.time()
         diffused_frame_crds, diffused_frames = self.so3_diffuser.diffuse_frames(xyz[:,:3,:].clone(), diffusion_mask=diffusion_mask.numpy())
         diffused_frame_crds /= self.crd_scale 
-        print('Time to diffuse frames: ',time.time()-tick)
+        #print('Time to diffuse frames: ',time.time()-tick)
 
 
         # 3 diffuse chi angles/planar angles and sequence information 
@@ -451,7 +451,7 @@ class Diffuser():
                                                                             atom_mask[:,:14].clone(),
                                                                             diffusion_mask=diffusion_mask, 
                                                                             n_steps=self.aa_decode_steps)
-        print('Time to diffuse torsions: ',time.time()-tick)
+        #print('Time to diffuse torsions: ',time.time()-tick)
 
 
         ##### Now combine all the diffused quantities to make full atom diffused poses 
@@ -482,9 +482,9 @@ class Diffuser():
             fa_stack.append(fullatom_t)
 
         fa_stack = torch.stack(fa_stack, dim=0).squeeze()
-        print('fa stack before coming out of diffusion ',fa_stack.shape)
+        #print('fa stack before coming out of diffusion ',fa_stack.shape)
 
-        print('Time to make full atoms from diffusions:', time.time()-tick)
+        #print('Time to make full atoms from diffusions:', time.time()-tick)
 
 
         return diffused_T, deltas, diffused_frame_crds, diffused_frames, diffused_torsions, fa_stack, aa_masks
