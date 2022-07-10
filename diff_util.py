@@ -79,8 +79,7 @@ def get_aa_schedule(T, L, nsteps=100):
         decode_order[random.randint(0,len(decode_order)-1)] += tmp_seqpos
         random.shuffle(decode_order)
     
-    decode_times = np.arange(nsteps)
-    decode_times = T - nsteps + decode_times
+    decode_times = np.arange(nsteps)+1
     
     # now given decode times, calculate number of diffusion steps each position gets
     aa_masks = np.full((200,L), False)

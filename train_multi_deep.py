@@ -372,7 +372,7 @@ class Trainer():
         checkpoint = torch.load(chk_fn, map_location=map_location)
         rename_model = False
         new_chk = {}
-        print('About to iterate through params...')
+        print('About to iterate through params which marks successfull location of checkpoint...')
         ctr=0
         for param in model.module.model.state_dict():
             print('On param ',ctr,' of ',len(model.module.model.state_dict()))
@@ -566,10 +566,9 @@ class Trainer():
        
         # load model
         print('About to load model...')
-        #loaded_epoch, best_valid_loss = self.load_model(ddp_model, optimizer, scheduler, scaler, 
-        #                                                self.model_name, gpu, resume_train=False)
-        loaded_epoch = -1
-        best_valid_loss = 99999
+        loaded_epoch, best_valid_loss = self.load_model(ddp_model, optimizer, scheduler, scaler, 
+                                                       self.model_name, gpu, resume_train=False)
+
         print('Done loading model')
 
         if loaded_epoch >= self.n_epoch:

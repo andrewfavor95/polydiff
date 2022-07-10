@@ -42,15 +42,14 @@ def mask_inputs(seq,
     # print('Made it into mask inputs')
     ### Perform diffusion, pick a random t and then let that be the input template and xyz_prev
     if (not diffuser is None) :
-        # print('This is xyz_t.shape ',xyz_t.shape)
-        # print('This is seq.shape ',seq.shape)
-        # print('This is atom_mask.shape ',atom_mask.shape)
-        # print('This is input_str_mask.shape ',input_str_mask.shape)
+        print('This is xyz_t.shape ',xyz_t.shape)
+        print('This is seq.shape ',seq.shape)
+        print('This is atom_mask.shape ',atom_mask.shape)
+        print('This is input_str_mask.shape ',input_str_mask.shape)
+
 
         # NOTE: assert that xyz_t is the TRUE coordinates! Should come from fixbb loader 
         #       also assumes all 4 of seq are identical 
-
-        
 
         # pick t uniformly 
         t = random.randint(0,diffuser.T-1)
@@ -64,13 +63,19 @@ def mask_inputs(seq,
         _,_,_,_,_,diffused_fullatoms, aa_masks = diffuser.diffuse_pose(**kwargs)
 
 
+        seq_mask = torch.ones_like(seq.squeeze()[0]) # all revealed 
 
-        # grab noised inputs / create masks based on time t 
-        seq_mask = aa_masks[0] 
-        xyz_t    = diffused_fullatoms[None,None]
+        # grab noised inputs / create masks based on time t
+        aa_mask_raw = aa_masks[t] 
+    
+        # mark False where aa_mask_raw is False -- assumes everybody is potentially diffused
+        seq_mask[~aa_mask_raw] = False
+        
+        # reset to True any positions which aren't being diffused 
+        seq_mask[input_seq_mask.squeeze()] = True
 
+        xyz_t       = diffused_fullatoms[None,None]
 
-        # print('xyz_t shape after diffusion is done ',xyz_t.shape)
 
         # scale confidence wrt t 
         # multiplicitavely applied to a default conf mask of 1.0 everywhwere 
