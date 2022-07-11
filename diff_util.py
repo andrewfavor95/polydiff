@@ -64,11 +64,10 @@ def get_aa_schedule(T, L, nsteps=100):
         idx2diffusion_steps (np.array): Array mapping the index of the residue to how many diffusion steps it will require 
 
     """
-    # The slowest you can decode is total length of sequence 
+    # nsteps can't be more than T or more than length of protein
+    if (nsteps > T) or (nsteps > L):
+        nsteps = min([T,L])
 
-    if nsteps > L:
-        nsteps = L 
-    
     
     decode_order = [[a] for a in range(L)]
     random.shuffle(decode_order)
@@ -90,7 +89,7 @@ def get_aa_schedule(T, L, nsteps=100):
         
         for j,pos in enumerate(decode_pos):
             # calculate number of diffusion steps this residue gets 
-            idx2diffusion_steps[pos] = int(T - t)
+            idx2diffusion_steps[pos] = int(T - t) + 1 
             aa_masks[t,pos] = True
     
     aa_masks = np.cumsum(aa_masks, axis=0)

@@ -1,3 +1,10 @@
+
+# set to false if you dont want to use weights and biases 
+WANDB = True 
+
+if WANDB:
+    import wandb
+
 import sys, os
 import time
 import numpy as np
@@ -148,6 +155,8 @@ class Trainer():
         self.ACCUM_STEP = accum_step
         self.batch_size = batch_size
 
+        self.diffusion_param = diffusion_param
+
         # For diffusion
         diff_kwargs = {'T'              :diffusion_param['diff_T'],
                        'b_0'            :diffusion_param['diff_b0'],
@@ -191,6 +200,10 @@ class Trainer():
                   w_dist=1.0, w_aa=1.0, w_str=1.0, w_all=0.5, w_exp=1.0,
                   w_lddt=1.0, w_blen=1.0, w_bang=1.0, w_lj=0.0, w_hb=0.0,
                   lj_lin=0.75, use_H=False, eps=1e-6):
+        
+        # dictionary for keeping track of losses 
+        loss_dict = {}
+
         B, L = true.shape[:2]
         seq = label_aa_s[:,0].clone()
         assert (B==1) # fd - code assumes a batch size of 1
@@ -205,16 +218,24 @@ class Trainer():
             tot_loss += w_dist*loss
             loss_s.append(loss[None].detach())
 
+            loss_dict[f'c6d_{i}'] = float(loss.detach())
+
+
         # masked token prediction loss
         loss = self.loss_fn(logit_aa_s, label_aa_s.reshape(B, -1))
         loss = loss * mask_aa_s.reshape(B, -1)
         loss = loss.sum() / (mask_aa_s.sum() + 1e-8)
         tot_loss += w_aa*loss
         loss_s.append(loss[None].detach())
+
+        loss_dict['aa_cce'] = float(loss.detach())
+
         # experimentally resolved prediction loss
         loss = nn.BCEWithLogitsLoss()(logit_exp, mask_BB.float())
         tot_loss += w_exp*loss
         loss_s.append(loss[None].detach())
+
+        loss_dict['exp_resolved'] = float(loss.detach())
         
         # Structural loss
         if unclamp:
@@ -225,6 +246,9 @@ class Trainer():
                                               A=10.0, d_clamp=10.0, gamma=1.0)
         tot_loss += (1.0-w_all)*w_str*tot_str
         loss_s.append(str_loss)
+        
+        #loss_dict['str_loss'] = float(str_loss.detach())
+        loss_dict['tot_str'] = float(tot_str.detach())
 
         # AllAtom loss
         # get ground-truth torsion angles
@@ -298,15 +322,22 @@ class Trainer():
         loss_s.append(l_fape[None].detach())
         loss_s.append(l_tors[None].detach())
 
+        loss_dict['fape'] = float(l_fape.detach())
+        loss_dict['tors'] = float(l_tors.detach())
+
         # predicted lddt loss
         lddt_loss, ca_lddt = calc_lddt_loss(pred[:,:,:,1].detach(), true[:,:,1], pred_lddt, idx, mask_BB, mask_2d, same_chain, negative=negative)
         tot_loss += w_lddt*lddt_loss
         loss_s.append(lddt_loss.detach()[None])
         loss_s.append(ca_lddt.detach())
+    
+        loss_dict['ca_lddt'] = float(ca_lddt[-1].detach())
+        loss_dict['lddt_loss'] = float(lddt_loss.detach())
         
         # allatom lddt loss
         true_lddt = calc_allatom_lddt(pred_all[0,...,:14,:3], nat_symm[...,:14,:3], xs_mask[0,...,:14], idx[0], same_chain[0], negative=negative)
         loss_s.append(true_lddt[None].detach())
+        loss_dict['allatom_lddt'] = float(true_lddt.detach())
         #loss_s.append(true_lddt.mean()[None].detach())
         
         # bond geometry
@@ -315,6 +346,9 @@ class Trainer():
             tot_loss += w_blen*blen_loss
         if w_bang > 0.0:
             tot_loss += w_bang*bang_loss
+
+        loss_dict['blen'] = float(blen_loss.detach())
+        loss_dict['bang'] = float(bang_loss.detach())
 
         # lj potential
         lj_loss = calc_lj(
@@ -325,6 +359,8 @@ class Trainer():
         if w_lj > 0.0:
             tot_loss += w_lj*lj_loss
 
+        loss_dict['lj'] = float(lj_loss.detach())
+
         # hbond [use all atoms not just those in native]
         hb_loss = calc_hb(
             seq[0], pred_all[0,...,:3], 
@@ -334,7 +370,11 @@ class Trainer():
 
         loss_s.append(torch.stack((blen_loss, bang_loss, lj_loss, hb_loss)).detach())
 
-        return tot_loss, torch.cat(loss_s, dim=0)
+        loss_dict['hb'] = float(hb_loss.detach())
+        
+        loss_dict['total_loss'] = float(tot_loss.detach())
+
+        return tot_loss, torch.cat(loss_s, dim=0), loss_dict
 
     def calc_acc(self, prob, dist, idx_pdb, mask_2d, return_cnt=False):
         B = idx_pdb.shape[0]
@@ -443,8 +483,18 @@ class Trainer():
             mp.spawn(self.train_model, args=(world_size,), nprocs=world_size, join=True)
 
     def train_model(self, rank, world_size):
-        print('Just entered train_model function')
         #print ("running ddp on rank %d, world_size %d"%(rank, world_size))
+        if WANDB:
+            print('initializing wandb')
+            wandb.init(project="fancy-pants ", entity="bakerlab")
+
+            params = {  'loader_param':self.loader_param,
+                        'model_param':self.model_param,
+                        'loss_param':self.loss_param,
+                        'diffusion_param':self.diffusion_param}
+
+            wandb.config = params
+
         gpu = rank % torch.cuda.device_count()
         dist.init_process_group(backend="nccl", world_size=world_size, rank=rank)
         torch.cuda.set_device("cuda:%d"%gpu)
@@ -792,7 +842,7 @@ class Trainer():
                         prob = self.active_fn(logit_s[0]) # distogram
                         acc_s = self.calc_acc(prob, c6d[...,0], idx_pdb, mask_2d)
                         
-                        loss, loss_s = self.calc_loss(logit_s, c6d,
+                        loss, loss_s, loss_dict = self.calc_loss(logit_s, c6d,
                                 logit_aa_s, msa[:, i_cycle], mask_msa[:,i_cycle], logit_exp,
                                 pred_crds, alphas, true_crds, mask_crds,
                                 mask_BB, mask_2d, same_chain,
@@ -826,7 +876,7 @@ class Trainer():
                     prob = self.active_fn(logit_s[0]) # distogram
                     acc_s = self.calc_acc(prob, c6d[...,0], idx_pdb, mask_2d)
                     
-                    loss, loss_s = self.calc_loss(logit_s, c6d,
+                    loss, loss_s, loss_dict = self.calc_loss(logit_s, c6d,
                                 logit_aa_s, msa[:, i_cycle], mask_msa[:,i_cycle], logit_exp,
                                 pred_crds, alphas, true_crds, mask_crds,
                                 mask_BB, mask_2d, same_chain,
@@ -889,6 +939,11 @@ class Trainer():
                             task_str, chosen_dataset[0], epoch, self.n_epoch, counter*self.batch_size*world_size, self.n_train, train_time, local_tot, \
                             " ".join(["%8.4f"%l for l in local_loss]),\
                             local_acc[0], local_acc[1], local_acc[2], max_mem))
+
+                    if WANDB:
+                        loss_dict.update({'t':little_t, 'counter':counter})
+                        wandb.log(loss_dict)
+
 
                     sys.stdout.flush()
                     local_tot = 0.0
@@ -1031,7 +1086,7 @@ class Trainer():
                 prob = self.active_fn(logit_s[0]) # distogram
                 acc_s = self.calc_acc(prob, c6d[...,0], idx_pdb, mask_2d)
 
-                loss, loss_s = self.calc_loss(logit_s, c6d,
+                loss, loss_s, loss_dict = self.calc_loss(logit_s, c6d,
                         logit_aa_s, msa[:, i_cycle], mask_msa[:,i_cycle], logit_exp,
                         pred_crds, alphas, true_crds, mask_crds,
                         mask_BB, mask_2d, same_chain,
@@ -1188,7 +1243,7 @@ class Trainer():
                         TN += 1.0
                 inter_s = torch.tensor([TP, FP, TN, FN], device=prob.device).float()
 
-                loss, loss_s = self.calc_loss(logit_s, c6d,
+                loss, loss_s, loss_dict = self.calc_loss(logit_s, c6d,
                         logit_aa_s, msa[:, i_cycle], mask_msa[:,i_cycle], logit_exp,
                         pred_crds, alphas, true_crds, mask_crds,
                         mask_BB, mask_2d, same_chain,
@@ -1334,7 +1389,7 @@ class Trainer():
                         TN += 1.0
                 inter_s = torch.tensor([TP, FP, TN, FN], device=prob.device).float()
 
-                loss, loss_s = self.calc_loss(logit_s, c6d,
+                loss, loss_s, loss_dict = self.calc_loss(logit_s, c6d,
                         logit_aa_s, msa[:, i_cycle], mask_msa[:,i_cycle], logit_exp,
                         pred_crds, alphas, true_crds, mask_crds,
                         mask_BB, mask_2d, same_chain,
