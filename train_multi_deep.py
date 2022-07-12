@@ -1,6 +1,5 @@
-
 # set to false if you dont want to use weights and biases 
-WANDB = True 
+WANDB = False
 
 if WANDB:
     import wandb
@@ -788,6 +787,11 @@ class Trainer():
             # processing template coordinates
             xyz_t = get_init_xyz(xyz_t)
             xyz_prev = get_init_xyz(xyz_prev[:,None]).reshape(B, L, 27, 3)
+            #ic(seq[0].argmax(dim=-1))
+            #ic(msa_masked[0].argmax(dim=-1))
+            #ic(msa_full[0].argmax(dim=-1))
+            #ic(t1d[0,...,20].argmax(dim=-1))
+            #ic(mask_msa)
 
             counter += 1
 

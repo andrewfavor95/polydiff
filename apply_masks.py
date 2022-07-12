@@ -59,7 +59,7 @@ def mask_inputs(seq,
         _,_,_,_,_,diffused_fullatoms, aa_masks = diffuser.diffuse_pose(**kwargs)
 
 
-        seq_mask = torch.ones_like(seq.squeeze()[0]) # all revealed 
+        seq_mask = torch.ones_like(seq.squeeze()[0]).to(dtype=bool) # all revealed 
 
         # grab noised inputs / create masks based on time t
         aa_mask_raw = aa_masks[t] 
@@ -76,8 +76,14 @@ def mask_inputs(seq,
         # scale confidence wrt t 
         # multiplicitavely applied to a default conf mask of 1.0 everywhwere 
         input_t1dconf_mask[~input_str_mask] = 1 - t/diffuser.T 
+        #ic(seq_mask) 
+        #ic(mask_msa.shape)
+        #ic(mask_msa)
+        mask_msa[:,:,:,seq_mask] = False # don't score revealed positions 
+        #ic(mask_msa)
     else:
         print('WARNING: Diffuser not being used in apply masks')
+
 
 
 
