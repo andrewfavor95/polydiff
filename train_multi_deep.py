@@ -750,6 +750,10 @@ class Trainer():
                                                                           atom_mask=atom_mask, 
                                                                           diffuser=self.diffuser, 
                                                                           **{k:v for k,v in masks_1d.items()})
+
+            ic(xyz_prev.shape)
+            ic(xyz_t.shape)
+
             
             # for saving pdbs
             seq_masked = torch.clone(seq)
@@ -768,11 +772,15 @@ class Trainer():
             xyz_t = xyz_t.to(gpu, non_blocking=True)
             xyz_prev = xyz_prev.to(gpu, non_blocking=True)
 
+
             seq = seq.to(gpu, non_blocking=True)
             msa = msa.to(gpu, non_blocking=True)
             msa_masked = msa_masked.to(gpu, non_blocking=True)
             msa_full = msa_full.to(gpu, non_blocking=True)
             mask_msa = mask_msa.to(gpu, non_blocking=True)
+
+
+            # sanity check input crds 
             
             # processing template features
             t2d = xyz_to_t2d(xyz_t)
@@ -785,8 +793,14 @@ class Trainer():
             alpha_mask = alpha_mask.reshape(B,-1,L,10,1)
             alpha_t = torch.cat((alpha, alpha_mask), dim=-1).reshape(B, -1, L, 30)
             # processing template coordinates
-            xyz_t = get_init_xyz(xyz_t)
-            xyz_prev = get_init_xyz(xyz_prev[:,None]).reshape(B, L, 27, 3)
+            
+            # dj - set xyz_prev to xyz_t
+            xyz_prev = torch.squeeze(xyz_t, dim=0)
+            
+            # dj - remove get_init_xyz because we don't want to mess with the input crds 
+            #xyz_t = get_init_xyz(xyz_t)
+            #xyz_prev = get_init_xyz(xyz_prev[:,None]).reshape(B, L, 27, 3)
+
             #ic(seq[0].argmax(dim=-1))
             #ic(msa_masked[0].argmax(dim=-1))
             #ic(msa_full[0].argmax(dim=-1))
@@ -796,6 +810,10 @@ class Trainer():
             counter += 1
 
             N_cycle = np.random.randint(1, self.maxcycle+1) # number of recycling
+
+            #for i in range(4):
+            #    tmp_seq   = seq[:,i].squeeze().cpu()
+            #    tmp_xyz_t = xyz_t[:,i].squeeze().cpu()
 
             msa_prev = None
             pair_prev = None
@@ -943,9 +961,10 @@ class Trainer():
                             task_str, chosen_dataset[0], epoch, self.n_epoch, counter*self.batch_size*world_size, self.n_train, train_time, local_tot, \
                             " ".join(["%8.4f"%l for l in local_loss]),\
                             local_acc[0], local_acc[1], local_acc[2], max_mem))
-
+                    
+                    ic(epoch*len(train_loader)+counter)
                     if WANDB:
-                        loss_dict.update({'t':little_t, 'counter':counter})
+                        loss_dict.update({'t':little_t, 'num_examples':epoch*len(train_loader)+counter})
                         wandb.log(loss_dict)
 
 

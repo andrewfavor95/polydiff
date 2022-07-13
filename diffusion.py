@@ -418,6 +418,9 @@ class Diffuser():
 
             diffusion_mask (torch.tensor, required): Tensor of bools, True means NOT diffused at this residue, False means diffused
         """
+        if diffusion_mask is None:
+            diffusion_mask = torch.zeros(len(xyz.squeeze())).to(dtype=bool)
+
         get_allatom = ComputeAllAtomCoords().to(device=xyz.device)
         L = len(xyz)
 
