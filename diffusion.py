@@ -403,7 +403,7 @@ class Diffuser():
 
         print('Successful diffuser __init__')
     
-    def diffuse_pose(self, xyz, seq, atom_mask, diffusion_mask=None, t=None):
+    def diffuse_pose(self, xyz, seq, atom_mask, diffusion_mask=None, t_list=None):
         """
         Given full atom xyz, sequence and atom mask, diffuse the protein 
         translations, rotations, and chi angles
@@ -416,7 +416,11 @@ class Diffuser():
 
             atom_mask: mask describing presence/absence of an atom in pdb 
 
-            diffusion_mask (torch.tensor, required): Tensor of bools, True means NOT diffused at this residue, False means diffused
+            diffusion_mask (torch.tensor, optional): Tensor of bools, True means NOT diffused at this residue, False means diffused
+
+            t_list (list, optional): If present, only return the diffused coordinates at timesteps t within the list 
+
+
         """
         if diffusion_mask is None:
             diffusion_mask = torch.zeros(len(xyz.squeeze())).to(dtype=bool)
@@ -469,7 +473,7 @@ class Diffuser():
 
         # Full atom diffusions at all timepoints 
         fa_stack = []
-        if t is None:
+        if t_list is None:
             for t,alphas_t in enumerate(diffused_torsions_trig.transpose(0,1)):
                 xyz_bb_t = diffused_BB[t,:,:3]
 
@@ -477,17 +481,14 @@ class Diffuser():
                 fa_stack.append(fullatom_t)
 
         else:
-            # grab only one 
-            xyz_bb_t  = diffused_BB[t,:,:3]
-            alphas_t = diffused_torsions_trig.transpose(0,1)[t]
+            for t in t_list:
+                xyz_bb_t  = diffused_BB[t,:,:3]
+                alphas_t = diffused_torsions_trig.transpose(0,1)[t]
 
-            _,fullatom_t = get_allatom(seq[None], xyz_bb_t[None], alphas_t[None])
-            fa_stack.append(fullatom_t)
+                _,fullatom_t = get_allatom(seq[None], xyz_bb_t[None], alphas_t[None])
+                fa_stack.append(fullatom_t.squeeze())
 
-        fa_stack = torch.stack(fa_stack, dim=0).squeeze()
-        #print('fa stack before coming out of diffusion ',fa_stack.shape)
-
-        #print('Time to make full atoms from diffusions:', time.time()-tick)
+        fa_stack = torch.stack(fa_stack, dim=0)
 
 
         return diffused_T, deltas, diffused_frame_crds, diffused_frames, diffused_torsions, fa_stack, aa_masks

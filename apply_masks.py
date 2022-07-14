@@ -18,7 +18,9 @@ def mask_inputs(seq,
                 loss_seq_mask=None, 
                 loss_str_mask=None, 
                 loss_str_mask_2d=None,
-                diffuser=None):
+                diffuser=None,
+                predict_previous=False,
+                true_crds_in=None):
     """
     Parameters:
         seq (torch.tensor, required): (B,I,L) integer sequence 
@@ -49,12 +51,17 @@ def mask_inputs(seq,
 
         # pick t uniformly 
         t = random.randint(0,diffuser.T-1)
+        t_list = [t]
+        if predict_previous:
+            # grab previous t. if t is 0 force a prediction of x_t=0
+            tprev = t-1 if t > 0 else t
+            t_list.append(tprev)
 
         kwargs = {'xyz'             :xyz_t.squeeze(),
                   'seq'             :seq.squeeze()[0],
                   'atom_mask'       :atom_mask.squeeze(),
                   'diffusion_mask'  :input_str_mask.squeeze(),
-                  't':t}
+                  't_list':t_list}
 
         _,_,_,_,_,diffused_fullatoms, aa_masks = diffuser.diffuse_pose(**kwargs)
 
@@ -69,18 +76,19 @@ def mask_inputs(seq,
         
         # reset to True any positions which aren't being diffused 
         seq_mask[input_seq_mask.squeeze()] = True
-
-        xyz_t       = diffused_fullatoms[None,None]
+       
+        xyz_t       = diffused_fullatoms[0][None,None]
+        if predict_previous:
+            true_crds = diffused_fullatoms[1][None]
+        else:
+            true_crds = true_crds_in 
 
 
         # scale confidence wrt t 
         # multiplicitavely applied to a default conf mask of 1.0 everywhwere 
         input_t1dconf_mask[~input_str_mask] = 1 - t/diffuser.T 
-        #ic(seq_mask) 
-        #ic(mask_msa.shape)
-        #ic(mask_msa)
+
         mask_msa[:,:,:,seq_mask] = False # don't score revealed positions 
-        #ic(mask_msa)
     else:
         print('WARNING: Diffuser not being used in apply masks')
 
@@ -134,4 +142,4 @@ def mask_inputs(seq,
     # NOTE: this is for loss scoring
     mask_msa[:,:,:,~loss_seq_mask[0]] = False
     
-    return seq, msa_masked, msa_full, xyz_t, t1d, mask_msa, t 
+    return seq, msa_masked, msa_full, xyz_t, t1d, mask_msa, t, true_crds 

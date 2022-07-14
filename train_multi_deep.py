@@ -744,17 +744,18 @@ class Trainer():
 
             # Do diffusion + apply masks 
             start = time.time()
-            seq, msa_masked, msa_full, xyz_t, t1d, mask_msa, little_t = mask_inputs(seq, 
-                                                                          msa_masked, 
-                                                                          msa_full, 
-                                                                          xyz_t, 
-                                                                          t1d, mask_msa, 
-                                                                          atom_mask=atom_mask, 
-                                                                          diffuser=self.diffuser, 
-                                                                          **{k:v for k,v in masks_1d.items()})
 
-            ic(xyz_prev.shape)
-            ic(xyz_t.shape)
+            # predicting x0 so don't need to change the true answer 
+            seq, msa_masked, msa_full, xyz_t, t1d, mask_msa, little_t, true_crds = mask_inputs(seq, 
+                                                                                    msa_masked, 
+                                                                                    msa_full, 
+                                                                                    xyz_t, 
+                                                                                    t1d, mask_msa, 
+                                                                                    atom_mask=atom_mask, 
+                                                                                    diffuser=self.diffuser,
+                                                                                    predict_previous=self.diffusion_param['predict_previous'],
+                                                                                    true_crds_in=true_crds,
+                                                                                    **{k:v for k,v in masks_1d.items()})
 
             
             # for saving pdbs
