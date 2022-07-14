@@ -6,11 +6,40 @@ from util import rigid_from_3_points
 from kinematics import get_dih
 from scoring import HbHybType
 
+torch.autograd.set_detect_anomaly(True)
+
 # Loss functions for the training
 # 1. BB rmsd loss
 # 2. distance loss (or 6D loss?)
 # 3. bond geometry loss
 # 4. predicted lddt loss
+
+def calc_displacement_loss(pred, true, mask, eps=1e-8, gamma=0.99):
+    """
+    Calculates L2 norm of error between predicted and true CA 
+    """
+    I = pred.shape[0]
+    B = pred.shape[1]
+    assert B == 1
+    pred = pred.squeeze(1)
+
+
+    pred_ca = pred[:,:,:,1,...] # (I,L,3)
+    true_ca = true[:,:,1,...]   # ( ,L,3)
+
+
+    # weighting loss
+    w_loss = torch.pow(torch.full((I,), gamma, device=pred.device), torch.arange(I, device=pred.device))
+    w_loss = torch.flip(w_loss, (0,))
+    w_loss = w_loss / w_loss.sum()
+
+    err = torch.mean( torch.sum(torch.square(pred_ca - true_ca[None,...]), dim=-1), dim=-1) # (I,)
+    err = torch.sqrt(err + eps)
+
+    err = err*w_loss 
+
+    return err.sum()
+        
 
 # use improved coordinate frame generation
 def get_t(N, Ca, C, non_ideal=False, eps=1e-5):

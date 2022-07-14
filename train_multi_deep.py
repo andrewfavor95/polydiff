@@ -199,7 +199,7 @@ class Trainer():
                   pred_lddt, idx, dataset, chosen_task, unclamp=False, negative=False,
                   w_dist=1.0, w_aa=1.0, w_str=1.0, w_all=0.5, w_exp=1.0,
                   w_lddt=1.0, w_blen=1.0, w_bang=1.0, w_lj=0.0, w_hb=0.0,
-                  lj_lin=0.75, use_H=False, eps=1e-6):
+                  lj_lin=0.75, use_H=False, w_disp=0.0, eps=1e-6):
         
         # dictionary for keeping track of losses 
         loss_dict = {}
@@ -236,6 +236,11 @@ class Trainer():
         loss_s.append(loss[None].detach())
 
         loss_dict['exp_resolved'] = float(loss.detach())
+
+        # Displacement prediction loss between xyz prev and xyz_true
+        disp_loss = calc_displacement_loss(pred, true, mask_BB)
+        tot_loss += w_disp*disp_loss
+        loss_dict['displacement'] = float(disp_loss.detach())
         
         # Structural loss
         if unclamp:

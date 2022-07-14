@@ -169,6 +169,8 @@ def get_args():
     loss_group = parser.add_argument_group("loss parameters")
     loss_group.add_argument('-w_dist', type=float, default=1.0,
             help="Weight on distd in loss function [1.0]")
+    loss_group.add_argument('-w_disp', type=float, default=0.0,
+            help="Weight on L2 CA displacement error [0.0]")
     loss_group.add_argument('-w_exp', type=float, default=0.1,
             help="Weight on experimental resolved in loss function [0.1]")
     loss_group.add_argument('-w_str', type=float, default=10.0,
@@ -257,7 +259,7 @@ def get_args():
     trunk_param['SE3_param_full'] = SE3_param_full
     trunk_param['SE3_param_topk'] = SE3_param_topk
     loss_param = {}
-    for param in ['w_dist', 'w_str', 'w_all', 'w_aa', 'w_lddt', 'w_blen', 'w_bang', 'w_lj', 'w_hb', 'lj_lin', 'use_H']:
+    for param in ['w_dist', 'w_str', 'w_all', 'w_aa', 'w_lddt', 'w_blen', 'w_bang', 'w_lj', 'w_hb', 'lj_lin', 'use_H', 'w_disp']:
         loss_param[param] = getattr(args, param)
 
     return args, trunk_param, loader_param, loss_param, diffusion_params
