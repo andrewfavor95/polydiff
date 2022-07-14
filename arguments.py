@@ -199,6 +199,8 @@ def get_args():
             help= 'Upper limit of a single chain (i.e. maximum length of protein to keep) - should be as long as possible with available GPU memory')
     parser.add_argument('-max_complex_chain',type=int, default=200,
             help= 'for fixbb tasks, keep one chain complete. This is the maximum length of that chain (should be <60ish residues from max_length, so there is enough of the other chain)')
+    parser.add_argument('-wandb_prefix', type=str, default='',
+            help='Prefix for name of session on wandb')
 
     # parse arguments
     args = parser.parse_args()
