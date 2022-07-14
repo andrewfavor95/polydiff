@@ -1,5 +1,5 @@
 # set to false if you dont want to use weights and biases 
-WANDB = False
+WANDB = True
 
 if WANDB:
     import wandb
@@ -55,10 +55,10 @@ N_EXAMPLE_PER_EPOCH = 25600
 
 
 LOAD_PARAM = {'shuffle': False,
-              'num_workers': 4,
+              'num_workers': 0,
               'pin_memory': True}
 LOAD_PARAM2 = {'shuffle': False,
-              'num_workers': 4,
+              'num_workers': 0,
               'pin_memory': True}
 
 def add_weight_decay(model, l2_coeff):
@@ -127,7 +127,7 @@ class Trainer():
     def __init__(self, model_name='BFF',
                  n_epoch=100, lr=1.0e-4, l2_coeff=1.0e-2, port=None, interactive=False,
                  model_param={}, loader_param={}, loss_param={}, batch_size=1, accum_step=1, 
-                 maxcycle=4, diffusion_param={}, outdir=f'./train_session{get_datetime()}'):
+                 maxcycle=4, diffusion_param={}, outdir=f'./train_session{get_datetime()}', wandb_prefix=''):
         self.model_name = model_name #"BFF"
         #self.model_name = "%s_%d_%d_%d_%d"%(model_name, model_param['n_module'], 
         #                                    model_param['n_module_str'],
@@ -155,6 +155,7 @@ class Trainer():
         self.batch_size = batch_size
 
         self.diffusion_param = diffusion_param
+        self.wandb_prefix=wandb_prefix
 
         # For diffusion
         diff_kwargs = {'T'              :diffusion_param['diff_T'],
@@ -483,16 +484,17 @@ class Trainer():
 
     def train_model(self, rank, world_size):
         #print ("running ddp on rank %d, world_size %d"%(rank, world_size))
-        if WANDB:
+        if WANDB and rank == 0:
             print('initializing wandb')
-            wandb.init(project="fancy-pants ", entity="bakerlab")
+            wandb.init(project="fancy-pants ", entity="bakerlab", name='_'.join([self.wandb_prefix, self.outdir.replace('./','')]))
+            
+            all_param = {}
+            all_param.update(self.loader_param)
+            all_param.update(self.model_param)
+            all_param.update(self.loss_param)
+            all_param.update(self.diffusion_param)
 
-            params = {  'loader_param':self.loader_param,
-                        'model_param':self.model_param,
-                        'loss_param':self.loss_param,
-                        'diffusion_param':self.diffusion_param}
-
-            wandb.config = params
+            wandb.config = all_param
 
         gpu = rank % torch.cuda.device_count()
         dist.init_process_group(backend="nccl", world_size=world_size, rank=rank)
@@ -871,7 +873,10 @@ class Trainer():
                                 pred_lddts, idx_pdb, chosen_dataset[0], chosen_task[0], unclamp=unclamp, negative=negative,
                                 **self.loss_param)
                     loss = loss / self.ACCUM_STEP
-                    scaler.scale(loss).backward()
+
+                    if not torch.isnan(loss):
+
+                        scaler.scale(loss).backward()
             else:
                 with torch.cuda.amp.autocast(enabled=USE_AMP):
                     logit_s, logit_aa_s, logit_exp, pred_crds, alphas, pred_lddts = ddp_model(msa_masked[:,i_cycle],
@@ -906,7 +911,8 @@ class Trainer():
                                 **self.loss_param)
                 
                 loss = loss / self.ACCUM_STEP
-                scaler.scale(loss).backward()
+                if not torch.isnan(loss):
+                    scaler.scale(loss).backward()
                 # gradient clipping
                 scaler.unscale_(optimizer)
                 torch.nn.utils.clip_grad_norm_(ddp_model.parameters(), 0.2)
@@ -963,8 +969,8 @@ class Trainer():
                             local_acc[0], local_acc[1], local_acc[2], max_mem))
                     
                     ic(epoch*len(train_loader)+counter)
-                    if WANDB:
-                        loss_dict.update({'t':little_t, 'num_examples':epoch*len(train_loader)+counter})
+                    if WANDB and rank == 0:
+                        loss_dict.update({'t':little_t, 'total_examples':epoch*len(train_loader)+counter*world_size})
                         wandb.log(loss_dict)
 
 
@@ -1475,5 +1481,6 @@ if __name__ == "__main__":
                     batch_size=args.batch_size,
                     accum_step=args.accum,
                     maxcycle=args.maxcycle,
-                    diffusion_param=diffusion_param)
+                    diffusion_param=diffusion_param,
+                    wandb_prefix=args.wandb_prefix)
     train.run_model_training(torch.cuda.device_count())
