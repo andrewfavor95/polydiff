@@ -77,17 +77,13 @@ class Denoise():
         px0 = px0.reshape(-1,3) - px0_motif_mean
         px0_ = px0 @ U
 
-
-#         #3 centre at origin and reshape
-#         px0_ = px0_ - px0_[:,:3].reshape(-1,3).mean(0)
-#         px0_ = px0_.reshape(L,A,3)
-#         px0_[~atom_mask] = float('nan')
         #3 put in same global position as xT
         px0_ = px0_ + xT_motif_mean
         px0_ = px0_.reshape(L,A,3)
         px0_[~atom_mask] = float('nan')
         return torch.Tensor(px0_)
-    def get_mu_xt_x0(self, xt, px0, t):
+   
+     def get_mu_xt_x0(self, xt, px0, t):
         """
         Given xt, predicted x0 and the timestep t, give mu of x(t-1)
         Assumes t is 0 indexed
@@ -209,7 +205,7 @@ class Denoise():
         #align to motif:
         px0 = self.align_to_xt_motif(px0, xt, diffusion_mask)
         # Now done with diffusion mask. if fix motif is False, just set diffusion mask to be all True, and all coordinates can diffuse
-        if fix_motif:
+        if not fix_motif:
             diffusion_mask[:] = True
     
         ca_next = self.get_next_ca(xt, px0, xT, t, diffusion_mask)
