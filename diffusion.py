@@ -40,7 +40,7 @@ def cosine_interp(T, eta_max, eta_min):
     return out 
 
 
-def get_beta_schedule(T, b0, bT, schedule_type, schedule_params={}):
+def get_beta_schedule(T, b0, bT, schedule_type, schedule_params={}, inference=False):
     """
     Given a noise schedule type, create the beta schedule 
     """
@@ -57,6 +57,17 @@ def get_beta_schedule(T, b0, bT, schedule_type, schedule_params={}):
     # cosine noise schedule 
     else:
         schedule = cosine_interp(T, bT, b0) 
+    
+    
+    #get alphabar_t for convenience
+    mask = ~torch.triu(torch.full((T,T), True), diagonal=1)
+    root_beta = torch.sqrt(1-schedule)*mask
+    root_beta[~mask] = 1.0
+    alphabar_t_schedule = torch.prod(root_beta, dim=-1)
+    
+    print(f"With this beta schedule ({schedule_type} schedule, beta_0 = {b0}, beta_T = {bT}), alpha_bar_T = {alphabar_t_schedule[-1]}")
+    if inference:
+        return schedule, alphabar_t_schedule
 
     return schedule 
 
