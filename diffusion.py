@@ -36,7 +36,7 @@ def cosine_interp(T, eta_max, eta_min):
     """
     
     t = torch.arange(T)
-    out = eta_min + 0.5*(eta_max - eta_min)*(1+torch.cos((t/T)*np.pi))
+    out = eta_max + 0.5*(eta_min-eta_max)*(1+torch.cos((t/T)*np.pi))
     return out 
 
 
@@ -60,10 +60,12 @@ def get_beta_schedule(T, b0, bT, schedule_type, schedule_params={}, inference=Fa
     
     
     #get alphabar_t for convenience
-    mask = ~torch.triu(torch.full((T,T), True), diagonal=1)
-    root_beta = torch.sqrt(1-schedule)*mask
-    root_beta[~mask] = 1.0
-    alphabar_t_schedule = torch.prod(root_beta, dim=-1)
+    #mask = ~torch.triu(torch.full((T,T), True), diagonal=1)
+    #root_beta = torch.sqrt(1-schedule)*mask
+    #root_beta[~mask] = 1.0
+    #alphabar_t_schedule = torch.prod(root_beta, dim=-1)
+    alpha_schedule = 1-schedule
+    alphabar_t_schedule  = torch.cumprod(alpha_schedule, dim=0)
     
     print(f"With this beta schedule ({schedule_type} schedule, beta_0 = {b0}, beta_T = {bT}), alpha_bar_T = {alphabar_t_schedule[-1]}")
     if inference:
@@ -86,7 +88,7 @@ class EuclideanDiffuser():
         self.T = T 
         
         # make noise/beta schedule 
-        self.beta_schedule = get_beta_schedule(T, b_T, b_0, schedule_type, **schedule_kwargs)
+        self.beta_schedule = get_beta_schedule(T, b_0, b_T, schedule_type, **schedule_kwargs)
         self.alpha_schedule = 1-self.beta_schedule 
 
     
@@ -266,19 +268,21 @@ class SLERP():
             interpolator = Slerp(key_times, key_rots)
             interp_time = alpha
             
+            # grab the interpolated FRAMES 
+            interp_frame  = interpolator(interp_time)
+            
+            # construct the rotation matrix which when applied YIELDS interpolated frames 
+            interp_rot = (interp_frame.as_matrix().squeeze() @ np.linalg.inv(r_true.squeeze()) )[None,...]
 
-            interp_rot  = interpolator(interp_time)
-
-            all_interps.append(interp_rot.as_matrix())
+            all_interps.append(interp_rot)
         
-        all_interps = np.stack(all_interps, axis=0)
+        all_interps = np.concatenate(all_interps, axis=0)
         
         # Now apply all the interpolated rotation matrices to the original rotation matrices and get the frames at each timestep
-        slerped_frames = np.einsum('lrij,laj->lrai', all_interps, R_true.as_matrix())
+        slerped_frames = np.einsum('lrij,ljk->lrik', all_interps, R_true.as_matrix())
         
         # apply the slerped frames to the coordinates
-        
-        slerped_crds   = np.einsum('lrij,laj->lrai', slerped_frames, xyz[:,:3,:] - Ca.squeeze()[:,None,...].numpy()) + Ca.squeeze()[:,None,None,...].numpy()
+        slerped_crds   = np.einsum('lrij,laj->lrai', all_interps, xyz[:,:3,:] - Ca.squeeze()[:,None,...].numpy()) + Ca.squeeze()[:,None,None,...].numpy()
         
         # (T,L,3,3) set of backbone coordinates and frames 
         return slerped_crds, slerped_frames
@@ -477,6 +481,7 @@ class Diffuser():
         cum_delta = deltas.cumsum(dim=1)
         # The coordinates of the translated AND rotated frames
         diffused_BB = (torch.from_numpy(diffused_frame_crds) + cum_delta[:,:,None,:]).transpose(0,1)
+        #diffused_BB  = torch.from_numpy(diffused_frame_crds).transpose(0,1)
 
 
         diffused_torsions_trig = torch.stack([torch.cos(diffused_torsions), 

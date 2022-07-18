@@ -486,7 +486,8 @@ for i in range(22):
     reference_angles[i,2,:]=th_ang_v(CGr,torch.tensor([-1.,0.,0.]))
 
 N_BACKBONE_ATOMS = 3
-def writepdb_multi(filename, atoms_stack, bfacts, seq, backbone_only=False, chain_ids=None):
+N_HEAVY = 14 
+def writepdb_multi(filename, atoms_stack, bfacts, seq, backbone_only=False, chain_ids=None, use_hydrogens=True):
     """
     Function for writing multiple structural states of the same sequence into a single 
     pdb file. 
@@ -506,6 +507,8 @@ def writepdb_multi(filename, atoms_stack, bfacts, seq, backbone_only=False, chai
 
                 if backbone_only and j >= N_BACKBONE_ATOMS:
                     break
+                if not use_hydrogens and j >= N_HEAVY:
+                    break 
                 if (atm_j is None) or (torch.all(torch.isnan(atomscpu[i,j]))):
                     continue
                 chain_id = 'A'
