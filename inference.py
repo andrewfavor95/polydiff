@@ -6,8 +6,14 @@ from scipy.spatial.transform import Slerp
 
 # diffusion imports 
 from diffusion import get_beta_schedule, Diffuser
-from util import rigid_from_3_points, writepdb_multi, writepdb
-import util
+from util import rigid_from_3_points, writepdb_multi, writepdb, get_torsions
+from diff_util import get_aa_schedule, th_interpolate_angles, th_min_angle
+from util import torsion_indices as TOR_INDICES
+from util import torsion_can_flip as TOR_CAN_FLIP
+from util import reference_angles as REF_ANGLES
+from util_module import ComputeAllAtomCoords
+
+
 import util
 from util_module import ComputeAllAtomCoords 
 
@@ -95,6 +101,7 @@ class Denoise():
     """
     def __init__(self,
                  T,
+                 L,
                  b_0=0.001,
                  b_T=0.1,
                  schedule_type='cosine',
@@ -110,6 +117,7 @@ class Denoise():
             
         """
         self.T = T
+        self.L = L 
         self.b_0 = b_0
         self.b_T = b_T
         self.schedule_type = schedule_type
@@ -119,6 +127,130 @@ class Denoise():
         self.var_scale = var_scale
         self.aa_decode_steps=aa_decode_steps
         self.schedule, self.alphabar_schedule = get_beta_schedule(self.T, self.b_0, self.b_T, self.schedule_type, schedule_params={}, inference=True)
+
+        # amino acid decoding schedule 
+        out = get_aa_schedule(T,L,nsteps=aa_decode_steps)
+        self.aa_decode_times, self.decode_order, self.idx2steps, self.aa_mask_stack = out
+
+
+
+
+    def get_next_torsions(self, xt, px0, seq_t, seq_logit_px0, t):
+        """
+        Samples the next chi angles and amino acid identities for the pose 
+
+        xt (torch.tensor, required): L,14,3 or L,27,3 set of fullatom crds 
+
+        px0 (torch.tensor, required): Predicted set of full atom crds 
+
+        seq_t (torch.tensor, required): Current sequence in the pose 
+
+        pseq_0 (torch.tensor, required): predicted sequence logits for the x0 prediction
+
+        t (int, required): timestep 
+        """
+        L = len(xt)
+        # argmaxed sequence logits for x0 prediction
+        seq_px0 = torch.argmax(seq_logit_px0, dim=-1) 
+
+        ### initialize full atom reps to calculate torsions 
+        RAD = True # use radians for angle stuff 
+
+        # build 27-atom representations
+        if not xt.shape[1] == 27:
+            xt_full = torch.full((L,27,3),np.nan).float()
+            xt_full[:,:14,:] = xt
+
+        if not px0.shape[1] == 27:
+            px0_full = torch.full((L,27,3),np.nan).float()
+            px0_full[:,:14,:] = px0
+
+        px0_full = torch.full((L,27,3),np.nan).float()
+        px0_full[:,:14,:] = xt
+
+
+        # there is no situation where we should have any NaN BB crds here  
+        mask = torch.full((L, 27), False)
+        mask[:,:14] = True 
+
+        ### Calcualte torsions and interpolate between them 
+
+        # Xt torsions
+        torsions_sincos_xt, torsions_alt_sincos_xt, tors_mask_xt, tors_planar_xt = get_torsions(xt_full[None], 
+                                                                                                seq_t[None], 
+                                                                                                TOR_INDICES, 
+                                                                                                TOR_CAN_FLIP, 
+                                                                                                REF_ANGLES)
+        torsions_angle_xt     = torch.atan2(torsions_sincos_xt[...,1],
+                                            torsions_sincos_xt[...,0]).squeeze()
+        torsions_angle_xt_alt = torch.atan2(torsions_alt_sincos_xt[...,1],
+                                            torsions_alt_sincos_xt[...,0]).squeeze()
+
+
+
+        # pX0 torsions - uses same seq_t to calculate 
+        torsions_sincos_px0, torsions_alt_sincos_px0, tors_mask_px0, tors_planar_px0 = get_torsions(px0_full[None], 
+                                                                                                    seq_t[None], 
+                                                                                                    TOR_INDICES, 
+                                                                                                    TOR_CAN_FLIP, 
+                                                                                                    REF_ANGLES)
+        torsions_angle_px0     = torch.atan2(torsions_sincos_px0[...,1],
+                                             torsions_sincos_px0[...,0]).squeeze()
+
+        # Take the first one as ground truth --> don't need alt for px0 
+        # torsions_angle_alt_px0 = torch.atan2(torsions_alt_sincos_px0[...,1],
+        #                                      torsions_alt_sincos_px0[...,0]).squeeze()
+
+
+        # calculate the minimum angle between both options in xt and the angles in px0
+        a = th_min_angle(torsions_angle_xt,     torsions_angle_px0, radians=RAD)
+        b = th_min_angle(torsions_angle_xt_alt, torsions_angle_px0, radians=RAD)
+        condition = a < b
+        torsions_xt_mindiff = torch.where(condition, torsions_angle_xt, torsions_angle_xt_alt)
+
+        # don't allow movement where diffusion mask is True 
+        pass # TODO 
+
+
+        # where are the masked tokens 
+        is_currently_masked = seq_t == 21
+
+        # these are in radians now 
+        c,d = torsions_xt_mindiff.flatten(), torsions_angle_px0.flatten()
+
+        # everybody who is being diffused is going 1/t of the way to px0
+        # so interpolate over t steps and use the first interpolation point 
+        e = torch.full_like(c, t)
+        angle_interpolations = th_interpolate_angles(c, d, t, n_diffuse=e)
+        angle_interpolations = angle_interpolations.reshape(L,10,t)
+
+        # grab interpolated torsions and build new full atom pose 
+        # index 0 is the current angle
+
+        if t > 1:
+            next_torsions = angle_interpolations[:,:,1]
+        elif t == 1:
+            next_torsions = torsions_angle_px0
+        else:
+            # t is 0
+            raise RuntimeError('Cannot operate on t=0 input, lowest is t=1')
+
+        next_torsions_trig = torch.stack([torch.cos(next_torsions),
+                                        torch.sin(next_torsions)], dim=-1)
+
+        ## Reveal some amino acids in the sequence according to schedule and predictions
+        next_seq = torch.clone(seq_t)
+        if t < len(self.decode_order): 
+            decode_positions = self.decode_order[t]
+            replacement = seq_px0[decode_positions]
+            next_seq[decode_positions] = replacement
+
+        
+        return next_torsions_trig, next_seq
+
+
+
+
 
     def align_to_xt_motif(self, px0, xT, diffusion_mask, eps=1e-6):
         """
@@ -312,7 +444,8 @@ class Denoise():
         # (L,3,3) set of backbone coordinates with slight rotation 
         return slerped_crds.squeeze(1)
 
-    def get_next_xyz(self, xt, px0, xT, t, diffusion_mask, seq, fix_motif=True):
+
+    def get_next_pose(self, xt, px0, xT, t, diffusion_mask, seq_t, pseq0, fix_motif=True):
         """
         Wrapper function to take px0, xt and t, and to produce xt-1
         First, aligns px0 to xt
@@ -329,23 +462,37 @@ class Denoise():
             t (int, required): timestep t
 
             diffusion_mask (torch.tensor, required): Mask
+
+            seq_t (torch.tensor, required): Sequence at the current timestep 
         """
-        #align to motif:
+        get_allatom = ComputeAllAtomCoords().to(device=xt.device)
+        L,n_atom = xt.shape[:2]
+        assert (xt.shape[1]  == 14) or (xt.shape[1]  == 27)
+        assert (px0.shape[1] == 14) or (px0.shape[1] == 27)# need full atom rep for torsion calculations   
+
+        #align to motif
         px0 = self.align_to_xt_motif(px0, xt, diffusion_mask)
 
         # Now done with diffusion mask. if fix motif is False, just set diffusion mask to be all True, and all coordinates can diffuse
         if not fix_motif:
             diffusion_mask[:] = True
-    
-        _, ca_deltas = self.get_next_ca(xt, px0, xT, t, diffusion_mask)
-
-        frames_next = self.get_next_frames(xt, px0, t, diffusion_mask) # the coordinates of the new N/CA/C slerped once 
         
+        # get the next set of CA coordinates 
+        _, ca_deltas = self.get_next_ca(xt, px0, xT, t, diffusion_mask)
+        
+        # get the next set of backbone frames (coordinates)
+        frames_next = self.get_next_frames(xt, px0, t, diffusion_mask)
+        
+        # add the delta to the new frames 
         frames_next = torch.from_numpy(frames_next) + ca_deltas[:,None,:]  # translate 
         
-        # TODO: Build full atom rep with predicted torsions instead of just BB
+        # get the next set of amino acid identities and chi angles 
+        torsions_next, seq_next = self.get_next_torsions(xt, px0, seq_t, pseq0, t)       
 
-        return frames_next 
+        # build full atom representation with the new torsions but the current seq 
+        _, fullatom_next =  get_allatom(seq_t[None], frames_next[None], torsions_next[None])
+
+        return fullatom_next.squeeze()[:,:14,:]
 
 
 def main():
@@ -372,6 +519,7 @@ def main():
     xyz    = parsed['xyz']
     #xyz    = torch.from_numpy( (xyz - xyz[:,:1,:].mean(axis=0)[None,...]) )
     xyz = torch.from_numpy(xyz)
+    L = len(xyz)
 
 
 
@@ -402,26 +550,42 @@ def main():
                       'aa_decode_steps':100}
 
     diffuser = Diffuser(**denoise_kwargs)
+    denoise_kwargs.update({'L':L})
     denoiser = Denoise(**denoise_kwargs)
     
     # get diffused xT  
     out = diffuser.diffuse_pose(torch.clone(xyz), seq, atom_mask, diffusion_mask)
     diffused_T, deltas, diffused_frame_crds, diffused_frames, diffused_torsions, fa_stack, aa_masks = out 
      
-    xT = fa_stack[-1].squeeze()[:,:3,:]
+    xT = fa_stack[-1].squeeze()[:,:14,:]
     xt = torch.clone(xT)
+
+    # set the predicted sequence as the true sequence 
+    pseq_0 = torch.zeros((L,22))
+    pseq_0[:,seq] = 1 
+
+    # set the starting sequence as all masked besides the motif 
+    seq_t = torch.clone(seq)
+    seq_t[~diffusion_mask] = 21
 
     denoised_xyz_stack = []
     for t in range(T-1,0,-1):
         
-        xt = denoiser.get_next_xyz(xt=xt, px0=torch.clone( xyz[:,:3,:] ), xT=xT, t=t, diffusion_mask=diffusion_mask, seq=seq) 
+        xt = denoiser.get_next_pose(xt             = xt, 
+                                    px0            = torch.clone( xyz[:,:14,:] ), 
+                                    xT             = xT, 
+                                    t              = t, 
+                                    diffusion_mask = diffusion_mask, 
+                                    seq_t          = seq_t,
+                                    pseq0          = pseq_0) 
+
         denoised_xyz_stack.append(xt)
 
     
     denoised_xyz_stack = torch.stack(denoised_xyz_stack)
     
     out='./test_denoising.pdb'
-    writepdb_multi(out, denoised_xyz_stack, torch.ones_like(seq), seq, use_hydrogens=False, backbone_only=True)
+    writepdb_multi(out, denoised_xyz_stack, torch.ones_like(seq), seq, use_hydrogens=False, backbone_only=False)
     
     #out = './test_single_denoising.pdb'
     #writepdb(out, xt, seq)
