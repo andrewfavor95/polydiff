@@ -159,14 +159,13 @@ class Denoise():
         # build 27-atom representations
         if not xt.shape[1] == 27:
             xt_full = torch.full((L,27,3),np.nan).float()
-            xt_full[:,:14,:] = xt
+            xt_full[:,:14,:] = xt[:,:14]
+
 
         if not px0.shape[1] == 27:
             px0_full = torch.full((L,27,3),np.nan).float()
-            px0_full[:,:14,:] = px0
+            px0_full[:,:14,:] = px0[:,:14]
 
-        px0_full = torch.full((L,27,3),np.nan).float()
-        px0_full[:,:14,:] = xt
 
 
         # there is no situation where we should have any NaN BB crds here  
@@ -205,7 +204,7 @@ class Denoise():
         # calculate the minimum angle between both options in xt and the angles in px0
         a = th_min_angle(torsions_angle_xt,     torsions_angle_px0, radians=RAD)
         b = th_min_angle(torsions_angle_xt_alt, torsions_angle_px0, radians=RAD)
-        condition = a < b
+        condition = torch.abs(a) < torch.abs(b)
         torsions_xt_mindiff = torch.where(condition, torsions_angle_xt, torsions_angle_xt_alt)
 
         # don't allow movement where diffusion mask is True 
@@ -216,17 +215,18 @@ class Denoise():
         is_currently_masked = seq_t == 21
 
         # these are in radians now 
-        c,d = torsions_xt_mindiff.flatten(), torsions_angle_px0.flatten()
+        start,end = torsions_xt_mindiff.flatten(), torsions_angle_px0.flatten()
 
         # everybody who is being diffused is going 1/t of the way to px0
         # so interpolate over t steps and use the first interpolation point 
-        e = torch.full_like(c, t)
-        angle_interpolations = th_interpolate_angles(c, d, t, n_diffuse=e)
+        diff_steps = torch.full_like(start, t)
+        angle_interpolations = th_interpolate_angles(start, end, t, n_diffuse=diff_steps)
         angle_interpolations = angle_interpolations.reshape(L,10,t)
 
         # grab interpolated torsions and build new full atom pose 
         # index 0 is the current angle
 
+        # next_torsions = torsions_angle_px0
         if t > 1:
             next_torsions = angle_interpolations[:,:,1]
         elif t == 1:
@@ -236,16 +236,15 @@ class Denoise():
             raise RuntimeError('Cannot operate on t=0 input, lowest is t=1')
 
         next_torsions_trig = torch.stack([torch.cos(next_torsions),
-                                        torch.sin(next_torsions)], dim=-1)
+                                          torch.sin(next_torsions)], dim=-1)
 
         ## Reveal some amino acids in the sequence according to schedule and predictions
         next_seq = torch.clone(seq_t)
-        if t < len(self.decode_order): 
-            decode_positions = self.decode_order[t]
-            replacement = seq_px0[decode_positions]
+        if t <= len(self.decode_order): 
+            decode_positions = self.decode_order[t-1]
+            replacement      = seq_px0[decode_positions]
             next_seq[decode_positions] = replacement
 
-        
         return next_torsions_trig, next_seq
 
 
@@ -492,7 +491,7 @@ class Denoise():
         # build full atom representation with the new torsions but the current seq 
         _, fullatom_next =  get_allatom(seq_t[None], frames_next[None], torsions_next[None])
 
-        return fullatom_next.squeeze()[:,:14,:]
+        return fullatom_next.squeeze()[:,:14,:], seq_next
 
 
 def main():
@@ -561,25 +560,26 @@ def main():
     xt = torch.clone(xT)
 
     # set the predicted sequence as the true sequence 
-    pseq_0 = torch.zeros((L,22))
-    pseq_0[:,seq] = 1 
+    pseq_0 = torch.nn.functional.one_hot(seq, num_classes=22)
 
     # set the starting sequence as all masked besides the motif 
     seq_t = torch.clone(seq)
     seq_t[~diffusion_mask] = 21
 
     denoised_xyz_stack = []
+    seq_stack = []
     for t in range(T-1,0,-1):
         
-        xt = denoiser.get_next_pose(xt             = xt, 
-                                    px0            = torch.clone( xyz[:,:14,:] ), 
-                                    xT             = xT, 
-                                    t              = t, 
-                                    diffusion_mask = diffusion_mask, 
-                                    seq_t          = seq_t,
-                                    pseq0          = pseq_0) 
+        xt, seq_t = denoiser.get_next_pose( xt              = xt, 
+                                            px0            = torch.clone( xyz[:,:14,:] ), 
+                                            xT             = xT, 
+                                            t              = t, 
+                                            diffusion_mask = diffusion_mask, 
+                                            seq_t          = seq_t,
+                                            pseq0          = pseq_0) 
 
         denoised_xyz_stack.append(xt)
+        seq_stack.append(seq_t)
 
     
     denoised_xyz_stack = torch.stack(denoised_xyz_stack)
@@ -587,8 +587,8 @@ def main():
     out='./test_denoising.pdb'
     writepdb_multi(out, denoised_xyz_stack, torch.ones_like(seq), seq, use_hydrogens=False, backbone_only=False)
     
-    #out = './test_single_denoising.pdb'
-    #writepdb(out, xt, seq)
+    out = './test_denoise_last_step.pdb'
+    writepdb(out, xt, seq_t)
 
 
     #out = './rewrite_1qys.pdb'
