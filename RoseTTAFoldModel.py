@@ -47,7 +47,7 @@ class RoseTTAFoldModule(nn.Module):
     def forward(self, msa_latent, msa_full, seq, xyz, idx,
                 t1d=None, t2d=None, xyz_t=None, alpha_t=None,
                 msa_prev=None, pair_prev=None, state_prev=None,
-                return_raw=False, return_full=False,
+                return_raw=False, return_full=False, return_infer=False,
                 use_checkpoint=False):
         B, N, L = msa_latent.shape[:3]
         # Get embeddings
@@ -78,6 +78,12 @@ class RoseTTAFoldModule(nn.Module):
 
         # predict masked amino acids
         logits_aa = self.aa_pred(msa)
+        
+        if return_infer:
+            # get last structure
+            xyz = einsum('bnij,bnaj->bnai', R[-1], xyz[:,:,:3]-xyz[:,:,1].unsqueeze(-2)) + T[-1].unsqueeze(-2)
+            return msa[:,0], pair, xyz, state, alpha_s[-1], logits_aa.permute(0,2,1)
+
         #
         # predict distogram & orientograms
         logits = self.c6d_pred(pair)

@@ -7,6 +7,7 @@ from util import get_tips
 from util_module import Dropout, create_custom_forward, rbf, init_lecun_normal
 from Attention_module import Attention, FeedForwardLayer, AttentionWithBias
 from Track_module import PairStr2Pair
+from icecream import ic
 
 # Module contains classes and functions to generate initial embeddings
 

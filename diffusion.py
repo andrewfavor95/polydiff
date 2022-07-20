@@ -358,7 +358,7 @@ class INTERP():
         # Grab the torsions which have the minimum difference to randomly sampled one 
         a = th_min_angle(torsions_angle,     random_torsions, radians=RAD)
         b = th_min_angle(torsions_angle_alt, random_torsions, radians=RAD)
-        condition = a < b
+        condition = torch.abs(a) < torch.abs(b)
         torsions_mindiff = torch.where(condition, torsions_angle, torsions_angle_alt)
 
         # Don't allow movement where diffusion_mask is True 

@@ -16,13 +16,14 @@ def th_min_angle(start, end, radians=False):
     return shortest_angle
 
 
-def th_interpolate_angles(start, end, T, n_diffuse):
+def th_interpolate_angles(start, end, T, n_diffuse,mindiff=None, radians=True):
     """
     
     """
     # find the minimum angle to add to get from start to end
-    angle_diffs = th_min_angle(start, end)
-
+    angle_diffs = th_min_angle(start, end, radians=radians)
+    if mindiff is not None:
+        assert torch.sum(mindiff.flatten()-angle_diffs) == 0.
     if n_diffuse is None:
         # default is to diffuse for max steps 
         n_diffuse = torch.full((len(angle_diffs)), T)
@@ -31,13 +32,11 @@ def th_interpolate_angles(start, end, T, n_diffuse):
     interps = []
     for i,diff in enumerate(angle_diffs):
         N = int(n_diffuse[i])
-
         actual_interp = torch.linspace(start[i], start[i]+diff, N)
-
-
         whole_interp = torch.full((T,), float(start[i]+diff))
+        temp=torch.clone(whole_interp)
         whole_interp[:N] = actual_interp
-
+        
         interps.append(whole_interp)
 
     return torch.stack(interps, dim=0)
