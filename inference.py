@@ -4,8 +4,6 @@ import numpy as np
 from scipy.spatial.transform import Rotation as scipy_R
 from scipy.spatial.transform import Slerp
 
-from chemical import aa2num, num2aa
-
 # diffusion imports 
 from diffusion import get_beta_schedule, Diffuser
 from util import rigid_from_3_points, writepdb_multi, writepdb, get_torsions
@@ -15,12 +13,12 @@ from util import torsion_can_flip as TOR_CAN_FLIP
 from util import reference_angles as REF_ANGLES
 from util_module import ComputeAllAtomCoords
 
-
+from inference_utils import preprocess
 import util
 from util_module import ComputeAllAtomCoords 
 
 from icecream import ic 
-
+import time
 
 def rmsd(V,W, eps=0):
         # First sum down atoms, then sum down xyz
@@ -35,7 +33,7 @@ def parse_pdb(filename, **kwargs):
 def parse_pdb_lines(lines, parse_hetatom=False, ignore_het_h=True):
     # indices of residues observed in the structure
     res = [(l[22:26],l[17:20]) for l in lines if l[:4]=="ATOM" and l[12:16].strip()=="CA"]
-    seq = [aa2num[r[1]] if r[1] in aa2num.keys() else 20 for r in res]
+    seq = [util.aa2num[r[1]] if r[1] in util.aa2num.keys() else 20 for r in res]
     pdb_idx = [( l[21:22].strip(), int(l[22:26].strip()) ) for l in lines if l[:4]=="ATOM" and l[12:16].strip()=="CA"]  # chain letter, res num
 
     # 4 BB + up to 10 SC atoms
@@ -45,7 +43,7 @@ def parse_pdb_lines(lines, parse_hetatom=False, ignore_het_h=True):
             continue
         chain, resNo, atom, aa = l[21:22], int(l[22:26]), ' '+l[12:16].strip().ljust(3), l[17:20]
         idx = pdb_idx.index((chain,resNo))
-        for i_atm, tgtatm in enumerate(util.aa2long[aa2num[aa]]):
+        for i_atm, tgtatm in enumerate(util.aa2long[util.aa2num[aa]]):
             if tgtatm is not None and tgtatm.strip() == atom.strip(): # ignore whitespace
                 xyz[idx,i_atm,:] = [float(l[30:38]), float(l[38:46]), float(l[46:54])]
                 break
@@ -137,7 +135,7 @@ class Denoise():
 
 
 
-    def get_next_torsions(self, xt, px0, seq_t, seq_logit_px0, t):
+    def get_next_torsions(self, xt, px0, seq_t, seq_logit_px0, t, diffusion_mask=None):
         """
         Samples the next chi angles and amino acid identities for the pose 
 
@@ -197,7 +195,7 @@ class Denoise():
                                                                                                     REF_ANGLES)
         torsions_angle_px0     = torch.atan2(torsions_sincos_px0[...,1],
                                              torsions_sincos_px0[...,0]).squeeze()
-    
+
         # Take the first one as ground truth --> don't need alt for px0 
         # torsions_angle_alt_px0 = torch.atan2(torsions_alt_sincos_px0[...,1],
         #                                      torsions_alt_sincos_px0[...,0]).squeeze()
@@ -206,42 +204,37 @@ class Denoise():
         # calculate the minimum angle between both options in xt and the angles in px0
         a = th_min_angle(torsions_angle_xt,     torsions_angle_px0, radians=RAD)
         b = th_min_angle(torsions_angle_xt_alt, torsions_angle_px0, radians=RAD)
-        
-        
         condition = torch.abs(a) < torch.abs(b)
-        # condition = a < b
-
+        #condition = a < b
         torsions_xt_mindiff = torch.where(condition, torsions_angle_xt, torsions_angle_xt_alt)
-
-
-        # don't allow movement where diffusion mask is True 
-        pass # TODO 
-
+        mindiff = torch.where(condition, a, b)
 
         # these are in radians now 
         start,end = torsions_xt_mindiff.flatten(), torsions_angle_px0.flatten()
-
+        
         # everybody who is being diffused is going 1/t of the way to px0
         # so interpolate over t steps and use the first interpolation point 
         diff_steps = torch.full_like(start, t)
-        angle_interpolations = th_interpolate_angles(start, end, t, n_diffuse=diff_steps)
+        angle_interpolations = th_interpolate_angles(start, end, t, n_diffuse=diff_steps, mindiff=mindiff)
         angle_interpolations = angle_interpolations.reshape(L,10,t)
 
-
+        # don't allow movement where diffusion mask is True 
+        if diffusion_mask is not None:
+            angle_interpolations[diffusion_mask,:,:] = end.reshape(L,10,-1)[diffusion_mask,:,:1].repeat(1,1,t)
         # grab interpolated torsions and build new full atom pose 
         # index 0 is the current angle
-
+        # next_torsions = torsions_angle_px0
+        temp=0
         if t > 1:
             next_torsions = angle_interpolations[:,:,1]
-
-
         elif t == 1:
             next_torsions = torsions_angle_px0
         else:
             # t is 0
             raise RuntimeError('Cannot operate on t=0 input, lowest is t=1')
 
-        next_torsions_trig = torch.stack([torch.cos(next_torsions),torch.sin(next_torsions)], dim=-1)
+        next_torsions_trig = torch.stack([torch.cos(next_torsions),
+                                          torch.sin(next_torsions)], dim=-1)
 
         ## Reveal some amino acids in the sequence according to schedule and predictions
         next_seq = torch.clone(seq_t)
@@ -249,12 +242,6 @@ class Denoise():
             decode_positions = self.decode_order[t-1]
             replacement      = seq_px0[decode_positions]
             next_seq[decode_positions] = replacement
-
-        # next_torsions = torsions_angle_px0.squeeze()
-
-        ic(torsions_angle_px0[16])
-        ic(next_torsions[16])
-        ic(th_min_angle(next_torsions[16], torsions_angle_px0[16]))
         return next_torsions_trig, next_seq
 
 
@@ -273,9 +260,9 @@ class Denoise():
         L,n_atom,_ = xT.shape # A is number of atoms
         atom_mask = ~torch.isnan(px0)
         #convert to numpy arrays
-        px0 = px0.numpy()
-        xT = xT.numpy()
-        diffusion_mask = diffusion_mask.numpy()
+        px0 = px0.cpu().detach().numpy()
+        xT = xT.cpu().detach().numpy()
+        diffusion_mask = diffusion_mask.cpu().detach().numpy()
 
         #1 centre motifs at origin and get rotation matrix
         px0_motif = px0[diffusion_mask,:3].reshape(-1,3)
@@ -325,6 +312,7 @@ class Denoise():
         rms = rmsd(A,rB)
 
         #2 rotate whole px0 by rotation matrix
+        atom_mask = atom_mask.cpu()
         px0[~atom_mask] = 0 #convert nans to 0
         px0 = px0.reshape(-1,3) - px0_motif_mean
         px0_ = px0 @ R
@@ -451,8 +439,8 @@ class Denoise():
         slerped_crds   = np.einsum('lrij,laj->lrai', all_interps, xt[:,:3,:] - Ca_t.squeeze()[:,None,...].numpy()) + Ca_t.squeeze()[:,None,None,...].numpy()
 
         # (L,3,3) set of backbone coordinates with slight rotation 
-        #return slerped_crds.squeeze(1)
-        return xt[:,:3,:].numpy()
+        return slerped_crds.squeeze(1)
+
 
     def get_next_pose(self, xt, px0, xT, t, diffusion_mask, seq_t, pseq0, fix_motif=True):
         """
@@ -481,26 +469,25 @@ class Denoise():
 
         #align to motif
         #px0 = self.align_to_xt_motif(px0, xt, diffusion_mask)
-
+        px0=px0.to(xt.device)
         # Now done with diffusion mask. if fix motif is False, just set diffusion mask to be all True, and all coordinates can diffuse
         if not fix_motif:
-            diffusion_mask[:] = True
+            diffusion_mask[:] = False
         
         # get the next set of CA coordinates 
-        _, ca_deltas = self.get_next_ca(xt.clone(), px0.clone(), xT.clone(), t, diffusion_mask)
+        _, ca_deltas = self.get_next_ca(xt, px0, xT, t, diffusion_mask)
         
         # get the next set of backbone frames (coordinates)
-        frames_next = self.get_next_frames(xt.clone(), px0.clone(), t, diffusion_mask)
+        frames_next = self.get_next_frames(xt, px0, t, diffusion_mask)
         
         # add the delta to the new frames 
-        frames_next = torch.from_numpy(frames_next) #+ ca_deltas[:,None,:]  # translate 
+        frames_next = torch.from_numpy(frames_next) + ca_deltas[:,None,:]  # translate 
         
         # get the next set of amino acid identities and chi angles 
-        torsions_next, seq_next = self.get_next_torsions(xt.clone(), px0.clone(), seq_t, pseq0, t)   
+        torsions_next, seq_next = self.get_next_torsions(xt, px0, seq_t, pseq0, t, diffusion_mask)       
 
         # build full atom representation with the new torsions but the current seq 
         _, fullatom_next =  get_allatom(seq_t[None], frames_next[None], torsions_next[None])
-
 
         return fullatom_next.squeeze()[:,:14,:], seq_next, torsions_next
 
@@ -510,39 +497,40 @@ def main():
     from RoseTTAFoldModel import RoseTTAFoldModule
 
     device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
-    
     # make model 
-    #args, model_param, loader_param, loss_param, diffusion_params = arguments.get_args()
-    #ckpt_path = '/home/davidcj/projects/BFF/rf_diffusion/checkpoints/small_se3_pred_x0/BFF_9.pt'
-    #model = RoseTTAFoldModule(**model_param).to(device)
-    
+    args, model_param, loader_param, loss_param, diffusion_params = arguments.get_args()
+    ckpt_path = '/mnt/home/davidcj/projects/BFF/rf_diffusion/tmp_models/BFF_12.pt'
+    model = RoseTTAFoldModule(**model_param).to(device)
+    model = model.eval()    
     print('Loading checkpoint from disk...')
-    #ckpt  = torch.load(ckpt_path, map_location=device)
-    #state = ckpt['model_state_dict']
+    ckpt  = torch.load(ckpt_path, map_location=device)
+    state = ckpt['model_state_dict']
     print('Putting checkpoint into model...')
-    #model.load_state_dict(state, strict=True)
+    model.load_state_dict(state, strict=True)
     print('Done making model')
 
     
     # parse pdb and prep inputs for diffusion
-    parsed = parse_pdb('/mnt/home/davidcj/projects/expert-potato/expert-potato/1qys.pdb')
+    #parsed = parse_pdb('/mnt/home/davidcj/projects/expert-potato/expert-potato/1qys.pdb')
+    # parsed = parse_pdb('/mnt/home/jwatson3/projects/BFF_diff/BFF/rf_diffusion/test_sh.pdb')
+    parsed = parse_pdb('/home/davidcj/projects/BFF/rf_diffusion/tim_barrel.pdb')
     xyz    = parsed['xyz']
-    #xyz    = torch.from_numpy( (xyz - xyz[:,:1,:].mean(axis=0)[None,...]) )
-    xyz = torch.from_numpy(xyz)
+    xyz    = torch.from_numpy( (xyz - xyz[:,:1,:].mean(axis=0)[None,...]) )
+    # xyz = torch.from_numpy(xyz)
     L = len(xyz)
-
-
+    
+    get_allatom = ComputeAllAtomCoords().to(device)
+    conversion = 'ARNDCQEGHILKMFPSTWYVX-'
 
     seq = torch.from_numpy( parsed['seq'] )
     atom_mask = torch.from_numpy( parsed['mask'] )
 
-    writepdb('./test_native.pdb', xyz[:,:3,:], seq, bfacts=torch.ones_like(seq))
+    # writepdb('./test_native.pdb', xyz[:,:3,:], seq, bfacts=torch.ones_like(seq))
 
     
     # Make diffusion mask just first 20 residues 
     diffusion_mask = torch.zeros(len(seq.squeeze())).to(dtype=bool)
-    diffusion_mask[:20] = True
-    
+    diffusion_mask[45:90] = True
     # Make the denoiser 
     T = 200
     b_0 = 0.001
@@ -557,7 +545,7 @@ def main():
                       'chi_type':'interp',
                       'var_scale':1,
                       'crd_scale':1/15,
-                      'aa_decode_steps':100}
+                      'aa_decode_steps':20}
 
     diffuser = Diffuser(**denoise_kwargs)
     denoise_kwargs.update({'L':L})
@@ -566,51 +554,82 @@ def main():
     # get diffused xT  
     out = diffuser.diffuse_pose(torch.clone(xyz), seq, atom_mask, diffusion_mask)
     diffused_T, deltas, diffused_frame_crds, diffused_frames, diffused_torsions, fa_stack, aa_masks = out 
-    
-    xT = torch.clone( xyz[:,:14,:] )
-    #xT = fa_stack[-1].squeeze()[:,:14,:]
+     
+    xT = fa_stack[-1].squeeze()[:,:14,:]
     xt = torch.clone(xT)
-
+    
+    
     # set the predicted sequence as the true sequence 
     pseq_0 = torch.nn.functional.one_hot(seq, num_classes=22)
-
     # set the starting sequence as all masked besides the motif 
     seq_t = torch.clone(seq)
     seq_t[~diffusion_mask] = 21
 
     denoised_xyz_stack = []
+    px0_xyz_stack = []
     seq_stack = []
     chi1_stack = []
+    #n_cycle = 2
+    n_cycle = np.ones(T)
+    # n_cycle[:50] = 2
+    # n_cycle[:25] = 3
+    #msa_prev = None
+    #pair_prev = None
+    #state_prev = None
     for t in range(T-1,0,-1):
-
-        xt, seq_t, tors_t = denoiser.get_next_pose( xt              = xt, 
-                                                    px0            = torch.clone( xyz[:,:14,:] ), 
-                                                    xT             = xT, 
-                                                    t              = t, 
-                                                    diffusion_mask = diffusion_mask, 
-                                                    seq_t          = seq_t,
-                                                    pseq0          = pseq_0) 
-
+        if t % 10 == 0:
+            print(f'{t} timesteps to go')
+        msa_masked, msa_full, seq, xt_in, idx_pdb, t1d, t2d, xyz_t, alpha_t = preprocess(seq_t, xt, t, device)
+        msa_prev = None
+        pair_prev = None
+        state_prev = None
+        with torch.no_grad():
+            for i in range(int(n_cycle[t])): 
+                msa_prev, pair_prev, px0, state_prev, alpha, logits = model(msa_masked,
+                                    msa_full,
+                                    seq, xt_in,
+                                    idx_pdb,
+                                    t1d=t1d, t2d=t2d,
+                                    xyz_t=xyz_t, alpha_t=alpha_t,
+                                    msa_prev = msa_prev,
+                                    pair_prev = pair_prev,
+                                    state_prev = state_prev,
+                                    return_infer=True)
+        _,px0 = get_allatom(seq, px0, alpha)
+        px0 = px0.squeeze()[:,:14]
+        px0_xyz_stack.append(px0) 
+        pseq_0 = torch.nn.functional.one_hot(torch.argmax(logits.squeeze(), dim=-1), num_classes=22).to(xt.device)
+        print(f'current sequence: {"".join([conversion[int(i)] for i in torch.argmax(pseq_0, dim=-1).tolist()])}')
+        print(f'number of recycles = {int(n_cycle[t])}')
+        if t != 0:
+            xt, seq_t, tors_t = denoiser.get_next_pose( xt              = xt, 
+                                            px0            =  px0, 
+                                            xT             = xT, 
+                                            t              = t, 
+                                            diffusion_mask = diffusion_mask, 
+                                            seq_t          = seq_t,
+                                            pseq0          = pseq_0) 
+        
         denoised_xyz_stack.append(xt)
         seq_stack.append(seq_t)
-        chi1_stack.append(tors_t)
-
-        if t == 198:
-            break 
-
-
+        chi1_stack.append(tors_t[:,:])
     
     denoised_xyz_stack = torch.stack(denoised_xyz_stack)
     denoised_xyz_stack = torch.flip(denoised_xyz_stack, [0,])
-
+    px0_xyz_stack = torch.stack(px0_xyz_stack)
+    px0_xyz_stack = torch.flip(px0_xyz_stack, [0,])
     chi1_stack = torch.stack(chi1_stack)
-    with open('chi_stack.pt', 'wb') as fp:
-        torch.save(chi1_stack, fp)
+    #with open('chi_stack.pt', 'wb') as fp:
+    #    torch.save(chi1_stack, fp)
     
-    out='./test_denoising.pdb'
-    writepdb_multi(out, denoised_xyz_stack, torch.ones_like(seq), seq, use_hydrogens=False, backbone_only=False)
+    timestr = time.strftime("%H%M%S")
+    out=f'./test_denoising_{timestr}.pdb'
+    writepdb_multi(out, denoised_xyz_stack, torch.ones_like(seq.squeeze()), seq.squeeze(), use_hydrogens=False, backbone_only=False)
     
-    out = './test_denoise_last_step.pdb'
+    out=f'./test_px0_{timestr}.pdb'
+    writepdb_multi(out, px0_xyz_stack, torch.ones_like(seq.squeeze()), seq.squeeze(), use_hydrogens=False, backbone_only=False)
+
+    out = f'./test_denoise_last_step_{timestr}.pdb'
     writepdb(out, xt, seq_t)
 
 
