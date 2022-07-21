@@ -491,7 +491,10 @@ class Trainer():
         #print ("running ddp on rank %d, world_size %d"%(rank, world_size))
         if WANDB and rank == 0:
             print('initializing wandb')
-            wandb.init(project="fancy-pants ", entity="bakerlab", name='_'.join([self.wandb_prefix, self.outdir.replace('./','')]))
+            wandb.init(
+                    project="fancy-pants ",
+                    entity="bakerlab", 
+                    name='_'.join([self.wandb_prefix, self.outdir.replace('./','')]))
             
             all_param = {}
             all_param.update(self.loader_param)
@@ -998,7 +1001,7 @@ class Trainer():
                 writepdb(f'{self.outdir}/training_pdbs/test_epoch_{epoch}_{counter}_{chosen_task[0]}_{chosen_dataset[0]}_t_{little_t}pred.pdb',pred_crds[-1,0,:,:3,:],top1_sequence[0,0,:])
                 writepdb(f'{self.outdir}/training_pdbs/test_epoch_{epoch}_{counter}_{chosen_task[0]}_{chosen_dataset[0]}_t_{little_t}true.pdb',true_crds[0,:,:3,:],torch.clamp(seq_original[0,0,:],0,19))
                 writepdb(f'{self.outdir}/training_pdbs/test_epoch_{epoch}_{counter}_{chosen_task[0]}_{chosen_dataset[0]}_t_{little_t}input.pdb',xyz_t[0,:,:,:3,:],torch.clamp(seq_masked[0,0,:],0,19))
-                with open(f'training_pdbs/test_epoch_{epoch}_{counter}_{chosen_task[0]}_{chosen_dataset[0]}_t_{little_t}pred_input.txt','w') as f:
+                with open(f'{self.outdir}/training_pdbs/test_epoch_{epoch}_{counter}_{chosen_task[0]}_{chosen_dataset[0]}_t_{little_t}pred_input.txt','w') as f:
                     f.write(str(masks_1d['input_str_mask'][0].cpu().detach().numpy())+'\n')
                     f.write(str(masks_1d['input_seq_mask'][0].cpu().detach().numpy())+'\n') 
 
