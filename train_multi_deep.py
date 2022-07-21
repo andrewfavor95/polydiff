@@ -35,6 +35,9 @@ import random
 # added for diffusion training 
 from diffusion import Diffuser
 
+# added for logging git diff
+import subprocess
+
 # distributed data parallel
 import torch.distributed as dist
 import torch.multiprocessing as mp
@@ -202,7 +205,7 @@ class Trainer():
         self.active_fn = nn.Softmax(dim=1)
 
         self.maxcycle = maxcycle
-
+        
         print (model_param, loader_param, loss_param)
         
     def calc_loss(self, logit_s, label_s,
@@ -527,6 +530,13 @@ class Trainer():
 
     def train_model(self, rank, world_size):
         #print ("running ddp on rank %d, world_size %d"%(rank, world_size))
+        
+        # save git diff from most recent commit
+        gitdiff_fn = open(f'{self.outdir}/git_diff.txt','w')
+        git_diff = subprocess.Popen(["git diff"], cwd = os.getcwd(), shell = True, stdout = gitdiff_fn, stderr = subprocess.PIPE)
+        print('Saved git diff between current state and last commit')
+
+
         if WANDB and rank == 0:
             print('initializing wandb')
             wandb.init(
@@ -541,7 +551,7 @@ class Trainer():
             all_param.update(self.diffusion_param)
 
             wandb.config = all_param
-
+            wandb.save(os.path.join(os.getcwd(), self.outdir, 'git_diff.txt'))
         gpu = rank % torch.cuda.device_count()
         dist.init_process_group(backend="nccl", world_size=world_size, rank=rank)
         torch.cuda.set_device("cuda:%d"%gpu)
@@ -1016,7 +1026,7 @@ class Trainer():
                             local_acc[0], local_acc[1], local_acc[2], max_mem))
                     
                     if WANDB and rank == 0:
-                        loss_dict.update({'t':little_t, 'total_examples':epoch*len(train_loader)+counter*world_size})
+                        loss_dict.update({'t':little_t, 'total_examples':epoch*len(train_loader)+counter*world_size, 'dataset':chosen_dataset[0], 'task':chosen_task[0]})
                         wandb.log(loss_dict)
 
 
