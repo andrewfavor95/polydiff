@@ -529,7 +529,10 @@ class Trainer():
         #print ("running ddp on rank %d, world_size %d"%(rank, world_size))
         if WANDB and rank == 0:
             print('initializing wandb')
-            wandb.init(project="fancy-pants ", entity="bakerlab", name='_'.join([self.wandb_prefix, self.outdir.replace('./','')]))
+            wandb.init(
+                    project="fancy-pants ",
+                    entity="bakerlab", 
+                    name='_'.join([self.wandb_prefix, self.outdir.replace('./','')]))
             
             all_param = {}
             all_param.update(self.loader_param)
