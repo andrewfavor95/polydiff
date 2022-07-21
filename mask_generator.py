@@ -120,7 +120,17 @@ def generate_masks(msa, task, loader_params, chosen_dataset, full_chain=None): #
 
         ## loss masks 
         pass # apply everywhere for now 
-    
+
+    elif task == 'diff' and chosen_dataset == 'complex':
+        '''
+        Diffusion task for complexes. Default is to diffuse the whole of the complete chain.
+        Takes full_chain as input, which is [full_chain_start_idx, full_chain_end_idx]
+        '''
+        assert full_chain[1] is not None
+        
+        input_str_mask = torch.clone(full_chain)
+        input_seq_mask = torch.clone(input_str_mask)
+
     elif task == 'hal' and chosen_dataset != 'complex':
         '''
         This is Joe's hallucination task, where a contiguous region is masked, along with flanks, and two residues either end are given (but not their angles).

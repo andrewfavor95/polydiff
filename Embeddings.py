@@ -169,8 +169,11 @@ class Templ_emb(nn.Module):
     #   t1d:
     #   - tiled AA sequence (20 standard aa + gap)
     #   - confidence (1)
+    #   - contacting or note (1). NB this is added for diffusion model. Used only in complex training examples - 1 signifies that a residue in the non-diffused chain\
+    #     i.e. the context, is in contact with the diffused chain.
     #   
-    def __init__(self, d_t1d=21+1, d_t2d=43+1, d_tor=30, d_pair=128, d_state=32, 
+    #Added extra t1d dimension for contacting or not
+    def __init__(self, d_t1d=21+1+1, d_t2d=43+1, d_tor=30, d_pair=128, d_state=32, 
                  n_block=2, d_templ=64,
                  n_head=4, d_hidden=16, p_drop=0.25):
         super(Templ_emb, self).__init__()
@@ -202,7 +205,7 @@ class Templ_emb(nn.Module):
 
     def forward(self, t1d, t2d, alpha_t, xyz_t, pair, state, use_checkpoint=False):
         # Input
-        #   - t1d: 1D template info (B, T, L, 22)
+        #   - t1d: 1D template info (B, T, L, 23)
         #   - t2d: 2D template info (B, T, L, L, 44)
         B, T, L, _ = t1d.shape
 
@@ -210,7 +213,7 @@ class Templ_emb(nn.Module):
         left = t1d.unsqueeze(3).expand(-1,-1,-1,L,-1)
         right = t1d.unsqueeze(2).expand(-1,-1,L,-1,-1)
         #
-        templ = torch.cat((t2d, left, right), -1) # (B, T, L, L, 88)
+        templ = torch.cat((t2d, left, right), -1) # (B, T, L, L, 90)
         templ = self.emb(templ) # Template templures (B, T, L, L, d_templ)
         # process each template features
         xyz_t = xyz_t.reshape(B*T, L, -1, 3)
@@ -218,7 +221,7 @@ class Templ_emb(nn.Module):
         templ = self.templ_stack(templ, rbf_feat, use_checkpoint=use_checkpoint) # (B, T, L,L, d_templ)
 
         # Prepare 1D template torsion angle features
-        t1d = torch.cat((t1d, alpha_t), dim=-1) # (B, T, L, 22+30)
+        t1d = torch.cat((t1d, alpha_t), dim=-1) # (B, T, L, 23+30)
         # process each template features
         t1d = self.proj_t1d(F.relu_(self.emb_t1d(t1d)))
         

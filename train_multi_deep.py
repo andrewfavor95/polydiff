@@ -453,7 +453,8 @@ class Trainer():
 
     def load_model(self, model, optimizer, scheduler, scaler, model_name, rank, suffix='last', resume_train=False):
 
-        chk_fn = "models/%s_%s.pt"%(model_name, suffix)
+        #chk_fn = "models/%s_%s.pt"%(model_name, suffix)
+        chk_fn = "models/extra_t1d_feat_BFF_last.pt"
         loaded_epoch = -1
         best_valid_loss = 999999.9
         if not os.path.exists(chk_fn):
@@ -480,8 +481,8 @@ class Trainer():
                     checkpoint['model_state_dict'][param].shape,
                      model.module.model.state_dict()[param].shape )
 
-        model.module.model.load_state_dict(new_chk, strict=False)
-        model.module.shadow.load_state_dict(new_chk, strict=False)
+        model.module.model.load_state_dict(new_chk, strict=True)
+        model.module.shadow.load_state_dict(new_chk, strict=True)
 
         if resume_train and (not rename_model):
             print (' ... loading optimization params')
@@ -1028,16 +1029,18 @@ class Trainer():
             clamped = top1_sequence
 
 
-            if chosen_task[0] != 'seq2str' and np.random.randint(0,100) == 0:
+            #if chosen_task[0] != 'seq2str' and np.random.randint(0,100) == 0:
+            if chosen_dataset[0] == 'complex':
                 if not os.path.isdir(f'./{self.outdir}/training_pdbs/'):
                     os.makedirs(f'./{self.outdir}/training_pdbs')
                 writepdb(f'{self.outdir}/training_pdbs/test_epoch_{epoch}_{counter}_{chosen_task[0]}_{chosen_dataset[0]}_t_{little_t}pred.pdb',pred_crds[-1,0,:,:3,:],top1_sequence[0,0,:])
                 writepdb(f'{self.outdir}/training_pdbs/test_epoch_{epoch}_{counter}_{chosen_task[0]}_{chosen_dataset[0]}_t_{little_t}true.pdb',true_crds[0,:,:3,:],torch.clamp(seq_original[0,0,:],0,19))
                 writepdb(f'{self.outdir}/training_pdbs/test_epoch_{epoch}_{counter}_{chosen_task[0]}_{chosen_dataset[0]}_t_{little_t}input.pdb',xyz_t[0,:,:,:3,:],torch.clamp(seq_masked[0,0,:],0,19))
-                with open(f'training_pdbs/test_epoch_{epoch}_{counter}_{chosen_task[0]}_{chosen_dataset[0]}_t_{little_t}pred_input.txt','w') as f:
+                with open(f'{self.outdir}/training_pdbs/test_epoch_{epoch}_{counter}_{chosen_task[0]}_{chosen_dataset[0]}_t_{little_t}pred_input.txt','w') as f:
                     f.write(str(masks_1d['input_str_mask'][0].cpu().detach().numpy())+'\n')
                     f.write(str(masks_1d['input_seq_mask'][0].cpu().detach().numpy())+'\n') 
-
+                    ic(t1d.shape)
+                    f.write(str(t1d[:,:,:,-1].cpu().detach().numpy()))
         # write total train loss
         train_tot /= float(counter * world_size)
         train_loss /= float(counter * world_size)

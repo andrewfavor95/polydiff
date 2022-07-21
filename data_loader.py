@@ -6,11 +6,13 @@ from dateutil import parser
 import numpy as np
 from parsers import parse_a3m, parse_pdb
 from chemical import INIT_CRDS
+from kinematics import xyz_to_t2d
 
 # for inpainting training
 from mask_generator import generate_masks
 from icecream import ic
 import pickle
+import random
 
 base_dir = "/projects/ml/TrRosetta/PDB-2021AUG02"
 compl_dir = "/projects/ml/RoseTTAComplex"
@@ -439,7 +441,7 @@ def get_train_valid_set(params, OFFSET=1000000):
                 else:
                     train_pdb[r[2]] = [(r[:2], r[-1])]
         val_hash = set(val_hash)
-    
+        
         # compile facebook model sets
         with open(params['FB_LIST'], 'r') as f:
             reader = csv.reader(f)
@@ -447,41 +449,43 @@ def get_train_valid_set(params, OFFSET=1000000):
             rows = [[r[0],r[2],int(r[3]),len(r[-1].strip())] for r in reader
                      if float(r[1]) > 80.0 and
                      len(r[-1].strip()) > 100 and len(r[-1].strip()) <= params['MAX_LENGTH']] #added max length to allow only full chains. Also reduced minimum length to 100aa
+        
         fb = {}
+        
         for r in rows:
             if r[2] in fb.keys():
                 fb[r[2]].append((r[:2], r[-1]))
             else:
                 fb[r[2]] = [(r[:2], r[-1])]
-    
-        # compile complex sets
-        # with open(params['COMPL_LIST'], 'r') as f:
-        #     reader = csv.reader(f)
-        #     next(reader)
-        #     # read complex_pdb, pMSA_hash, complex_cluster, length, taxID, assembly (bioA,opA,bioB,opB)
-        #     rows = [[r[0], r[3], int(r[4]), [int(plen) for plen in r[5].split(':')], r[6] , [int(r[7]), int(r[8]), int(r[9]), int(r[10])]] for r in reader
-        #             if float(r[2]) <= params['RESCUT'] and
-        #             parser.parse(r[1]) <= parser.parse(params['DATCUT']) and min([int(i) for i in r[5].split(":")]) < params['MAX_COMPLEX_CHAIN'] and min([int(i) for i in r[5].split(":")]) > 50] #require one chain of the hetero complexes to be smaller than a certain value so it can be kept complete. This chain must also be > 50aa long.
+        
+        #compile complex sets
+        with open(params['COMPL_LIST'], 'r') as f:
+            reader = csv.reader(f)
+            next(reader)
+            # read complex_pdb, pMSA_hash, complex_cluster, length, taxID, assembly (bioA,opA,bioB,opB)
+            rows = [[r[0], r[3], int(r[4]), [int(plen) for plen in r[5].split(':')], r[6] , [int(r[7]), int(r[8]), int(r[9]), int(r[10])]] for r in reader
+                     if float(r[2]) <= params['RESCUT'] and
+                     parser.parse(r[1]) <= parser.parse(params['DATCUT']) and min([int(i) for i in r[5].split(":")]) < params['MAX_COMPLEX_CHAIN'] and min([int(i) for i in r[5].split(":")]) > 50] #require one chain of the hetero complexes to be smaller than a certain value so it can be kept complete. This chain must also be > 50aa long.
 
         train_compl = {}
         valid_compl = {}
-        # for r in rows:
-        #     if r[2] in val_compl_ids:
-        #         if r[2] in valid_compl.keys():
-        #             valid_compl[r[2]].append((r[:2], r[-3], r[-2], r[-1])) # ((pdb, hash), length, taxID, assembly, negative?)
-        #         else:
-        #             valid_compl[r[2]] = [(r[:2], r[-3], r[-2], r[-1])]
-        #     else:
-        #         # if subunits are included in PDB validation set, exclude them from training
-        #         hashA, hashB = r[1].split('_')
-        #         if hashA in val_hash:
-        #             continue
-        #         if hashB in val_hash:
-        #             continue
-        #         if r[2] in train_compl.keys():
-        #             train_compl[r[2]].append((r[:2], r[-3], r[-2], r[-1]))
-        #         else:
-        #             train_compl[r[2]] = [(r[:2], r[-3], r[-2], r[-1])]
+        for r in rows:
+            if r[2] in val_compl_ids:
+                if r[2] in valid_compl.keys():
+                    valid_compl[r[2]].append((r[:2], r[-3], r[-2], r[-1])) # ((pdb, hash), length, taxID, assembly, negative?)
+                else:
+                    valid_compl[r[2]] = [(r[:2], r[-3], r[-2], r[-1])]
+            else:
+                # if subunits are included in PDB validation set, exclude them from training
+                hashA, hashB = r[1].split('_')
+                if hashA in val_hash:
+                    continue
+                if hashB in val_hash:
+                    continue
+                if r[2] in train_compl.keys():
+                    train_compl[r[2]].append((r[:2], r[-3], r[-2], r[-1]))
+                else:
+                    train_compl[r[2]] = [(r[:2], r[-3], r[-2], r[-1])]
 
         # compile negative examples
         # remove pairs if any of the subunits are included in validation set
@@ -679,6 +683,38 @@ def get_spatial_crop_fixbb(xyz, mask, sel, len_s, params, cutoff=10.0, eps=1e-6)
     sel, _ = torch.sort(sel[idx])
     n_chainA = torch.sum(torch.where(sel <= chainA_idx_max, True, False)).item()
     return sel, [chain,n_chainA] #give length of first chain, as either end or start point
+
+def get_contacts(complete_chain, xyz_t, cutoff_distance=10):
+    """
+    Function to take complete_chain (in the form [chain_id, len_first_chain]) and output a tensor (length L) indicating whether a residue should be diffused (False) or not (True).
+    Also outputs 1D tensor (length L) indicating whether residues in the target (the non-diffused chain) are in contact with the binder.
+    Some fraction of contacting residues are masked (set to 0). This is to encourage the network to be able to make extra contacts at inference time (i.e. not all contacting residues are given).
+    """
+    L = xyz_t.shape[1]
+    chain_tensor = torch.ones(L).bool()
+    if complete_chain[0] == 0:
+        chain_tensor[:complete_chain[1]] = False
+    else:
+        chain_tensor[complete_chain[1]:] = False 
+
+    cutoff_bin = np.floor((cutoff_distance-2)*2) #converts distance in angstroms to respective bin in t2d
+    pair_distances = xyz_to_t2d(xyz_t[None,:,:,:3])[:,:,:,:,:37]
+
+    #find pairwise distances that are within the cutoff
+    contact_map = torch.where(torch.argmax(pair_distances, dim=-1) < cutoff_bin, True, False).squeeze().squeeze()
+    
+    #mask out intra-chain contacts
+    contact_map[~chain_tensor] = False
+    contact_map[:,chain_tensor] = False
+    contact_tensor = torch.where(torch.sum(contact_map, dim=1) > 0, True, False)
+    
+    #only display contacting residues in the fixed chain (i.e. the target)
+    contact_tensor = contact_tensor * chain_tensor
+    to_mask = random.uniform(0,1) #randomly mask some proportion of contacting residues 
+    mask_tensor = torch.where(torch.rand(L) < to_mask, False, True)
+    contact_tensor *= mask_tensor
+    return chain_tensor, contact_tensor.long()
+
 
 # merge msa & insertion statistics of two proteins having different taxID
 def merge_a3m_hetero(a3mA, a3mB, L_s):
@@ -1185,7 +1221,6 @@ def loader_complex_fixbb(item, L_s, taxID, assem, params, negative=False, pick_t
     xyz = torch.nan_to_num(xyz)
 
     #print ("loader_complex_fixbb", xyz_t.shape, f1d_t.shape, xyz_prev.shape, negative)
-
     return seq.long(), msa_seed_orig.long(), msa_seed.float(), msa_extra.float(), mask_msa,\
            xyz.float(), mask, idx.long(), \
            xyz_t.float(), f1d_t.float(), xyz_prev.float(), \
@@ -1365,6 +1400,8 @@ class DistilledDataset(data.Dataset):
         (seq, msa, msa_masked, msa_full, mask_msa, true_crds, atom_mask, idx_pdb, xyz_t, t1d, xyz_prev, same_chain, unclamp, negative, complete_chain, atom_mask) = out
 
         # get masks for example
+        # Commenting this out. Because of popping Nans, need a new way of dealing with complexes, which will break the inpainting-style task mask generators.
+        """
         if complete_chain[0] == 0:
             if complete_chain[1] is not None:
                 complete_chain = [0,complete_chain[1]-1] #first and last index of the first chain (complete_chain[1] is length of first chain)
@@ -1372,7 +1409,13 @@ class DistilledDataset(data.Dataset):
                 complete_chain = [0, same_chain.shape[0] -1] #first and last index of full chain
         else:
             complete_chain=[complete_chain[1],same_chain.shape[0]-1]
-        
+        """
+        if complete_chain[1] is not None:
+            chain_tensor, contacts = get_contacts(complete_chain, xyz_t)
+        else:
+            # make tensor of zeros to stable onto t1d for monomers (i.e. no contacts)
+            contacts = torch.zeros(xyz_t.shape[1])
+            
         #### DJ/JW alteration: Pop any NaN residues from tensors for diffuion training 
         # print('Printing shapes')
         # print("seq ",seq.shape)
@@ -1405,10 +1448,15 @@ class DistilledDataset(data.Dataset):
         t1d         = t1d[:,pop]
         xyz_prev    = xyz_prev[pop]
         same_chain  = same_chain[pop2d].reshape(N,N)
+        contacts = contacts[pop]
 
-
-
-
+        if complete_chain[1] is not None:
+            complete_chain = chain_tensor[pop]
+        
+        #Concatenate on the contacts tensor onto t1d
+        t1d = torch.cat((t1d, contacts[None,...,None]), dim=-1)
+        if chosen_dataset != 'complex':
+            assert torch.sum(t1d[:,:,-1]) == 0 
         # print('Printing shapes after popping')
         # print("seq ",seq.shape)
         # print("msa ",msa.shape)
@@ -1444,11 +1492,11 @@ class DistributedWeightedSampler(data.Sampler):
 
         self.dataset = dataset
         self.num_replicas = num_replicas
-        self.num_compl_per_epoch = 0 #= int(round(num_example_per_epoch*(1.0-fraction_fb)*fraction_compl))
+        self.num_compl_per_epoch = int(round(num_example_per_epoch*(1.0-fraction_fb)*fraction_compl))
         self.num_neg_per_epoch = 0 #= int(round(num_example_per_epoch*(1.0-fraction_fb)*fraction_compl*p_seq2str))
         self.num_fb_per_epoch = int(round(num_example_per_epoch*(fraction_fb)))
         self.num_pdb_per_epoch = num_example_per_epoch - self.num_compl_per_epoch - self.num_neg_per_epoch - self.num_fb_per_epoch
-        #print (self.num_compl_per_epoch, self.num_neg_per_epoch, self.num_fb_per_epoch, self.num_pdb_per_epoch)
+        print (self.num_compl_per_epoch, self.num_neg_per_epoch, self.num_fb_per_epoch, self.num_pdb_per_epoch)
         self.total_size = num_example_per_epoch
         self.num_samples = self.total_size // self.num_replicas
         self.rank = rank

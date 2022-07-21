@@ -60,10 +60,6 @@ def get_beta_schedule(T, b0, bT, schedule_type, schedule_params={}, inference=Fa
     
     
     #get alphabar_t for convenience
-    #mask = ~torch.triu(torch.full((T,T), True), diagonal=1)
-    #root_beta = torch.sqrt(1-schedule)*mask
-    #root_beta[~mask] = 1.0
-    #alphabar_t_schedule = torch.prod(root_beta, dim=-1)
     alpha_schedule = 1-schedule
     alphabar_t_schedule  = torch.cumprod(alpha_schedule, dim=0)
     
@@ -164,9 +160,9 @@ class EuclideanDiffuser():
 
         # get the noise at timestep t
         mean  = torch.sqrt(1-b_t)*ca_xyz
-        var   = torch.ones(L,3)*(b_t)*var_scale
+        std   = torch.ones(L,3)*(b_t)*torch.sqrt(var_scale)
 
-        sampled_crds = torch.normal(mean, var) 
+        sampled_crds = torch.normal(mean, std) 
         delta = sampled_crds - ca_xyz  
 
         if not diffusion_mask is None:
