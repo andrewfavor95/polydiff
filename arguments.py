@@ -193,6 +193,8 @@ def get_args():
             help="switch from linear to 12-6 for lj potential [0.75]")
     loss_group.add_argument('-use_H', action='store_true', default=False,
             help="consider hydrogens for lj loss [False]")
+    loss_group.add_argument('-use_tschedule', action='store_true', default=False,
+            help='(Diffusion training) True, use loss scaling as a function of timestep')
 
     # other parameters
     parser.add_argument('-task_names', default='seq2str',
@@ -259,7 +261,7 @@ def get_args():
     trunk_param['SE3_param_full'] = SE3_param_full
     trunk_param['SE3_param_topk'] = SE3_param_topk
     loss_param = {}
-    for param in ['w_dist', 'w_str', 'w_all', 'w_aa', 'w_lddt', 'w_blen', 'w_bang', 'w_lj', 'w_hb', 'lj_lin', 'use_H', 'w_disp']:
+    for param in ['w_dist', 'w_str', 'w_all', 'w_aa', 'w_lddt', 'w_blen', 'w_bang', 'w_lj', 'w_hb', 'lj_lin', 'use_H', 'w_disp', 'use_tschedule']:
         loss_param[param] = getattr(args, param)
 
     return args, trunk_param, loader_param, loss_param, diffusion_params

@@ -14,6 +14,41 @@ torch.autograd.set_detect_anomaly(True)
 # 3. bond geometry loss
 # 4. predicted lddt loss
 
+SCHEDULED_LOSSES = ['aa_cce','exp_resolved','tors', 'blen', 'bang', 'lj', 'hb','w_all']
+def get_loss_schedules(T, loss_names=SCHEDULED_LOSSES, schedule_types=None, default_schedule='sigmoid', 
+                       schedule_params={'sig_stretch':0.23, 'sig_shift':0.885}, constant=False):
+    """
+    Given a list of loss functions and schedule types, produce multiplicative weights 
+    as a function of timestep to apply on the loss. 
+
+    loss_list (list, required): List of loss functions (i.e., the callables) 
+
+    schedule_types (list, optional): type of schedules to use for each 
+    """
+    if schedule_types:
+        assert len(schedule_types) == len(loss_names)
+    else:
+        schedule_types = [default_schedule]*len(loss_names)
+
+    if constant:
+        return {}
+
+    loss_schedules = {}
+    
+    for i,name in enumerate(loss_names):
+        t = torch.arange(T)
+        
+        if schedule_types[i] is 'sigmoid':
+            a = schedule_params['sig_stretch']
+            b = schedule_params['sig_shift']*T
+            # stretched and shifted sigmoid between (0,1)
+            loss_schedules[name] = 1/(1+torch.exp(a*(-t+b)))
+        else:
+            raise NotImplementedError
+    
+    return loss_schedules
+    
+
 def calc_displacement_loss(pred, true, mask, eps=1e-8, gamma=0.99):
     """
     Calculates L2 norm of error between predicted and true CA 

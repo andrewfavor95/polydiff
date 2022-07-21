@@ -1,5 +1,5 @@
 # set to false if you dont want to use weights and biases 
-WANDB = True
+WANDB = False
 
 if WANDB:
     import wandb
@@ -21,6 +21,7 @@ from data_loader import (
 
 from kinematics import xyz_to_c6d, c6d_to_bins2, xyz_to_t2d, xyz_to_bbtor, get_init_xyz
 from RoseTTAFoldModel  import RoseTTAFoldModule
+import loss 
 from loss import *
 from util import *
 from util_module import ComputeAllAtomCoords
@@ -176,6 +177,17 @@ class Trainer():
         self.num_bonds = num_bonds
         self.ljlk_parameters = ljlk_parameters
         self.lj_correction_parameters = lj_correction_parameters
+        
+        # create a loss schedule - sigmoid (default) if use tschedule, else empty dict
+        constant_schedule = not loss_param['use_tschedule']
+        self.loss_schedules = loss.get_loss_schedules(diff_kwargs['T'], constant=constant_schedule)
+        self.loss_param.pop('use_tschedule')
+        print('These are the loss names which have t_scheduling activated')
+        print(self.loss_schedules.keys())
+
+
+
+
         self.hbtypes = hbtypes
         self.hbbaseatoms = hbbaseatoms
         self.hbpolys = hbpolys
@@ -196,7 +208,7 @@ class Trainer():
     def calc_loss(self, logit_s, label_s,
                   logit_aa_s, label_aa_s, mask_aa_s, logit_exp,
                   pred, pred_tors, true, mask_crds, mask_BB, mask_2d, same_chain,
-                  pred_lddt, idx, dataset, chosen_task, unclamp=False, negative=False,
+                  pred_lddt, idx, dataset, chosen_task, t, unclamp=False, negative=False,
                   w_dist=1.0, w_aa=1.0, w_str=1.0, w_all=0.5, w_exp=1.0,
                   w_lddt=1.0, w_blen=1.0, w_bang=1.0, w_lj=0.0, w_hb=0.0,
                   lj_lin=0.75, use_H=False, w_disp=0.0, eps=1e-6):
@@ -213,33 +225,43 @@ class Trainer():
 
         # c6d loss
         for i in range(4):
+            # schedule factor for c6d 
+            # syntax is if it's not in the scheduling dict, loss has full weight (i.e., 1x)
+            c6d_tscale = self.loss_schedules.get('c6d',[1]*(t+1))[t]
+
             loss = self.loss_fn(logit_s[i], label_s[...,i]) # (B, L, L)
             loss = (mask_2d*loss).sum() / (mask_2d.sum() + eps)
-            tot_loss += w_dist*loss
+            tot_loss += w_dist*loss*c6d_tscale
             loss_s.append(loss[None].detach())
 
             loss_dict[f'c6d_{i}'] = float(loss.detach())
 
 
         # masked token prediction loss
+        aa_tscale = self.loss_schedules.get('aa_cce',[1]*(t+1))[t]
+
         loss = self.loss_fn(logit_aa_s, label_aa_s.reshape(B, -1))
         loss = loss * mask_aa_s.reshape(B, -1)
         loss = loss.sum() / (mask_aa_s.sum() + 1e-8)
-        tot_loss += w_aa*loss
+        tot_loss += w_aa*loss*aa_tscale
         loss_s.append(loss[None].detach())
 
         loss_dict['aa_cce'] = float(loss.detach())
 
         # experimentally resolved prediction loss
+        exp_tscale = self.loss_schedules.get('exp',[1]*(t+1))[t]
+
         loss = nn.BCEWithLogitsLoss()(logit_exp, mask_BB.float())
-        tot_loss += w_exp*loss
+        tot_loss += w_exp*loss*exp_tscale
+
         loss_s.append(loss[None].detach())
 
         loss_dict['exp_resolved'] = float(loss.detach())
 
         # Displacement prediction loss between xyz prev and xyz_true
+        disp_tscale = self.loss_schedules.get('displacement',[1]*(t+1))[t]
         disp_loss = calc_displacement_loss(pred, true, mask_BB)
-        tot_loss += w_disp*disp_loss
+        tot_loss += w_disp*disp_loss*disp_tscale
         loss_dict['displacement'] = float(disp_loss.detach())
         
         # Structural loss
@@ -249,6 +271,11 @@ class Trainer():
         else:
             tot_str, str_loss = calc_str_loss(pred, true, mask_2d, same_chain, negative=negative,
                                               A=10.0, d_clamp=10.0, gamma=1.0)
+        
+        # dj - str loss timestep scheduling: 
+        # scale w_all to keep the contributions of BB/ALLatom fape summing to 1.0
+        w_all = w_all*self.loss_schedules.get('w_all',[1]*(t+1))[t]
+
         tot_loss += (1.0-w_all)*w_str*tot_str
         loss_s.append(str_loss)
         
@@ -323,6 +350,8 @@ class Trainer():
             tors_mask,
             tors_planar,
             eps = 1e-10)
+        
+        # torsion timestep scheduling taken care of by w_all scheduling 
         tot_loss += w_all*w_str*(l_fape+l_tors)
         loss_s.append(l_fape[None].detach())
         loss_s.append(l_tors[None].detach())
@@ -331,8 +360,10 @@ class Trainer():
         loss_dict['tors'] = float(l_tors.detach())
 
         # predicted lddt loss
+        lddt_loss_tscale = self.loss_schedules.get('lddt_loss',[1]*(t+1))[t]
+
         lddt_loss, ca_lddt = calc_lddt_loss(pred[:,:,:,1].detach(), true[:,:,1], pred_lddt, idx, mask_BB, mask_2d, same_chain, negative=negative)
-        tot_loss += w_lddt*lddt_loss
+        tot_loss += w_lddt*lddt_loss*lddt_loss_tscale
         loss_s.append(lddt_loss.detach()[None])
         loss_s.append(ca_lddt.detach())
     
@@ -346,11 +377,14 @@ class Trainer():
         #loss_s.append(true_lddt.mean()[None].detach())
         
         # bond geometry
+        bang_tscale = self.loss_schedules.get('bang',[1]*(t+1))[t]
+        blen_tscale = self.loss_schedules.get('blen',[1]*(t+1))[t]
+
         blen_loss, bang_loss = calc_BB_bond_geom(pred[-1], true, mask_BB)
         if w_blen > 0.0:
-            tot_loss += w_blen*blen_loss
+            tot_loss += w_blen*blen_loss*blen_tscale
         if w_bang > 0.0:
-            tot_loss += w_bang*bang_loss
+            tot_loss += w_bang*bang_loss*bang_tscale
 
         loss_dict['blen'] = float(blen_loss.detach())
         loss_dict['bang'] = float(bang_loss.detach())
@@ -361,8 +395,10 @@ class Trainer():
             self.aamask, same_chain[0], 
             self.ljlk_parameters, self.lj_correction_parameters, self.num_bonds,
             lj_lin=lj_lin, use_H=use_H, negative=negative)
+
         if w_lj > 0.0:
-            tot_loss += w_lj*lj_loss
+            lj_tscale = self.loss_schedules.get('lj',[1]*(t+1))[t]
+            tot_loss += w_lj*lj_loss*lj_tscale
 
         loss_dict['lj'] = float(lj_loss.detach())
 
@@ -371,7 +407,8 @@ class Trainer():
             seq[0], pred_all[0,...,:3], 
             self.aamask, self.hbtypes, self.hbbaseatoms, self.hbpolys)
         if w_hb > 0.0:
-            tot_loss += w_hb*hb_loss
+            hb_tscale = self.loss_schedules.get('lj',[1]*(t+1))[t]
+            tot_loss += w_hb*hb_loss*hb_tscale
 
         loss_s.append(torch.stack((blen_loss, bang_loss, lj_loss, hb_loss)).detach())
 
@@ -876,7 +913,7 @@ class Trainer():
                                 logit_aa_s, msa[:, i_cycle], mask_msa[:,i_cycle], logit_exp,
                                 pred_crds, alphas, true_crds, mask_crds,
                                 mask_BB, mask_2d, same_chain,
-                                pred_lddts, idx_pdb, chosen_dataset[0], chosen_task[0], unclamp=unclamp, negative=negative,
+                                pred_lddts, idx_pdb, chosen_dataset[0], chosen_task[0], unclamp=unclamp, negative=negative, t=little_t,
                                 **self.loss_param)
                     loss = loss / self.ACCUM_STEP
 
@@ -913,7 +950,7 @@ class Trainer():
                                 logit_aa_s, msa[:, i_cycle], mask_msa[:,i_cycle], logit_exp,
                                 pred_crds, alphas, true_crds, mask_crds,
                                 mask_BB, mask_2d, same_chain,
-                                pred_lddts, idx_pdb, chosen_dataset[0], chosen_task[0], unclamp=unclamp, negative=negative,
+                                pred_lddts, idx_pdb, chosen_dataset[0], chosen_task[0], t=little_t, unclamp=unclamp, negative=negative,
                                 **self.loss_param)
                 
                 loss = loss / self.ACCUM_STEP
@@ -974,7 +1011,6 @@ class Trainer():
                             " ".join(["%8.4f"%l for l in local_loss]),\
                             local_acc[0], local_acc[1], local_acc[2], max_mem))
                     
-                    ic(epoch*len(train_loader)+counter)
                     if WANDB and rank == 0:
                         loss_dict.update({'t':little_t, 'total_examples':epoch*len(train_loader)+counter*world_size})
                         wandb.log(loss_dict)
@@ -1125,7 +1161,7 @@ class Trainer():
                         logit_aa_s, msa[:, i_cycle], mask_msa[:,i_cycle], logit_exp,
                         pred_crds, alphas, true_crds, mask_crds,
                         mask_BB, mask_2d, same_chain,
-                        pred_lddts, idx_pdb, unclamp=unclamp, negative=negative,
+                        pred_lddts, idx_pdb, t=little_t, unclamp=unclamp, negative=negative,
                         **self.loss_param)
                 lddt = calc_lddt(pred_crds[-1:,:,:,1,:], true_crds[:,:,1,:], mask_BB, mask_2d, same_chain)
                 lddt_s.append(lddt.detach())
@@ -1282,7 +1318,7 @@ class Trainer():
                         logit_aa_s, msa[:, i_cycle], mask_msa[:,i_cycle], logit_exp,
                         pred_crds, alphas, true_crds, mask_crds,
                         mask_BB, mask_2d, same_chain,
-                        pred_lddts, idx_pdb, unclamp=unclamp, negative=negative,
+                        pred_lddts, idx_pdb, t=little_t, unclamp=unclamp, negative=negative,
                         **self.loss_param)
                 lddt = calc_lddt(pred_crds[-1:,:,:,1,:], true_crds[:,:,1,:], mask_BB, mask_2d, same_chain)
                 lddt_s.append(lddt.detach())
@@ -1428,7 +1464,7 @@ class Trainer():
                         logit_aa_s, msa[:, i_cycle], mask_msa[:,i_cycle], logit_exp,
                         pred_crds, alphas, true_crds, mask_crds,
                         mask_BB, mask_2d, same_chain,
-                        pred_lddts, idx_pdb, unclamp=unclamp, negative=negative,
+                        pred_lddts, idx_pdb, t=little_t, unclamp=unclamp, negative=negative,
                         **self.loss_param)
                 
                 valid_tot += loss.detach()
