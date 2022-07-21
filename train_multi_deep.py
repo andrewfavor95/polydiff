@@ -1,5 +1,5 @@
 # set to false if you dont want to use weights and biases 
-WANDB = False
+WANDB = True
 
 if WANDB:
     import wandb
@@ -1029,8 +1029,7 @@ class Trainer():
             clamped = top1_sequence
 
 
-            #if chosen_task[0] != 'seq2str' and np.random.randint(0,100) == 0:
-            if chosen_dataset[0] == 'complex':
+            if chosen_task[0] != 'seq2str' and np.random.randint(0,100) == 0:
                 if not os.path.isdir(f'./{self.outdir}/training_pdbs/'):
                     os.makedirs(f'./{self.outdir}/training_pdbs')
                 writepdb(f'{self.outdir}/training_pdbs/test_epoch_{epoch}_{counter}_{chosen_task[0]}_{chosen_dataset[0]}_t_{little_t}pred.pdb',pred_crds[-1,0,:,:3,:],top1_sequence[0,0,:])
@@ -1039,7 +1038,6 @@ class Trainer():
                 with open(f'{self.outdir}/training_pdbs/test_epoch_{epoch}_{counter}_{chosen_task[0]}_{chosen_dataset[0]}_t_{little_t}pred_input.txt','w') as f:
                     f.write(str(masks_1d['input_str_mask'][0].cpu().detach().numpy())+'\n')
                     f.write(str(masks_1d['input_seq_mask'][0].cpu().detach().numpy())+'\n') 
-                    ic(t1d.shape)
                     f.write(str(t1d[:,:,:,-1].cpu().detach().numpy()))
         # write total train loss
         train_tot /= float(counter * world_size)
