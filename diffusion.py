@@ -160,9 +160,9 @@ class EuclideanDiffuser():
 
         # get the noise at timestep t
         mean  = torch.sqrt(1-b_t)*ca_xyz
-        std   = torch.ones(L,3)*(b_t)*torch.sqrt(var_scale)
+        var   = torch.ones(L,3)*(b_t)*var_scale
 
-        sampled_crds = torch.normal(mean, std) 
+        sampled_crds = torch.normal(mean, torch.sqrt(var)) 
         delta = sampled_crds - ca_xyz  
 
         if not diffusion_mask is None:
