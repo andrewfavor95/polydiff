@@ -677,8 +677,8 @@ class Trainer():
         #optimizer = torch.optim.Adam(opt_params, lr=self.init_lr)
         optimizer = torch.optim.AdamW(opt_params, lr=self.init_lr)
         #scheduler = get_stepwise_decay_schedule_with_warmup(optimizer, 1000, 10000, 0.95) # For initial round of training
-        #scheduler = get_stepwise_decay_schedule_with_warmup(optimizer, 100, 10000, 0.95) # Trialled using this in diffusion training
-        scheduler = get_stepwise_decay_schedule_with_warmup(optimizer, 0, 10000, 0.95) # for fine-tuning
+        scheduler = get_stepwise_decay_schedule_with_warmup(optimizer, 100, 10000, 0.95) # Trialled using this in diffusion training
+        #scheduler = get_stepwise_decay_schedule_with_warmup(optimizer, 0, 10000, 0.95) # for fine-tuning
         scaler = torch.cuda.amp.GradScaler(enabled=USE_AMP)
        
         # load model
