@@ -84,7 +84,7 @@ class EuclideanDiffuser():
         self.T = T 
         
         # make noise/beta schedule 
-        self.beta_schedule = get_beta_schedule(T, b_0, b_T, schedule_type, **schedule_kwargs)
+        self.beta_schedule  = get_beta_schedule(T, b_0, b_T, schedule_type, **schedule_kwargs)
         self.alpha_schedule = 1-self.beta_schedule 
 
     
@@ -350,10 +350,13 @@ class INTERP():
         r1 = -np.pi 
         r2 =  np.pi
         random_torsions = ((r1 - r2) * torch.rand(L,10,1) + r2).squeeze()
+        random_torsions *= (180/np.pi)
         
-        # Grab the torsions which have the minimum difference to randomly sampled one 
-        a = th_min_angle(torsions_angle,     random_torsions, radians=RAD)
-        b = th_min_angle(torsions_angle_alt, random_torsions, radians=RAD)
+        # Grab the torsions which have the minimum difference to randomly sampled one
+        # Takes in degrees, then immediately change back to radians because we trust 
+        # th_min_angle in degrees
+        a = th_min_angle(torsions_angle,     random_torsions, radians=False)*np.pi/180
+        b = th_min_angle(torsions_angle_alt, random_torsions, radians=False)*np.pi/180
         condition = torch.abs(a) < torch.abs(b)
         torsions_mindiff = torch.where(condition, torsions_angle, torsions_angle_alt)
 
@@ -442,8 +445,15 @@ class Diffuser():
         # bring to origin and scale 
         # check if any BB atoms are nan before centering 
         nan_mask = ~torch.isnan(xyz.squeeze()[:,:3]).any(dim=-1).any(dim=-1)
+        assert torch.sum(~nan_mask) == 0
 
-        xyz = xyz - xyz[nan_mask][:,1,:].mean(dim=0)
+        #Centre unmasked structure at origin, as in training (to prevent information leak)
+        if torch.sum(diffusion_mask) != 0:
+            xyz = xyz - xyz[diffusion_mask,1,:].mean(dim=0)
+        elif torch.sum(diffusion_mask) == 0:
+            xyz = xyz - xyz[:,1,:].mean(dim=0)
+
+        #xyz = xyz - xyz[nan_mask][:,1,:].mean(dim=0) # DJ aug 23, 2022 - commenting out bc now better logic to assert no nans 
         xyz = xyz * self.crd_scale
 
         

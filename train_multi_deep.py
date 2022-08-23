@@ -59,10 +59,10 @@ N_EXAMPLE_PER_EPOCH = 25600
 
 
 LOAD_PARAM = {'shuffle': False,
-              'num_workers': 0,
+              'num_workers': 4,
               'pin_memory': True}
 LOAD_PARAM2 = {'shuffle': False,
-              'num_workers': 0,
+              'num_workers': 4,
               'pin_memory': True}
 
 def add_weight_decay(model, l2_coeff):
@@ -677,8 +677,8 @@ class Trainer():
         #optimizer = torch.optim.Adam(opt_params, lr=self.init_lr)
         optimizer = torch.optim.AdamW(opt_params, lr=self.init_lr)
         #scheduler = get_stepwise_decay_schedule_with_warmup(optimizer, 1000, 10000, 0.95) # For initial round of training
-        scheduler = get_stepwise_decay_schedule_with_warmup(optimizer, 100, 10000, 0.95) # Trialled using this in diffusion training
-        #scheduler = get_stepwise_decay_schedule_with_warmup(optimizer, 0, 10000, 0.95) # for fine-tuning
+        #scheduler = get_stepwise_decay_schedule_with_warmup(optimizer, 100, 10000, 0.95) # Trialled using this in diffusion training
+        scheduler = get_stepwise_decay_schedule_with_warmup(optimizer, 0, 10000, 0.95) # for fine-tuning
         scaler = torch.cuda.amp.GradScaler(enabled=USE_AMP)
        
         # load model

@@ -459,6 +459,7 @@ def get_train_valid_set(params, OFFSET=1000000):
                 fb[r[2]] = [(r[:2], r[-1])]
         
         #compile complex sets
+        """
         with open(params['COMPL_LIST'], 'r') as f:
             reader = csv.reader(f)
             next(reader)
@@ -466,9 +467,10 @@ def get_train_valid_set(params, OFFSET=1000000):
             rows = [[r[0], r[3], int(r[4]), [int(plen) for plen in r[5].split(':')], r[6] , [int(r[7]), int(r[8]), int(r[9]), int(r[10])]] for r in reader
                      if float(r[2]) <= params['RESCUT'] and
                      parser.parse(r[1]) <= parser.parse(params['DATCUT']) and min([int(i) for i in r[5].split(":")]) < params['MAX_COMPLEX_CHAIN'] and min([int(i) for i in r[5].split(":")]) > 50] #require one chain of the hetero complexes to be smaller than a certain value so it can be kept complete. This chain must also be > 50aa long.
-
+        """
         train_compl = {}
         valid_compl = {}
+        """
         for r in rows:
             if r[2] in val_compl_ids:
                 if r[2] in valid_compl.keys():
@@ -497,6 +499,7 @@ def get_train_valid_set(params, OFFSET=1000000):
         #             if float(r[2])<=params['RESCUT'] and
         #             parser.parse(r[1])<=parser.parse(params['DATCUT'])]
 
+        """
         train_neg = {}
         valid_neg = {}
         # for r in rows:
@@ -1432,7 +1435,7 @@ class DistilledDataset(data.Dataset):
         # print("unclamp ",unclamp)
         # print("atom_mask ",atom_mask.shape)
         # print('same chain ',same_chain.shape)
-        pop   = (atom_mask[:,:3]).squeeze().any(dim=-1) # will be true if any of the backbone atoms were False in atom mask 
+        pop   = (atom_mask[:,:3]).squeeze().all(dim=-1) # will be False if any of the backbone atoms were False in atom mask
         N     = pop.sum()
         pop2d = pop[None,:] * pop[:,None]
 
@@ -1492,7 +1495,7 @@ class DistributedWeightedSampler(data.Sampler):
 
         self.dataset = dataset
         self.num_replicas = num_replicas
-        self.num_compl_per_epoch = int(round(num_example_per_epoch*(1.0-fraction_fb)*fraction_compl))
+        self.num_compl_per_epoch = 0 # int(round(num_example_per_epoch*(1.0-fraction_fb)*fraction_compl))
         self.num_neg_per_epoch = 0 #= int(round(num_example_per_epoch*(1.0-fraction_fb)*fraction_compl*p_seq2str))
         self.num_fb_per_epoch = int(round(num_example_per_epoch*(fraction_fb)))
         self.num_pdb_per_epoch = num_example_per_epoch - self.num_compl_per_epoch - self.num_neg_per_epoch - self.num_fb_per_epoch

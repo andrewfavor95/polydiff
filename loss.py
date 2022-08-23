@@ -16,7 +16,7 @@ torch.autograd.set_detect_anomaly(True)
 
 SCHEDULED_LOSSES = ['aa_cce','exp_resolved','tors', 'blen', 'bang', 'lj', 'hb','w_all']
 def get_loss_schedules(T, loss_names=SCHEDULED_LOSSES, schedule_types=None, default_schedule='sigmoid', 
-                       schedule_params={'sig_stretch':0.23, 'sig_shift':0.885}, constant=False):
+                       schedule_params={'sig_stretch':0.15, 'sig_shift':0.8}, constant=False):
     """
     Given a list of loss functions and schedule types, produce multiplicative weights 
     as a function of timestep to apply on the loss. 
@@ -42,7 +42,9 @@ def get_loss_schedules(T, loss_names=SCHEDULED_LOSSES, schedule_types=None, defa
             a = schedule_params['sig_stretch']
             b = schedule_params['sig_shift']*T
             # stretched and shifted sigmoid between (0,1)
-            loss_schedules[name] = 1/(1+torch.exp(a*(-t+b)))
+            loss_schedules[name] = (1/(1+torch.exp(a*(-t+b)))).flip(dim=0)
+            # assert the sigmoid gets higher at low t 
+            assert loss_schedules[name][0] > loss_schedules[name][-1]
         else:
             raise NotImplementedError
     
