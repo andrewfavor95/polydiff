@@ -21,6 +21,7 @@ import time
 
 from icecream import ic  
 
+
 torch.set_printoptions(sci_mode=False)
 
 def cosine_interp(T, eta_max, eta_min):
@@ -341,24 +342,25 @@ class INTERP():
 
         # convert sin/cos to degrees
         torsions_angle     = torch.atan2(torsions_sincos[...,1], 
-                                         torsions_sincos[...,0]).squeeze()
+                                         torsions_sincos[...,0]).squeeze()*(180/np.pi)
 
         torsions_angle_alt = torch.atan2(torsions_alt_sincos[...,1],
-                                         torsions_alt_sincos[...,0]).squeeze()
+                                         torsions_alt_sincos[...,0]).squeeze()*(180/np.pi)
 
         # Now sample random torsions from -pi < theta < pi
         r1 = -np.pi 
         r2 =  np.pi
-        random_torsions = ((r1 - r2) * torch.rand(L,10,1) + r2).squeeze()
-        random_torsions *= (180/np.pi)
+        random_torsions = ((r1 - r2) * torch.rand(L,10,1) + r2).squeeze()*(180/np.pi)
         
         # Grab the torsions which have the minimum difference to randomly sampled one
         # Takes in degrees, then immediately change back to radians because we trust 
         # th_min_angle in degrees
-        a = th_min_angle(torsions_angle,     random_torsions, radians=False)*np.pi/180
-        b = th_min_angle(torsions_angle_alt, random_torsions, radians=False)*np.pi/180
+        a = th_min_angle(torsions_angle,     random_torsions, radians=False)
+        b = th_min_angle(torsions_angle_alt, random_torsions, radians=False)
+        
         condition = torch.abs(a) < torch.abs(b)
         torsions_mindiff = torch.where(condition, torsions_angle, torsions_angle_alt)
+        torsions_mindiff *= (np.pi/180)
 
         # Don't allow movement where diffusion_mask is True 
         if not diffusion_mask is None:

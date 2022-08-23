@@ -42,7 +42,7 @@ def get_loss_schedules(T, loss_names=SCHEDULED_LOSSES, schedule_types=None, defa
             a = schedule_params['sig_stretch']
             b = schedule_params['sig_shift']*T
             # stretched and shifted sigmoid between (0,1)
-            loss_schedules[name] = (1/(1+torch.exp(a*(-t+b)))).flip(dim=0)
+            loss_schedules[name] = torch.flip( 1/(1+torch.exp(a*(-t+b))), dims=[0])
             # assert the sigmoid gets higher at low t 
             assert loss_schedules[name][0] > loss_schedules[name][-1]
         else:

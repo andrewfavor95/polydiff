@@ -88,7 +88,7 @@ def get_aa_schedule(T, L, nsteps=100):
         
         for j,pos in enumerate(decode_pos):
             # calculate number of diffusion steps this residue gets 
-            idx2diffusion_steps[pos] = int(T - t) + 1 
+            idx2diffusion_steps[pos] = int(t)
             aa_masks[t,pos] = True
     
     aa_masks = np.cumsum(aa_masks, axis=0)
