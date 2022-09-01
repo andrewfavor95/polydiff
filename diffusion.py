@@ -1,7 +1,7 @@
 # script for diffusion protocols 
 import torch 
 import numpy as np
-
+import os
 from scipy.spatial.transform import Rotation as scipy_R
 from scipy.spatial.transform import Slerp 
 
@@ -16,7 +16,7 @@ from util_module import ComputeAllAtomCoords
 from diff_util import th_min_angle, th_interpolate_angles, get_aa_schedule 
 
 from chemical import INIT_CRDS 
-
+import igso3
 import time 
 
 from icecream import ic  
@@ -197,6 +197,321 @@ class EuclideanDiffuser():
         
 #TODO:  This class uses scipy+numpy for the slerping/matrix generation 
 #       Probably could be much faster if everything was in torch
+
+class IGSO3():
+    """
+    Class for taking in a set of backbone crds and performing IGSO3 diffusion
+    on all of them
+    """
+
+    def __init__(self, *, T, min_sigma, max_sigma, min_b, max_b, num_omega=1000, schedule="linear"):
+        """
+
+        Args:
+            T: total number of time steps
+            min_sigma: smallest allowed variance, should be at least 0.01 to maintain numerical stability.  Recommended value is 0.05.
+            max_sigma: for exponential schedule, the largest variance. Ignored for recommeded linear schedule
+            min_b: lower value of beta in Ho schedule analogue
+            max_b: upper value of beta in Ho schedule analouge
+            num_omega: discretization level in the angles across [0, pi]
+            schedule: currently only linear and exponential are supported.  The exponential schedule may be noising too slowly.
+            ]
+        """
+
+        self.T = T
+
+        self.schedule = schedule
+        self.min_sigma = min_sigma
+        self.max_sigma = max_sigma
+
+        if self.schedule == 'linear':
+            self.min_b = min_b
+            self.max_b = max_b
+        self.num_omega = num_omega
+        # Calculate igso3 values.
+        self.igso3_vals = self._calc_igso3_vals()
+        self.step_size = 1 / self.T
+
+    def _calc_igso3_vals(self):
+        replace_period = lambda x: str(x).replace('.', '_')
+
+        igso3_vals = igso3.calculate_igso3(
+                num_timesteps=self.T,
+                min_sigma=self.min_sigma,
+                max_sigma=self.max_sigma,
+                num_omega=self.num_omega)
+        return igso3_vals
+
+    @property
+    def discrete_sigma(self):
+        return self.igso3_vals['discrete_sigma']
+
+    def sigma_idx(self, sigma: np.ndarray):
+        """Calculates the index for discretized sigma during IGSO(3) initialization."""
+        return np.digitize(sigma, self.discrete_sigma) - 1
+
+    def t_to_idx(self, t: np.ndarray):
+        """Helper function to go from discrete time index t to corresponding sigma_idx.
+        
+        Args:
+            t: time index (integer between 1 and 200) 
+        """
+        continuous_t = t/self.T
+        return self.sigma_idx(self.sigma(continuous_t))
+
+    def sigma(self, t: torch.tensor):
+        """Extract \sigma(t) corresponding to chosen sigma schedule.
+        
+        Args:
+            t: torch tensor with time between 0 and 1
+        """
+        if not type(t) == torch.Tensor: t = torch.tensor(t)
+        if torch.any(t < 0) or torch.any(t > 1):
+            raise ValueError(f'Invalid t={t}')
+        if self.schedule == 'exponential':
+            sigma = t * np.log10(self.max_sigma) + (1 - t) * np.log10(self.min_sigma)
+            return 10 ** sigma
+        elif self.schedule == 'linear': # Variance exploding analogue of Ho schedule
+            # add self.min_sigma for stability
+            return self.min_sigma + t*self.min_b  + (1/2)*(t**2)*(self.max_b - self.min_b)
+        else:
+            raise ValueError(f'Unrecognize schedule {self.schedule}')
+
+    def g(self, t):
+        """g returns the drift coefficient at time t
+
+        since 
+            sigma(t)^2 := \int_0^t g(s)^2 ds,
+        for arbitrary sigma(t) we invert this relationship to compute 
+            g(t) = sqrt(d/dt sigma(t)^2).
+        
+        Args:
+            t: scalar time between 0 and 1
+        
+        Returns:
+            drift cooeficient as a scalar.
+        """
+        t = torch.tensor(t, requires_grad=True)
+        sigma_sqr = self.sigma(t)**2
+        grads = torch.autograd.grad(sigma_sqr.sum(), t)[0]
+        return torch.sqrt(grads)
+
+
+    def sample(self, ts, n_samples=1):
+        """sample uses the inverse cdf to sample an angle of rotation from
+        IGSO(3)
+        TODO: add shapes to this.
+        Args:
+            ts: array of integer time steps to sample from.
+            n_samples: nubmer of samples to draw.
+        Returns:
+        sampled angles of rotation. [len(ts), N]
+        """
+        all_samples = []
+        for t in ts:
+            sigma_idx = self.t_to_idx(t)
+            sample_i = np.interp(
+                np.random.rand(n_samples),
+                self.igso3_vals['cdf'][sigma_idx],
+                self.igso3_vals['discrete_omega'])  # [N, 1]
+            all_samples.append(sample_i)
+        return np.stack(all_samples, axis=0)
+    def sample_vec(self, ts, n_samples=1):
+        """sample_vec generates a rotation vector(s) from IGSO(3) at time steps
+        ts.
+        Return:
+            Sampled vector of shape [len(ts), N, 3]
+        """
+        x = np.random.randn(len(ts), n_samples, 3)
+        x /= np.linalg.norm(x, axis=-1, keepdims=True)
+        return x * self.sample(ts, n_samples=n_samples)[..., None]
+
+    def score_norm(self, t, omega):
+        """score_norm computes the score norm based on the time step and angle
+        Args:
+            t: integer time step
+            omega: angles (scalar or shape [N])
+        Return:
+            score_norm with same shape as omega
+        """
+        sigma_idx = self.t_to_idx(t)
+        score_norm_t = np.interp(
+                omega,
+                self.igso3_vals['discrete_omega'],
+                self.igso3_vals['score_norm'][sigma_idx]
+                )
+        return score_norm_t
+
+    def score_vec(self, ts, vec):
+        """score_vec computes the score of the IGSO(3) density as a rotation
+        vector. This score vecotr is in the direction of the sampled vector,
+        and has magnitude given by _score_norms.
+        Args:
+            ts: times of shape [T]
+            vec: where to compute the score of shape [T, N, 3]
+        Returns:
+            score vectors of shape [T, N, 3]
+        """
+        omega = np.linalg.norm(vec, axis=-1)
+        all_score_norm = []
+        for t in ts:
+            sigma_idx = self.t_to_idx(t)
+            score_norm_t = np.interp(
+                omega[t],
+                self.igso3_vals['discrete_omega'],
+                self.igso3_vals['score_norm'][sigma_idx]
+            )[:, None]
+            all_score_norm.append(score_norm_t)
+        score_norm = np.stack(all_score_norm, axis=0)
+        return score_norm * vec / omega[..., None]
+
+    def exp_score_norm(self, ts):
+        """exp_score_norm returns the expected value of norm of the score for
+        IGSO(3) with time parameter ts of shape [T].
+        """
+        sigma_idcs = [self.t_to_idx(t) for t in ts]
+        return self.igso3_vals['exp_score_norms'][sigma_idcs]
+
+    def diffuse_frames(self, xyz, t_list, diffusion_mask=None):
+        """
+        Perform spherical linear interpolation from the True coordinate frame for each
+        residue to a randomly sampled coordinate frame
+        Parameters:
+            xyz (np.array or torch.tensor, required): (L,3,3) set of backbone coordinates
+            mask (np.array or torch.tensor, required): (L,) set of bools. True/1 is NOT diffused, False/0 IS diffused
+        Returns:
+            np.array : N/CA/C coordinates for each residue in the SLERP
+                        (T,L,3,3), where T is num timesteps
+        """
+
+        if torch.is_tensor(xyz):
+            xyz = xyz.numpy()
+
+        t = np.arange(self.T)
+        num_res = len(xyz)
+
+        N  = torch.from_numpy(  xyz[None,:,0,:]  )
+        Ca = torch.from_numpy(  xyz[None,:,1,:]  )  # [1, num_res, 3, 3]
+        C  = torch.from_numpy(  xyz[None,:,2,:]  )
+
+        # scipy rotation object for true coordinates
+        R_true, Ca = rigid_from_3_points(N,Ca,C)
+        R_true = R_true[0]
+        Ca = Ca[0]
+
+        # Sample rotations and scores from IGSO3
+        sampled_rots = self.sample_vec(range(self.T), n_samples=num_res)  # [T, N, 3]
+        rot_score = self.score_vec(range(self.T), sampled_rots)  # [T, N, 3]
+        rot_exp_score_norm = self.exp_score_norm(range(self.T))  # [T]
+
+        if diffusion_mask is not None:
+            non_diffusion_mask = 1 - diffusion_mask[None, :, None]
+            sampled_rots = sampled_rots * non_diffusion_mask
+            rot_score = rot_score * non_diffusion_mask
+
+        # Apply sampled rot.
+        R_sampled = scipy_R.from_rotvec(
+            sampled_rots.reshape(-1, 3)).as_matrix().reshape(
+                self.T, num_res, 3, 3)
+        R_perturbed = np.einsum(
+            'tnij,njk->tnik', R_sampled, R_true)
+        perturbed_crds = np.einsum(
+            'tnij,naj->tnai',
+            R_sampled,
+            xyz[:,:3,:] - Ca[:,None,...].numpy()) + Ca[None, :, None].numpy()
+
+        if t_list != None:
+            idx = [i-1 for i in t_list]
+            perturbed_crds = perturbed_crds[idx]
+            R_perturbed    = R_perturbed[idx]
+
+
+        return (perturbed_crds.transpose(1, 0, 2, 3),   # [L, T, 3, 3]
+                R_perturbed.transpose(1, 0, 2, 3))
+
+    def reverse_sample(self, r_t, r_0, t, noise_level=0.5, mask=None):
+        """reverse_sample uses an approximation to the IGSO3 score to sample
+        a rotation at the previous time step.
+        
+        Roughly - this update follows the reverse time SDE for Reimannian
+        manifolds proposed by de Bortoli et al. Theorem 1 [1]. But with an
+        approximation to the score based on the prediction of R0.
+        Unlike in reference [1], this diffusion on SO(3) relies on geometric
+        variance schedule.  Specifically we follow [2] (appendix C) and assume
+            sigma_t = sigma_min * (sigma_max / sigma_min)^{t/T},
+        for time step t.  When we view this as a discretization  of the SDE
+        from time 0 to 1 with step size (1/T).  Following Eq. 5 and Eq. 6, 
+        this maps on to the forward  time SDEs
+            dx = g(t) dBt [FORWARD]
+        and 
+            dx = g(t)^2 score(xt, t)dt + g(t) B't, [REVERSE]
+        where g(t) = sigma_t * sqrt(2 * log(sigma_max/ sigma_min)), and Bt and
+        B't are Brownian motions. The formula for g(t) obtains from equation 9
+        of [2], from which this sampling function may be generalized to
+        alternative noising schedules.
+        Args:
+            r_t: noisy rotation of shape [3, 3]
+            r_0: prediction of un-noised rotation
+            t: integer time step
+            noise_level: scaling on the noise added when obtaining sample
+                (preliminary performance seems empirically better with noise 
+                level=0.5)
+            mask: whether the residue is to be updated.  A value of 1 means the
+                rotation is not updated from r_t.  A value of 0 means the
+                rotation is updated.
+        Return:
+            sampled rotation matrix for time t-1 of shape [3, 3]
+        Reference:
+        [1] De Bortoli, V., Mathieu, E., Hutchinson, M., Thornton, J., Teh, Y.
+        W., & Doucet, A. (2022). Riemannian score-based generative modeling.
+        arXiv preprint arXiv:2202.02763.
+        [2] Song, Y., Sohl-Dickstein, J., Kingma, D. P., Kumar, A., Ermon, S.,
+        & Poole, B. (2020). Score-based generative modeling through stochastic
+        differential equations. arXiv preprint arXiv:2011.13456.
+        """
+        t_idx = t-1 # DJ
+
+        # compute rotation vector corresponding to prediction of how r_t goes to r_0
+        r_0, r_t = torch.tensor(r_0), torch.tensor(r_t)
+        r_0t = torch.einsum('ij,kj->ik', r_t, r_0)
+        r_0t_rotvec = rotation_conversions.matrix_to_axis_angle(r_0t)
+
+        # Approximate the score based on the prediction of R0.
+        # This approximation would be exactly equal to the conditional score
+        # grad_{rt} \log p(r_t |r_0) if the prediction of r_0 were exactly
+        # equal to r_0.  While this will not be the case in practice, the below
+        # approximation puts the magnitude score_approx on the appropriate
+        # scale as a function of variance at time t.  Additionally, scaling
+        # implicitly provides a roughly linear scaling in the size of the 
+        # update of the  rotation with the distance of r_0 to 
+        omega = torch.linalg.norm(r_0t_rotvec).numpy()
+        score_approx = r_0t_rotvec*self.score_norm(t_idx, omega)/omega  # DJ - t_idx here instead of t
+
+        # Compute scaling for score and sampled noise (following Eq 6 of [2])
+        continuous_t = t_idx/self.T
+        rot_g = self.g(continuous_t).to(score_approx.device)
+
+        # Sample and scale noise to add to the rotation perturbation in the
+        # SO(3) tangent space.  Since IG-SO(3) is the Brownian motion on SO(3)
+        # (up to a deceleration of time by a factor of two), for small enough 
+        # time-steps, this is equivalent to perturbing r_t with IG-SO(3) noise.
+        # See e.g. Algorithm 1 of De Bortoli et al.
+        z = np.random.normal(size=(3))
+        z = torch.Tensor(
+            z.reshape(3)).to(score_approx.device)
+        z *= noise_level # scale down added noise by noise_level
+
+        # sample perturbation from discretized SDE (following eq. 6 of [2])
+        perturb_rotvec = (rot_g ** 2) * self.step_size * score_approx + rot_g * np.sqrt(self.step_size) * z
+
+        # Mask perturbation if residue is masked
+        if mask is not None: perturb_rotvec *= (1-mask.long())
+        # Convert perturbation to a rotation matrix and apply to r_t
+        perturb = rotation_conversions.axis_angle_to_matrix(perturb_rotvec)
+        interp_rot = torch.einsum('ij,jk->ik', perturb, r_t) # interp_rot represents the sampled r_t-1
+        return interp_rot
+
+
 class SLERP():
     """
     Class for taking in a set of backbone crds and performing slerp
@@ -380,34 +695,51 @@ class Diffuser():
     # wrapper for yielding diffused coordinates/frames/rotamers  
 
 
-    def __init__(self, 
-                 T, 
+    def __init__(self,
+                 T,
                  b_0=0.001,
                  b_T=0.1,
+                 min_sigma=0.02,
+                 max_sigma=1.5,
+                 min_b=1.0,
+                 max_b=12.5,
                  schedule_type='cosine',
+                 so3_schedule_type='linear',
                  schedule_kwargs={},
-                 so3_type='slerp',
+                 so3_type='igso3',
                  chi_type='interp',
-                 var_scale=1, 
+                 chi_kwargs={},
+                 var_scale=1,
                  crd_scale=1/15,
-                 aa_decode_steps=100):
+                 aa_decode_steps=100,
+                 partial_T=None):
         """
         
         Parameters:
             
         """
         #print('**********16')
-        self.T = T  
+        self.T = T
         self.b_0 = b_0
         self.b_T = b_T
+        self.min_sigma = min_sigma
+        self.max_sigma = max_sigma
         self.crd_scale = crd_scale
-        self.var_scale = var_scale 
+        self.var_scale = var_scale
         self.aa_decode_steps=aa_decode_steps
-        # self.get_allatom = ComputeAllAtomCoords()
 
         # get backbone frame diffuser 
         if so3_type == 'slerp':
             self.so3_diffuser =  SLERP(self.T)
+        elif so3_type == 'igso3':
+            self.so3_diffuser =  IGSO3(
+                T=self.T,
+                min_sigma=self.min_sigma,
+                max_sigma=self.max_sigma,
+                schedule=so3_schedule_type,
+                min_b=min_b,
+                max_b=max_b,
+            )        
         else:
             raise NotImplementedError()
 
@@ -469,7 +801,7 @@ class Diffuser():
 
         # 2 get  frames
         tick = time.time()
-        diffused_frame_crds, diffused_frames = self.so3_diffuser.diffuse_frames(xyz[:,:3,:].clone(), diffusion_mask=diffusion_mask.numpy())
+        diffused_frame_crds, diffused_frames = self.so3_diffuser.diffuse_frames(xyz[:,:3,:].clone(), diffusion_mask=diffusion_mask.numpy(), t_list=t_list)
         diffused_frame_crds /= self.crd_scale 
         #print('Time to diffuse frames: ',time.time()-tick)
 
