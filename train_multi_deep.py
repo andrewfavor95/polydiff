@@ -1040,7 +1040,7 @@ class Trainer():
                             local_acc[0], local_acc[1], local_acc[2], max_mem))
                     
                     if WANDB and rank == 0:
-                        loss_dict.update({'t':little_t, 'total_examples':epoch*len(train_loader)+counter*world_size, 'dataset':chosen_dataset[0], 'task':chosen_task[0]})
+                        loss_dict.update({'t':little_t, 'total_examples':epoch*self.n_train+counter*world_size, 'dataset':chosen_dataset[0], 'task':chosen_task[0]})
                         wandb.log(loss_dict)
 
 
