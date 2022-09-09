@@ -15,7 +15,7 @@ import torch
 import torch.nn as nn
 from torch.utils import data
 from data_loader import (
-    get_train_valid_set, loader_pdb, loader_fb, loader_complex, loader_pdb_fixbb, loader_fb_fixbb, loader_complex_fixbb,
+    get_train_valid_set, loader_pdb, loader_fb, loader_complex, loader_pdb_fixbb, loader_fb_fixbb, loader_complex_fixbb, loader_cn_fixbb,
     Dataset, DatasetComplex, DistilledDataset, DistributedWeightedSampler
 )
 
@@ -568,11 +568,12 @@ class Trainer():
 
         #define dataset & data loader
         print('Getting train/valid set...')
-        pdb_items, fb_items, compl_items, neg_items, valid_pdb, valid_homo, valid_compl, valid_neg, homo = get_train_valid_set(self.loader_param)
+        pdb_items, fb_items, compl_items, neg_items, cn_items, valid_pdb, valid_homo, valid_compl, valid_neg, valid_cn, homo = get_train_valid_set(self.loader_param)
         pdb_IDs, pdb_weights, pdb_dict = pdb_items
         fb_IDs, fb_weights, fb_dict = fb_items
         compl_IDs, compl_weights, compl_dict = compl_items
         neg_IDs, neg_weights, neg_dict = neg_items
+        cn_IDs, cn_weights, cn_dict = cn_items
         
         self.n_train = N_EXAMPLE_PER_EPOCH
         self.n_valid_pdb = len(valid_pdb.keys())
@@ -582,6 +583,8 @@ class Trainer():
         self.n_valid_compl = len(valid_compl.keys())
         self.n_valid_compl = (self.n_valid_compl // world_size)*world_size
         self.n_valid_neg = len(valid_neg.keys())
+        self.n_valid_neg = (self.n_valid_neg // world_size)*world_size
+        self.n_valid_cn = len(valid_cn.keys())
         self.n_valid_neg = (self.n_valid_neg // world_size)*world_size
 
         # ic(type(pdb_items))
@@ -606,7 +609,7 @@ class Trainer():
                 len(valid_pdb.keys()),'monomers,',
                 len(valid_homo.keys()),'homomers,',
                 len(valid_compl.keys()),'heteromers, and',
-                len(valid_neg.keys()),'negative heteromers',
+                len(valid_neg.keys()),'negative heteromer'
             )
             print ('Using',
                 self.n_valid_pdb,'monomers,',
@@ -620,6 +623,7 @@ class Trainer():
                                      compl_IDs, loader_complex, loader_complex_fixbb, compl_dict,
                                      neg_IDs, loader_complex, neg_dict,
                                      fb_IDs, loader_fb, loader_fb_fixbb, fb_dict,
+                                     cn_IDs, None, loader_cn_fixbb, cn_dict, # None is a placeholder as we don't currently have a loader_cn
                                      homo, self.loader_param)
 
         valid_pdb_set = Dataset(list(valid_pdb.keys())[:self.n_valid_pdb],
@@ -641,9 +645,9 @@ class Trainer():
         else:
             p_seq2str = 0
 
-        train_sampler = DistributedWeightedSampler(train_set, pdb_weights, compl_weights, neg_weights, fb_weights, p_seq2str,
+        train_sampler = DistributedWeightedSampler(train_set, pdb_weights, compl_weights, neg_weights, fb_weights, cn_weights, p_seq2str,
                                                    num_example_per_epoch=N_EXAMPLE_PER_EPOCH,
-                                                   num_replicas=world_size, rank=rank, fraction_fb=0.5, fraction_compl=0.25)
+                                                   num_replicas=world_size, rank=rank, fraction_fb=0.5, fraction_compl=0.25, replacement=True)
 
         valid_pdb_sampler = data.distributed.DistributedSampler(valid_pdb_set, num_replicas=world_size, rank=rank)
         valid_homo_sampler = data.distributed.DistributedSampler(valid_homo_set, num_replicas=world_size, rank=rank)

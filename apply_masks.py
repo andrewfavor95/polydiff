@@ -130,8 +130,10 @@ def mask_inputs(seq,
     t1d[:,:,~seq_mask,20]  = 1 # unknown
 
     t1d[:,:,:,21] *= input_t1dconf_mask
-
-    xyz_t[:,:,~seq_mask,3:,:] = float('nan') # don't know sidechain information for masked seq 
+    
+    # TRYING NOT PROVIDING diffused SIDECHAINS TO THE MODEL
+    xyz_t[:,:,~input_str_mask.squeeze(),3:,:] = float('nan')
+    #xyz_t[:,:,~seq_mask,3:,:] = float('nan') # don't know sidechain information for masked seq 
 
     # Structure masking
     # str_mask = input_str_mask[0]

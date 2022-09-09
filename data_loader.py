@@ -17,12 +17,13 @@ import random
 base_dir = "/projects/ml/TrRosetta/PDB-2021AUG02"
 compl_dir = "/projects/ml/RoseTTAComplex"
 fb_dir = "/projects/ml/TrRosetta/fb_af"
+cn_dir = "/home/jwatson3/torch/cn_ideal"
 if not os.path.exists(base_dir):
     # training on AWS
     base_dir = "/data/databases/PDB-2021AUG02"
     fb_dir = "/data/databases/fb_af"
     compl_dir = "/data/databases/RoseTTAComplex"
-
+    cn_dir = "/home/jwatson3/databases/cn_ideal"
 def set_data_loader_params(args):
     PARAMS = {
         "COMPL_LIST" : "%s/list.hetero.csv"%compl_dir,
@@ -38,6 +39,8 @@ def set_data_loader_params(args):
         "DATAPKL"    : "./dataset.pkl", # cache for faster loading
         "PDB_DIR"    : base_dir,
         "FB_DIR"     : fb_dir,
+        "CN_DIR"     : cn_dir,
+        "CN_DICT"    : os.path.join(cn_dir, 'cn_ideal_train_test.pt'),
         "COMPL_DIR"  : compl_dir,
         "MINTPLT" : 0,
         "MAXTPLT" : 5,
@@ -255,7 +258,6 @@ def MSAFeaturize_fixbb(msa, params, L_s=[]):
         - N-term or C-term? (2)
     '''
     N, L = msa.shape
-
     term_info = torch.zeros((L,2), device=msa.device).float()
     if len(L_s) < 1:
         term_info[0,0] = 1.0 # flag for N-term
@@ -528,16 +530,18 @@ def get_train_valid_set(params, OFFSET=1000000):
         valid_cn = {}
         cn_dict = torch.load(params['CN_DICT'])
         for r in cn_dict['train_seqs']:
-            if r[0] in train_cn.keys():
-                train_cn[r[0]].append(r[1])
-            else:
-                train_cn[r[0]] = [r[1]]
-
+            if r[2] < params['MAX_LENGTH']:
+                if r[0] in train_cn.keys():
+                    train_cn[r[0]].append((r[1], r[2]))
+                else:
+                    train_cn[r[0]] = [(r[1], r[2])]
+        
         for r in cn_dict['test_seqs']:
-            if r[0] in valid_cn.keys():
-                valid_cn[r[0]].append(r[1])
-            else:
-                valid_cn[r[0]] = [r[1]]
+            if r[2] < params['MAX_LENGTH']:
+                if r[0] in valid_cn.keys():
+                    valid_cn[r[0]].append((r[1], r[2]))
+                else:
+                    valid_cn[r[0]] = [(r[1], r[2])]
 
         # Get average chain length in each cluster and calculate weights
         pdb_IDs = list(train_pdb.keys())
@@ -551,6 +555,7 @@ def get_train_valid_set(params, OFFSET=1000000):
         compl_weights = list()
         neg_weights = list()
         cn_weights = list()
+        
         for key in pdb_IDs:
             plen = sum([plen for _, plen in train_pdb[key]]) // len(train_pdb[key])
             w = (1/512.)*max(min(float(plen),512.),256.)
@@ -572,15 +577,18 @@ def get_train_valid_set(params, OFFSET=1000000):
             neg_weights.append(w)
 
         for key in cn_IDs:
-            plen = sum([sum(plen) for _, plen
+            plen = sum([plen for _, plen in train_cn[key]]) // len(train_cn[key])
+            w = (1/512.)*max(min(float(plen),512.),256.)
+            cn_weights.append(w)
+
         # save
         
         obj = (
            pdb_IDs, pdb_weights, train_pdb,
            fb_IDs, fb_weights, fb,
            compl_IDs, compl_weights, train_compl,
-           neg_IDs, neg_weights, train_neg,
-           valid_pdb, valid_homo, valid_compl, valid_neg, homo
+           neg_IDs, neg_weights, train_neg, cn_IDs, cn_weights, train_cn,
+           valid_pdb, valid_homo, valid_compl, valid_neg, valid_cn, homo
         )
         with open(params["DATAPKL"], "wb") as f:
             print ('Writing',params["DATAPKL"])
@@ -594,8 +602,8 @@ def get_train_valid_set(params, OFFSET=1000000):
                pdb_IDs, pdb_weights, train_pdb,
                fb_IDs, fb_weights, fb,
                compl_IDs, compl_weights, train_compl,
-               neg_IDs, neg_weights, train_neg,
-               valid_pdb, valid_homo, valid_compl, valid_neg, homo
+               neg_IDs, neg_weights, train_neg, cn_IDs, cn_weights, train_cn,
+               valid_pdb, valid_homo, valid_compl, valid_neg, valid_cn, homo
             ) = pickle.load(f)
             print ('Done')
 
@@ -603,7 +611,8 @@ def get_train_valid_set(params, OFFSET=1000000):
            (fb_IDs, torch.tensor(fb_weights).float(), fb), \
            (compl_IDs, torch.tensor(compl_weights).float(), train_compl), \
            (neg_IDs, torch.tensor(neg_weights).float(), train_neg),\
-           valid_pdb, valid_homo, valid_compl, valid_neg, homo
+           (cn_IDs, torch.tensor(cn_weights).float(), train_cn),\
+           valid_pdb, valid_homo, valid_compl, valid_neg, valid_cn, homo
 
 # slice long chains
 def get_crop(l, mask, device, params, unclamp=False):
@@ -833,7 +842,6 @@ def featurize_single_chain(msa, ins, tplt, pdb, params, unclamp=False, pick_top=
 def featurize_single_chain_fixbb(msa, pdb, params, unclamp=False, pick_top=False, fb=False):
     seq, msa_seed_orig, msa_seed, msa_extra, mask_msa = MSAFeaturize_fixbb(msa, params)
     f1d_t = TemplFeaturizeFixbb(seq)
-
     # get ground-truth structures
     idx = torch.arange(len(pdb['xyz']))
     xyz = torch.full((len(idx),27,3),np.nan).float()
@@ -1064,6 +1072,12 @@ def loader_fb_fixbb(item, params, unclamp=False, pick_top=False):
     l_orig = msa.shape[1]
     
     return featurize_single_chain_fixbb(msa, pdb, params, unclamp=unclamp, pick_top=pick_top, fb=True)
+
+def loader_cn_fixbb(item, params, unclamp=False, pick_top=False):
+    seq = torch.load(os.path.join(params["CN_DIR"],"seq",item+".pt"))['seq'][0].long()
+    pdb = torch.load(os.path.join(params['CN_DIR'], 'pdb', item+'.pt'))
+    pdb['xyz'] = pdb['xyz'][0]
+    return featurize_single_chain_fixbb(seq, pdb, params, unclamp=unclamp, pick_top=pick_top, fb=False)
 
 def loader_complex(item, L_s, taxID, assem, params, negative=False, pick_top=True):
     pdb_pair = item[0]
@@ -1325,6 +1339,10 @@ class DistilledDataset(data.Dataset):
                  fb_loader,
                  fb_loader_fixbb,
                  fb_dict,
+                 cn_IDs,
+                 cn_loader,
+                 cn_loader_fixbb,
+                 cn_dict,
                  homo,
                  params,
                  p_homo_cut=0.5):
@@ -1362,6 +1380,14 @@ class DistilledDataset(data.Dataset):
                             'hal':          fb_loader_fixbb, 
                             'hal_ar':       fb_loader_fixbb,
                             'diff':         fb_loader_fixbb}
+        self.cn_IDs     = cn_IDs
+        self.cn_dict    = cn_dict
+        self.cn_loaders = { 'seq2str':      cn_loader,
+                            'str2seq':      cn_loader_fixbb,
+                            'str2seq_full': cn_loader_fixbb,
+                            'hal':          cn_loader_fixbb,
+                            'hal_ar':       cn_loader_fixbb,
+                            'diff':         cn_loader_fixbb}
 
         self.homo = homo
         self.params = params
@@ -1374,21 +1400,29 @@ class DistilledDataset(data.Dataset):
         self.neg_inds = np.arange(len(self.neg_IDs))
         self.fb_inds = np.arange(len(self.fb_IDs))
         self.pdb_inds = np.arange(len(self.pdb_IDs))
+        self.cn_inds = np.arange(len(self.cn_IDs))
     
     def __len__(self):
-        return len(self.fb_inds) + len(self.pdb_inds) + len(self.compl_inds) + len(self.neg_inds)
+        return len(self.fb_inds) + len(self.pdb_inds) + len(self.compl_inds) + len(self.neg_inds) + len(self.cn_inds)
 
     def __getitem__(self, index):
         p_unclamp = np.random.rand()
 
         #choose task if not from negative set (which is always seq2str)
-        if index < len(self.fb_inds) + len(self.pdb_inds) + len(self.compl_inds):
+        if index < len(self.fb_inds) + len(self.pdb_inds) + len(self.compl_inds) + len(self.neg_inds) or index >= len(self.fb_inds) + len(self.pdb_inds) + len(self.compl_inds) + len(self.neg_inds):
             task_idx = np.random.choice(np.arange(len(self.task_names)), 1, p=self.p_task)[0]
             task = self.task_names[task_idx]
         else:
             task = 'seq2str'
+        
+        if index >= len(self.fb_inds) + len(self.pdb_inds) + len(self.compl_inds) + len(self.neg_inds):
+            chosen_dataset='cn'
+            ID = self.cn_IDs[index-len(self.fb_inds)-len(self.pdb_inds)-len(self.compl_inds)-len(self.neg_inds)]
+            sel_idx = np.random.randint(0, len(self.cn_dict[ID]))
+            chosen_loader = self.cn_loaders[task]
+            out = chosen_loader(self.cn_dict[ID][sel_idx][0], self.params)
 
-        if index >= len(self.fb_inds) + len(self.pdb_inds) + len(self.compl_inds): # from negative set
+        elif index >= len(self.fb_inds) + len(self.pdb_inds) + len(self.compl_inds): # from negative set
             # print('Chose negative')
             chosen_dataset='negative'
             ID = self.neg_IDs[index-len(self.fb_inds)-len(self.pdb_inds)-len(self.compl_inds)]
@@ -1506,7 +1540,7 @@ class DistilledDataset(data.Dataset):
         return seq, msa, msa_masked, msa_full, mask_msa, true_crds, atom_mask, idx_pdb, xyz_t, t1d, xyz_prev, same_chain, unclamp, negative, mask_dict, task, chosen_dataset, atom_mask
 
 class DistributedWeightedSampler(data.Sampler):
-    def __init__(self, dataset, pdb_weights, compl_weights, neg_weights, fb_weights, p_seq2str, num_example_per_epoch=25600, \
+    def __init__(self, dataset, pdb_weights, compl_weights, neg_weights, fb_weights, cn_weights, p_seq2str, num_example_per_epoch=25600, \
                  fraction_fb=0.5, fraction_compl=0.25, num_replicas=None, rank=None, replacement=False):
         if num_replicas is None:
             if not dist.is_available():
@@ -1521,11 +1555,13 @@ class DistributedWeightedSampler(data.Sampler):
 
         self.dataset = dataset
         self.num_replicas = num_replicas
+        
+        self.num_cn_per_epoch = int(num_example_per_epoch)
         self.num_compl_per_epoch = 0 # int(round(num_example_per_epoch*(1.0-fraction_fb)*fraction_compl))
         self.num_neg_per_epoch = 0 #= int(round(num_example_per_epoch*(1.0-fraction_fb)*fraction_compl*p_seq2str))
-        self.num_fb_per_epoch = int(round(num_example_per_epoch*(fraction_fb)))
-        self.num_pdb_per_epoch = num_example_per_epoch - self.num_compl_per_epoch - self.num_neg_per_epoch - self.num_fb_per_epoch
-        print (self.num_compl_per_epoch, self.num_neg_per_epoch, self.num_fb_per_epoch, self.num_pdb_per_epoch)
+        self.num_fb_per_epoch = 0 # int(round(num_example_per_epoch*(fraction_fb)))
+        self.num_pdb_per_epoch = 0 # num_example_per_epoch - self.num_compl_per_epoch - self.num_neg_per_epoch - self.num_fb_per_epoch - self.num_cn_per_epoch
+        print (self.num_compl_per_epoch, self.num_neg_per_epoch, self.num_fb_per_epoch, self.num_pdb_per_epoch, self.num_cn_per_epoch)
         self.total_size = num_example_per_epoch
         self.num_samples = self.total_size // self.num_replicas
         self.rank = rank
@@ -1535,6 +1571,7 @@ class DistributedWeightedSampler(data.Sampler):
         self.compl_weights = compl_weights
         self.neg_weights = neg_weights
         self.fb_weights = fb_weights
+        self.cn_weights = cn_weights
 
     def __iter__(self):
         # deterministically shuffle based on epoch
@@ -1563,6 +1600,10 @@ class DistributedWeightedSampler(data.Sampler):
         if (self.num_neg_per_epoch>0):
             neg_sampled = torch.multinomial(self.neg_weights, self.num_neg_per_epoch, self.replacement, generator=g)
             sel_indices = torch.cat((sel_indices, indices[neg_sampled + len(self.dataset.fb_IDs) + len(self.dataset.pdb_IDs) + len(self.dataset.compl_IDs)]))
+        
+        if (self.num_cn_per_epoch>0):
+            cn_sampled = torch.multinomial(self.cn_weights, self.num_cn_per_epoch, self.replacement, generator=g)
+            sel_indices = torch.cat((sel_indices, indices[cn_sampled + len(self.dataset.fb_IDs) + len(self.dataset.pdb_IDs) + len(self.dataset.compl_IDs) + len(self.dataset.neg_IDs)]))
 
         # shuffle indices
         indices = sel_indices[torch.randperm(len(sel_indices), generator=g)]
