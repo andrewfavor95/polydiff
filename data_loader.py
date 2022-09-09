@@ -410,18 +410,20 @@ def get_train_valid_set(params, OFFSET=1000000):
         #         homo[r[0]] = [r[1:]]
 
         # read & clean list.csv
+        """
         with open(params['PDB_LIST'], 'r') as f:
             reader = csv.reader(f)
             next(reader)
             rows = [[r[0],r[3],int(r[4]), int(r[-1].strip())] for r in reader
                     if float(r[2])<=params['RESCUT'] and
                     parser.parse(r[1])<=parser.parse(params['DATCUT']) and len(r[-2]) <= params['MAX_LENGTH'] and len(r[-2]) >= 60] #added length max so only have full chains, and minimum length of 60aa
-
+        """
         # compile training and validation sets
         val_hash = list()
         train_pdb = {}
         valid_pdb = {}
         valid_homo = {}
+        """
         for r in rows:
             if r[2] in val_pdb_ids:
                 val_hash.append(r[1])
@@ -440,8 +442,9 @@ def get_train_valid_set(params, OFFSET=1000000):
                     train_pdb[r[2]].append((r[:2], r[-1]))
                 else:
                     train_pdb[r[2]] = [(r[:2], r[-1])]
+        """
         val_hash = set(val_hash)
-        
+        """
         # compile facebook model sets
         with open(params['FB_LIST'], 'r') as f:
             reader = csv.reader(f)
@@ -449,15 +452,15 @@ def get_train_valid_set(params, OFFSET=1000000):
             rows = [[r[0],r[2],int(r[3]),len(r[-1].strip())] for r in reader
                      if float(r[1]) > 80.0 and
                      len(r[-1].strip()) > 100 and len(r[-1].strip()) <= params['MAX_LENGTH']] #added max length to allow only full chains. Also reduced minimum length to 100aa
-        
+        """
         fb = {}
-        
+        """
         for r in rows:
             if r[2] in fb.keys():
                 fb[r[2]].append((r[:2], r[-1]))
             else:
                 fb[r[2]] = [(r[:2], r[-1])]
-        
+        """
         #compile complex sets
         """
         with open(params['COMPL_LIST'], 'r') as f:
@@ -502,6 +505,7 @@ def get_train_valid_set(params, OFFSET=1000000):
         """
         train_neg = {}
         valid_neg = {}
+        """
         # for r in rows:
         #     if r[2] in val_neg_ids:
         #         if r[2] in valid_neg.keys():
@@ -518,17 +522,35 @@ def get_train_valid_set(params, OFFSET=1000000):
         #             train_neg[r[2]].append((r[:2], r[-2], r[-1], []))
         #         else:
         #             train_neg[r[2]] = [(r[:2], r[-2], r[-1], [])]
-    
+        """
+
+        train_cn = {}
+        valid_cn = {}
+        cn_dict = torch.load(params['CN_DICT'])
+        for r in cn_dict['train_seqs']:
+            if r[0] in train_cn.keys():
+                train_cn[r[0]].append(r[1])
+            else:
+                train_cn[r[0]] = [r[1]]
+
+        for r in cn_dict['test_seqs']:
+            if r[0] in valid_cn.keys():
+                valid_cn[r[0]].append(r[1])
+            else:
+                valid_cn[r[0]] = [r[1]]
+
         # Get average chain length in each cluster and calculate weights
         pdb_IDs = list(train_pdb.keys())
         fb_IDs = list(fb.keys())
         compl_IDs = list(train_compl.keys())
         neg_IDs = list(train_neg.keys())
+        cn_IDs = list(train_cn.keys())
 
         pdb_weights = list()
         fb_weights = list()
         compl_weights = list()
         neg_weights = list()
+        cn_weights = list()
         for key in pdb_IDs:
             plen = sum([plen for _, plen in train_pdb[key]]) // len(train_pdb[key])
             w = (1/512.)*max(min(float(plen),512.),256.)
@@ -548,7 +570,11 @@ def get_train_valid_set(params, OFFSET=1000000):
             plen = sum([sum(plen) for _, plen, _, _ in train_neg[key]]) // len(train_neg[key])
             w = (1/512.)*max(min(float(plen),512.),256.)
             neg_weights.append(w)
+
+        for key in cn_IDs:
+            plen = sum([sum(plen) for _, plen
         # save
+        
         obj = (
            pdb_IDs, pdb_weights, train_pdb,
            fb_IDs, fb_weights, fb,
@@ -560,7 +586,7 @@ def get_train_valid_set(params, OFFSET=1000000):
             print ('Writing',params["DATAPKL"])
             pickle.dump(obj, f)
             print ('Done')
-
+        
     else:
         with open(params["DATAPKL"], "rb") as f:
             print ('Loading',params["DATAPKL"])
