@@ -1,5 +1,5 @@
 # set to false if you dont want to use weights and biases 
-WANDB = True
+WANDB = False
 
 if WANDB:
     import wandb
@@ -170,6 +170,8 @@ class Trainer():
                        'chi_type'       :diffusion_param['diff_chi_type'],
                        'aa_decode_steps':diffusion_param['aa_decode_steps']}
         self.diffuser = Diffuser(**diff_kwargs)
+        self.schedule = self.diffuser.eucl_diffuser.beta_schedule
+        self.alphabar_schedule = self.diffuser.eucl_diffuser.alphabar_schedule
 
         # for all-atom str loss
         self.ti_dev = torsion_indices
@@ -211,7 +213,7 @@ class Trainer():
     def calc_loss(self, logit_s, label_s,
                   logit_aa_s, label_aa_s, mask_aa_s, logit_exp,
                   pred, pred_tors, true, mask_crds, mask_BB, mask_2d, same_chain,
-                  pred_lddt, idx, dataset, chosen_task, t, unclamp=False, negative=False,
+                  pred_lddt, idx, dataset, chosen_task, t, xyz_in, diffusion_mask, unclamp=False, negative=False,
                   w_dist=1.0, w_aa=1.0, w_str=1.0, w_all=0.5, w_exp=1.0,
                   w_lddt=1.0, w_blen=1.0, w_bang=1.0, w_lj=0.0, w_hb=0.0,
                   lj_lin=0.75, use_H=False, w_disp=0.0, eps=1e-6):
@@ -263,10 +265,17 @@ class Trainer():
 
         # Displacement prediction loss between xyz prev and xyz_true
         disp_tscale = self.loss_schedules.get('displacement',[1]*(t+1))[t]
-        disp_loss = calc_displacement_loss(pred, true, mask_BB)
+        disp_loss = calc_displacement_loss(pred, true, mask_BB.squeeze())
         tot_loss += w_disp*disp_loss*disp_tscale
         loss_dict['displacement'] = float(disp_loss.detach())
         
+        # Calculate displacement on xt-1 backcalculated from px0 and x0.
+        # Currently not backpropable
+        
+        xt1_squared_disp, xt1_disp = track_xt1_displacement(true, pred, xyz_in, t, diffusion_mask, self.schedule, self.alphabar_schedule)
+        loss_dict['xt1_displacement'] = xt1_disp
+        loss_dict['xt1_squared_displacement'] = xt1_squared_disp
+
         # Structural loss
         if unclamp:
             tot_str, str_loss = calc_str_loss(pred, true, mask_2d, same_chain, negative=negative,
@@ -457,7 +466,8 @@ class Trainer():
     def load_model(self, model, optimizer, scheduler, scaler, model_name, rank, suffix='last', resume_train=False):
 
         #chk_fn = "models/%s_%s.pt"%(model_name, suffix)
-        chk_fn = "models/extra_t1d_feat_BFF_last.pt"
+        #chk_fn = "models/extra_t1d_feat_BFF_last.pt"
+        chk_fn='debug'
         loaded_epoch = -1
         best_valid_loss = 999999.9
         if not os.path.exists(chk_fn):
@@ -878,6 +888,9 @@ class Trainer():
             msa_prev = None
             pair_prev = None
             state_prev = None
+            # get diffusion_mask for the displacement loss
+            diffusion_mask = masks_1d['input_str_mask'].squeeze()
+
             with torch.no_grad():
                 for i_cycle in range(N_cycle-1):
                     with ddp_model.no_sync():
@@ -928,7 +941,7 @@ class Trainer():
                                 logit_aa_s, msa[:, i_cycle], mask_msa[:,i_cycle], logit_exp,
                                 pred_crds, alphas, true_crds, mask_crds,
                                 mask_BB, mask_2d, same_chain,
-                                pred_lddts, idx_pdb, chosen_dataset[0], chosen_task[0], unclamp=unclamp, negative=negative, t=little_t,
+                                pred_lddts, idx_pdb, chosen_dataset[0], chosen_task[0],diffusion_mask=diffusion_mask, xyz_in=xyz_t, unclamp=unclamp, negative=negative, t=little_t,
                                 **self.loss_param)
                     loss = loss / self.ACCUM_STEP
 
@@ -965,7 +978,7 @@ class Trainer():
                                 logit_aa_s, msa[:, i_cycle], mask_msa[:,i_cycle], logit_exp,
                                 pred_crds, alphas, true_crds, mask_crds,
                                 mask_BB, mask_2d, same_chain,
-                                pred_lddts, idx_pdb, chosen_dataset[0], chosen_task[0], t=little_t, unclamp=unclamp, negative=negative,
+                                pred_lddts, idx_pdb, chosen_dataset[0], chosen_task[0], diffusion_mask=diffusion_mask, xyz_in=xyz_t, t=little_t, unclamp=unclamp, negative=negative,
                                 **self.loss_param)
                 
                 loss = loss / self.ACCUM_STEP
