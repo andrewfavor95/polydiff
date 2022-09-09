@@ -521,3 +521,22 @@ def writepdb_multi(filename, atoms_stack, bfacts, seq, backbone_only=False, chai
                 ctr += 1
 
         f.write('ENDMDL\n')
+
+def get_mu_xt_x0(xt, px0, t, schedule, alphabar_schedule, eps=1e-6):
+    """
+    Given xt, predicted x0 and the timestep t, give mu of x(t-1)
+    Assumes t is 0 indexed
+    """
+    #sigma is predefined from beta. Often referred to as beta tilde t
+    t_idx = t-1
+
+    sigma = ((1-alphabar_schedule[t_idx-1])/(1-alphabar_schedule[t_idx]))*schedule[t_idx]
+
+    xt_ca = xt[:,1,:]
+    px0_ca = px0[:,1,:]
+
+    a = ((torch.sqrt(alphabar_schedule[t_idx-1] + eps)*schedule[t_idx])/(1-alphabar_schedule[t_idx]))*px0_ca
+    b = ((torch.sqrt(1-schedule[t_idx] + eps)*(1-alphabar_schedule[t_idx-1]))/(1-alphabar_schedule[t_idx]))*xt_ca
+    mu = a + b
+
+    return mu, sigma

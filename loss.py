@@ -2,9 +2,10 @@ import torch
 import numpy as np
 from opt_einsum import contract as einsum
 
-from util import rigid_from_3_points
+from util import rigid_from_3_points, get_mu_xt_x0
 from kinematics import get_dih
 from scoring import HbHybType
+from icecream import ic
 
 torch.autograd.set_detect_anomaly(True)
 
@@ -38,7 +39,7 @@ def get_loss_schedules(T, loss_names=SCHEDULED_LOSSES, schedule_types=None, defa
     for i,name in enumerate(loss_names):
         t = torch.arange(T)
         
-        if schedule_types[i] is 'sigmoid':
+        if schedule_types[i] == 'sigmoid':
             a = schedule_params['sig_stretch']
             b = schedule_params['sig_shift']*T
             # stretched and shifted sigmoid between (0,1)
@@ -49,34 +50,73 @@ def get_loss_schedules(T, loss_names=SCHEDULED_LOSSES, schedule_types=None, defa
             raise NotImplementedError
     
     return loss_schedules
-    
 
-def calc_displacement_loss(pred, true, mask, eps=1e-8, gamma=0.99):
+def track_xt1_displacement(true, pred, xyz_in, t, diffusion_mask, schedule, alphabar_schedule):
     """
-    Calculates L2 norm of error between predicted and true CA 
+    Function to track the displacement, and squared displacement, of the backcalculated xt-1
+    Inputs:
+        true (B,L,3,3)
+        pred (I, B, L, 3, 3)
+        xyz_in (B, I, L, 3, 3)
+        t (float)
+        diffusion_mask (L)
+        schedule + alphabarschedule
+    outputs:
+        squared displacement & displacement in diffused region
+    """
+    mu_true,_ = get_mu_xt_x0(xyz_in[0,0], true[0], t, schedule, alphabar_schedule)
+    mu_backcalc,_ = get_mu_xt_x0(xyz_in[0,0], pred[0,0], t, schedule, alphabar_schedule)
+
+    xt1_squared_disp = calc_ca_displacement_loss(mu_true[~diffusion_mask], mu_backcalc[~diffusion_mask], squared=True).mean()
+    xt1_disp = calc_ca_displacement_loss(mu_true[~diffusion_mask], mu_backcalc[~diffusion_mask], squared=False).mean()
+    return xt1_squared_disp, xt1_disp
+
+def calc_ca_displacement_loss(xyz_1, xyz_2, squared=False):
+    """
+    Displacement (squared or not of Ca coordinates)
+    """
+    if squared:
+        err = torch.sum(torch.square(xyz_1 - xyz_2), dim=-1)
+    else:
+        err = torch.sqrt(torch.sum(torch.square(xyz_1 - xyz_2), dim=-1)) # (L)
+
+    return err
+
+def calc_displacement_loss(pred, true, mask, gamma=0.99, d_clamp=None):
+    """
+    Calculates squared L2 norm of error between predicted and true CA 
+
+    pred - (I,B,L,3, 3)
+    true - (  B,L,27,3)
+    diffusion_mask - (L, dtype=bool)
     """
     I = pred.shape[0]
     B = pred.shape[1]
+
+
     assert B == 1
     pred = pred.squeeze(1)
+    true = true.squeeze(0)
 
-
-    pred_ca = pred[:,:,:,1,...] # (I,L,3)
-    true_ca = true[:,:,1,...]   # ( ,L,3)
-
+    pred_ca = pred[:,:,1,...] # (I,L,3)
+    true_ca = true[:,1,...]   # (L,3)
 
     # weighting loss
     w_loss = torch.pow(torch.full((I,), gamma, device=pred.device), torch.arange(I, device=pred.device))
     w_loss = torch.flip(w_loss, (0,))
     w_loss = w_loss / w_loss.sum()
 
-    err = torch.mean( torch.sum(torch.square(pred_ca - true_ca[None,...]), dim=-1), dim=-1) # (I,)
-    err = torch.sqrt(err + eps)
+    err = torch.sum(torch.square(pred_ca - true_ca[None,...]), dim=-1) # (I, L)
 
-    err = err*w_loss 
+    if d_clamp is not None:
+        # set squared distance clamp to d_clamp**2
+        d_clamp=torch.tensor(d_clamp**2)[None].to(err.device)
+        err = torch.where(err>d_clamp, d_clamp, err)
 
+    err = torch.mean(err, dim=-1) # (I,)
+
+    err = err*w_loss
     return err.sum()
-        
 
 # use improved coordinate frame generation
 def get_t(N, Ca, C, non_ideal=False, eps=1e-5):

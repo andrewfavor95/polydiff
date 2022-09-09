@@ -65,10 +65,8 @@ def get_beta_schedule(T, b0, bT, schedule_type, schedule_params={}, inference=Fa
     alphabar_t_schedule  = torch.cumprod(alpha_schedule, dim=0)
     
     print(f"With this beta schedule ({schedule_type} schedule, beta_0 = {b0}, beta_T = {bT}), alpha_bar_T = {alphabar_t_schedule[-1]}")
-    if inference:
-        return schedule, alphabar_t_schedule
 
-    return schedule 
+    return schedule, alphabar_t_schedule 
 
 
 class EuclideanDiffuser():
@@ -85,7 +83,7 @@ class EuclideanDiffuser():
         self.T = T 
         
         # make noise/beta schedule 
-        self.beta_schedule  = get_beta_schedule(T, b_0, b_T, schedule_type, **schedule_kwargs)
+        self.beta_schedule, self.alphabar_schedule  = get_beta_schedule(T, b_0, b_T, schedule_type, **schedule_kwargs)
         self.alpha_schedule = 1-self.beta_schedule 
 
     
