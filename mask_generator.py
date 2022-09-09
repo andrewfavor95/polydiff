@@ -50,7 +50,33 @@ def get_diffusion_pos(L,min_length, max_length=None):
 
     return start_idx, end_idx 
 
-
+def get_diffusion_mask(L, full_prop=0.2, low_prop=0.2, high_prop=1.0, broken_prop=0.5):
+    """
+    Function to make a diffusion mask.
+    Options:
+        full_prop - proportion of time whole protein is masked.
+        low_prop - lower bound on the proportion of the protein masked
+        high_prop - upper bound on the proportion of the protein masked
+        broken_prop - proportion of the time the mask is in the middle (broken motif), vs at the ends
+    Output:
+        1D diffusion mask. True is unmasked, False is masked/diffused
+    """
+    if random.uniform(0,1) < full_prop:
+        return torch.zeros(L).bool()
+    
+    diffusion_mask = torch.ones(L).bool()
+    mask_length = int(np.floor(random.uniform(low_prop, high_prop) * L))
+    # decide if mask goes in the middle or the ends
+    if random.uniform(0,1) < broken_prop:
+        high_start = L-mask_length-1
+        start = random.randint(0, high_start)
+        diffusion_mask[start:start+mask_length] = False
+    else:
+        # split mask in two
+        split = random.randint(1, mask_length-2)
+        diffusion_mask[:split] = False
+        diffusion_mask[-(mask_length-split):] = False
+    return diffusion_mask
 
 
 #####################################
@@ -108,13 +134,17 @@ def generate_masks(msa, task, loader_params, chosen_dataset, full_chain=None): #
         """ 
 
         # get start and end of contiguous section of diffused residues 
-        start, end = get_diffusion_pos(L, loader_params['DIFF_MASK_LOW'], loader_params['DIFF_MASK_HIGH'])
-
+        #start, end = get_diffusion_pos(L, loader_params['DIFF_MASK_LOW'], loader_params['DIFF_MASK_HIGH'])
+        
         ## input masks
         # False is diffused, True is not diffused 
-        input_str_mask[start:end+1] = False 
-        input_seq_mask     = torch.clone(input_str_mask)
+        #input_str_mask[start:end+1] = False 
+        #input_seq_mask     = torch.clone(input_str_mask)
         
+        #MADE A NEW FUNCTION
+        diffusion_mask = get_diffusion_mask(L, full_prop=0.2, low_prop=0.2, high_prop=1.0, broken_prop=0.5) 
+        input_str_mask = diffusion_mask
+        input_seq_mask = diffusion_mask
         # t1dconf scaling will be taken care of by diffuser, so just leave those at 1 here 
         input_t1dconf_mask = torch.ones(L)
 
