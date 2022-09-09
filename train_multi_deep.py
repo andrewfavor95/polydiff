@@ -1,5 +1,5 @@
 # set to false if you dont want to use weights and biases 
-WANDB = False
+WANDB = True
 
 if WANDB:
     import wandb
@@ -145,9 +145,10 @@ class Trainer():
         self.interactive = interactive
         self.outdir = outdir
         if not os.path.isdir(self.outdir):
-            os.makedirs(self.outdir)
+            os.makedirs(self.outdir, exist_ok=True)
         else:
-            sys.exit('EXITING: self.outdir already exists. Dont clobber')
+            pass
+            #sys.exit('EXITING: self.outdir already exists. Dont clobber')
         #
         self.model_param = model_param
         self.loader_param = loader_param
@@ -185,8 +186,14 @@ class Trainer():
         
         # create a loss schedule - sigmoid (default) if use tschedule, else empty dict
         constant_schedule = not loss_param['use_tschedule']
-        self.loss_schedules = loss.get_loss_schedules(diff_kwargs['T'], constant=constant_schedule)
+        loss_names = loss_param['scheduled_losses']
+        schedule_type = loss_param['scheduled_types']
+        schedule_params = loss_param['scheduled_params']
+        self.loss_schedules = loss.get_loss_schedules(diff_kwargs['T'], loss_names=loss_names, schedule_types=schedule_type, schedule_params=schedule_params, constant=constant_schedule)
         self.loss_param.pop('use_tschedule')
+        self.loss_param.pop('scheduled_losses')
+        self.loss_param.pop('scheduled_types')
+        self.loss_param.pop('scheduled_params')
         print('These are the loss names which have t_scheduling activated')
         print(self.loss_schedules.keys())
 
@@ -217,7 +224,9 @@ class Trainer():
                   w_dist=1.0, w_aa=1.0, w_str=1.0, w_all=0.5, w_exp=1.0,
                   w_lddt=1.0, w_blen=1.0, w_bang=1.0, w_lj=0.0, w_hb=0.0,
                   lj_lin=0.75, use_H=False, w_disp=0.0, eps=1e-6):
-        
+        #NB t is 1-indexed
+        t_idx = t-1
+ 
         # dictionary for keeping track of losses 
         loss_dict = {}
 
@@ -227,12 +236,24 @@ class Trainer():
 
         loss_s = list()
         tot_loss = 0.0
+        
+        # get tscales
+        c6d_tscale = self.loss_schedules.get('c6d',[1]*(t))[t_idx]
+        aa_tscale = self.loss_schedules.get('aa_cce',[1]*(t))[t_idx]
+        disp_tscale = self.loss_schedules.get('displacement',[1]*(t))[t_idx]
+        lddt_loss_tscale = self.loss_schedules.get('lddt_loss',[1]*(t))[t_idx]
+        bang_tscale = self.loss_schedules.get('bang',[1]*(t))[t_idx]
+        blen_tscale = self.loss_schedules.get('blen',[1]*(t))[t_idx]
+        exp_tscale = self.loss_schedules.get('exp',[1]*(t))[t_idx]
+        lj_tscale = self.loss_schedules.get('lj',[1]*(t))[t_idx]
+        hb_tscale = self.loss_schedules.get('lj',[1]*(t))[t_idx]
+        str_tscale = self.loss_schedules.get('w_str',[1]*(t))[t_idx]
+        w_all_tscale = self.loss_schedules.get('w_all',[1]*(t+1))[t_idx]
 
         # c6d loss
         for i in range(4):
             # schedule factor for c6d 
             # syntax is if it's not in the scheduling dict, loss has full weight (i.e., 1x)
-            c6d_tscale = self.loss_schedules.get('c6d',[1]*(t+1))[t]
 
             loss = self.loss_fn(logit_s[i], label_s[...,i]) # (B, L, L)
             loss = (mask_2d*loss).sum() / (mask_2d.sum() + eps)
@@ -240,10 +261,6 @@ class Trainer():
             loss_s.append(loss[None].detach())
 
             loss_dict[f'c6d_{i}'] = float(loss.detach())
-
-
-        # masked token prediction loss
-        aa_tscale = self.loss_schedules.get('aa_cce',[1]*(t+1))[t]
 
         loss = self.loss_fn(logit_aa_s, label_aa_s.reshape(B, -1))
         loss = loss * mask_aa_s.reshape(B, -1)
@@ -253,9 +270,6 @@ class Trainer():
 
         loss_dict['aa_cce'] = float(loss.detach())
 
-        # experimentally resolved prediction loss
-        exp_tscale = self.loss_schedules.get('exp',[1]*(t+1))[t]
-
         loss = nn.BCEWithLogitsLoss()(logit_exp, mask_BB.float())
         tot_loss += w_exp*loss*exp_tscale
 
@@ -264,7 +278,6 @@ class Trainer():
         loss_dict['exp_resolved'] = float(loss.detach())
 
         # Displacement prediction loss between xyz prev and xyz_true
-        disp_tscale = self.loss_schedules.get('displacement',[1]*(t+1))[t]
         disp_loss = calc_displacement_loss(pred, true, mask_BB.squeeze())
         tot_loss += w_disp*disp_loss*disp_tscale
         loss_dict['displacement'] = float(disp_loss.detach())
@@ -286,7 +299,7 @@ class Trainer():
         
         # dj - str loss timestep scheduling: 
         # scale w_all to keep the contributions of BB/ALLatom fape summing to 1.0
-        w_all = w_all*self.loss_schedules.get('w_all',[1]*(t+1))[t]
+        w_all = w_all*w_all_tscale
 
         tot_loss += (1.0-w_all)*w_str*tot_str
         loss_s.append(str_loss)
@@ -372,7 +385,6 @@ class Trainer():
         loss_dict['tors'] = float(l_tors.detach())
 
         # predicted lddt loss
-        lddt_loss_tscale = self.loss_schedules.get('lddt_loss',[1]*(t+1))[t]
 
         lddt_loss, ca_lddt = calc_lddt_loss(pred[:,:,:,1].detach(), true[:,:,1], pred_lddt, idx, mask_BB, mask_2d, same_chain, negative=negative)
         tot_loss += w_lddt*lddt_loss*lddt_loss_tscale
@@ -389,8 +401,6 @@ class Trainer():
         #loss_s.append(true_lddt.mean()[None].detach())
         
         # bond geometry
-        bang_tscale = self.loss_schedules.get('bang',[1]*(t+1))[t]
-        blen_tscale = self.loss_schedules.get('blen',[1]*(t+1))[t]
 
         blen_loss, bang_loss = calc_BB_bond_geom(pred[-1], true, mask_BB)
         if w_blen > 0.0:
@@ -409,7 +419,6 @@ class Trainer():
             lj_lin=lj_lin, use_H=use_H, negative=negative)
 
         if w_lj > 0.0:
-            lj_tscale = self.loss_schedules.get('lj',[1]*(t+1))[t]
             tot_loss += w_lj*lj_loss*lj_tscale
 
         loss_dict['lj'] = float(lj_loss.detach())
@@ -419,7 +428,6 @@ class Trainer():
             seq[0], pred_all[0,...,:3], 
             self.aamask, self.hbtypes, self.hbbaseatoms, self.hbpolys)
         if w_hb > 0.0:
-            hb_tscale = self.loss_schedules.get('lj',[1]*(t+1))[t]
             tot_loss += w_hb*hb_loss*hb_tscale
 
         loss_s.append(torch.stack((blen_loss, bang_loss, lj_loss, hb_loss)).detach())
@@ -466,8 +474,8 @@ class Trainer():
     def load_model(self, model, optimizer, scheduler, scaler, model_name, rank, suffix='last', resume_train=False):
 
         #chk_fn = "models/%s_%s.pt"%(model_name, suffix)
-        #chk_fn = "models/extra_t1d_feat_BFF_last.pt"
-        chk_fn='debug'
+        chk_fn = "models/extra_t1d_feat_BFF_last.pt"
+        #chk_fn='debug'
         loaded_epoch = -1
         best_valid_loss = 999999.9
         if not os.path.exists(chk_fn):

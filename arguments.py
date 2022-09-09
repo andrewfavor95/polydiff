@@ -195,6 +195,15 @@ def get_args():
             help="consider hydrogens for lj loss [False]")
     loss_group.add_argument('-use_tschedule', action='store_true', default=False,
             help='(Diffusion training) True, use loss scaling as a function of timestep')
+    loss_group.add_argument('-scheduled_losses',type=list, 
+            default=['aa_cce','tors', 'blen', 'bang', 'lj', 'hb', 'w_str'],
+            help='Losses that you want schedule for')
+    loss_group.add_argument('-scheduled_types',type=list,
+            default=['sigmoid','sigmoid','sigmoid','sigmoid','sigmoid','sigmoid','linear'],
+            help='Loss types to be used for each of the schedules losses. This list must be the same length as -scheduled_losses')
+    loss_group.add_argument('-scheduled_params',type=list,
+            default=[{'sig_stretch':0.23, 'sig_shift':0.885, 'linear_start':1., 'linear_end':0.1}]*7,
+            help='Parameters to be used for each loss schedule')
 
     # other parameters
     parser.add_argument('-task_names', default='seq2str',
@@ -261,7 +270,7 @@ def get_args():
     trunk_param['SE3_param_full'] = SE3_param_full
     trunk_param['SE3_param_topk'] = SE3_param_topk
     loss_param = {}
-    for param in ['w_dist', 'w_str', 'w_all', 'w_aa', 'w_lddt', 'w_blen', 'w_bang', 'w_lj', 'w_hb', 'lj_lin', 'use_H', 'w_disp', 'use_tschedule']:
+    for param in ['w_dist', 'w_str', 'w_all', 'w_aa', 'w_lddt', 'w_blen', 'w_bang', 'w_lj', 'w_hb', 'lj_lin', 'use_H', 'w_disp', 'use_tschedule', 'scheduled_losses', 'scheduled_types', 'scheduled_params']:
         loss_param[param] = getattr(args, param)
 
     return args, trunk_param, loader_param, loss_param, diffusion_params

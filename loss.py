@@ -15,40 +15,39 @@ torch.autograd.set_detect_anomaly(True)
 # 3. bond geometry loss
 # 4. predicted lddt loss
 
-SCHEDULED_LOSSES = ['aa_cce','exp_resolved','tors', 'blen', 'bang', 'lj', 'hb','w_all']
-def get_loss_schedules(T, loss_names=SCHEDULED_LOSSES, schedule_types=None, default_schedule='sigmoid', 
-                       schedule_params={'sig_stretch':0.15, 'sig_shift':0.8}, constant=False):
+def get_loss_schedules(T, loss_names, schedule_types, schedule_params, constant=False):
     """
-    Given a list of loss functions and schedule types, produce multiplicative weights 
-    as a function of timestep to apply on the loss. 
+    Given a list of loss functions and schedule types, produce multiplicative weights
+    as a function of timestep to apply on the loss.
 
-    loss_list (list, required): List of loss functions (i.e., the callables) 
+    loss_list (list, required): List of loss functions (i.e., the callables)
 
-    schedule_types (list, optional): type of schedules to use for each 
+    schedule_types (list, optional): type of schedules to use for each
     """
-    if schedule_types:
-        assert len(schedule_types) == len(loss_names)
-    else:
-        schedule_types = [default_schedule]*len(loss_names)
 
+    assert len(schedule_types) == len(loss_names)
+    assert len(schedule_params) == len(loss_names)
     if constant:
         return {}
 
     loss_schedules = {}
-    
+
     for i,name in enumerate(loss_names):
         t = torch.arange(T)
-        
+
         if schedule_types[i] == 'sigmoid':
-            a = schedule_params['sig_stretch']
-            b = schedule_params['sig_shift']*T
+            a = schedule_params[i]['sig_stretch']
+            b = schedule_params[i]['sig_shift']*T
             # stretched and shifted sigmoid between (0,1)
-            loss_schedules[name] = torch.flip( 1/(1+torch.exp(a*(-t+b))), dims=[0])
-            # assert the sigmoid gets higher at low t 
-            assert loss_schedules[name][0] > loss_schedules[name][-1]
+            loss_schedules[name] = (1/(1+torch.exp(a*(-t+b)))).flip(0) # flip to have high point in sigmoid near 0
+
+        elif schedule_types[i] == 'linear':
+            a = schedule_params[i]['linear_start']
+            b = schedule_params[i]['linear_end']
+            loss_schedules[name] = torch.linspace(a, b, T) # low at zero by default
         else:
             raise NotImplementedError
-    
+
     return loss_schedules
 
 def track_xt1_displacement(true, pred, xyz_in, t, diffusion_mask, schedule, alphabar_schedule):

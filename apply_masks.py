@@ -50,7 +50,7 @@ def mask_inputs(seq,
         #       also assumes all 4 of seq are identical 
 
         # pick t uniformly 
-        t = random.randint(0,diffuser.T-1)
+        t = random.randint(1,diffuser.T)
         t_list = [t]
         if predict_previous:
             # grab previous t. if t is 0 force a prediction of x_t=0
