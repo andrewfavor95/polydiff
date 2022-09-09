@@ -78,7 +78,7 @@ class EuclideanDiffuser():
                  T, 
                  b_0, 
                  b_T, 
-                 schedule_type='cosine',
+                 schedule_type='linear',
                  schedule_kwargs={},
                  ):
         
@@ -697,13 +697,13 @@ class Diffuser():
 
     def __init__(self,
                  T,
-                 b_0=0.001,
-                 b_T=0.1,
+                 b_0=1e-2,
+                 b_T=7e-2,
                  min_sigma=0.02,
                  max_sigma=1.5,
-                 min_b=1.0,
-                 max_b=12.5,
-                 schedule_type='cosine',
+                 min_b=1.5,
+                 max_b=2.5,
+                 schedule_type='linear',
                  so3_schedule_type='linear',
                  schedule_kwargs={},
                  so3_type='igso3',
