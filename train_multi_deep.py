@@ -1072,7 +1072,7 @@ class Trainer():
             clamped = top1_sequence
 
 
-            if chosen_task[0] != 'seq2str' and np.random.randint(0,10) == 0:
+            if chosen_task[0] != 'seq2str' and np.random.randint(0,100) == 0:
                 if not os.path.isdir(f'./{self.outdir}/training_pdbs/'):
                     os.makedirs(f'./{self.outdir}/training_pdbs')
                 writepdb(f'{self.outdir}/training_pdbs/test_epoch_{epoch}_{counter}_{chosen_task[0]}_{chosen_dataset[0]}_t_{little_t}pred.pdb',pred_crds[-1,0,:,:3,:],top1_sequence[0,0,:])
