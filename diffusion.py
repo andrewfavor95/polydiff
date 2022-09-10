@@ -836,8 +836,9 @@ class Diffuser():
 
         else:
             for t in t_list:
-                xyz_bb_t  = diffused_BB[t,:,:3]
-                alphas_t = diffused_torsions_trig.transpose(0,1)[t]
+                t_idx=t-1
+                xyz_bb_t  = diffused_BB[t_idx,:,:3]
+                alphas_t = diffused_torsions_trig.transpose(0,1)[t_idx]
 
                 _,fullatom_t = get_allatom(seq[None], xyz_bb_t[None], alphas_t[None])
                 fa_stack.append(fullatom_t.squeeze())

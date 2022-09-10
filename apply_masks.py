@@ -69,7 +69,7 @@ def mask_inputs(seq,
         seq_mask = torch.ones_like(seq.squeeze()[0]).to(dtype=bool) # all revealed 
 
         # grab noised inputs / create masks based on time t
-        aa_mask_raw = aa_masks[t] 
+        aa_mask_raw = aa_masks[t-1] 
     
         # mark False where aa_mask_raw is False -- assumes everybody is potentially diffused
         seq_mask[~aa_mask_raw] = False
