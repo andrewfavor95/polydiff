@@ -6,6 +6,7 @@ from util import rigid_from_3_points, get_mu_xt_x0
 from kinematics import get_dih
 from scoring import HbHybType
 from icecream import ic
+from diff_util import th_min_angle 
 
 torch.autograd.set_detect_anomaly(True)
 
@@ -15,7 +16,65 @@ torch.autograd.set_detect_anomaly(True)
 # 3. bond geometry loss
 # 4. predicted lddt loss
 
+def normalize_ax_ang(V):
+    """
+    Gets axis angle representation normalized between [0,pi]
+    
+    If original AA vector was beyond pi in norm, switches the direction of the vector and scales 
+    it appropriate magnitude to represent the angle going around other side of circle 
+    """
+    V_norm = torch.norm(V, p=2, dim=-1).detach()
+
+    # normalize AA vectors to be norm 1 
+    V_magnitude_1 = V / torch.norm(V, p=2, dim=-1)[...,None]
+    
+    # calculate the "good norms" - minimum angle between angle and 0
+    good_norms = th_min_angle(torch.zeros_like(V_norm), V_norm*180/np.pi, radians=False)*np.pi/180
+    
+    # normalize the ax-ang vectors with the good norms 
+    # if norm(V) > pi, switches the directon and magnitude of V to go other way around circle 
+    V_w_good_norms = V_magnitude_1 * good_norms[...,None]
+    
+    return V_w_good_norms 
+
+
+def axis_angle_loss(aa_pred, aa_true, gamma=0.99, d_clamp=None):
+    """
+    Calculates the squared L2 loss between the predict axis angle and true axis angle 
+
+    'aa' is supposed to stand for 'axis_angle'/'ax_ang' here 
+    """
+    I = aa_pred.shape[0]
+    B = aa_pred.shape[1]
+    assert B == 1 # calculation assumes batch size 1 by doing squeeze  
+    
+    # normalize vectors to be in [0,pi] in magnitude 
+    aa_pred = normalize_ax_ang(aa_pred)
+    aa_true = normalize_ax_ang(aa_true)
+
+    # weighting loss
+    w_loss = torch.pow(torch.full((I,), gamma, device=aa_pred.device), torch.arange(I, device=aa_pred.device))
+    w_loss = torch.flip(w_loss, (0,))
+    w_loss = w_loss / w_loss.sum()
+
+    # squared L2 - sum down xyz dim 
+    err = torch.sum(torch.square(aa_pred - aa_true[None]), dim=-1) 
+    
+    # NOTE: Need to set up clamp between [0,pi)
+    if d_clamp is not None:
+        # set squared distance clamp to d_clamp**2
+        d_clamp=torch.tensor(d_clamp**2)[None].to(err.device)
+        err = torch.where(err>d_clamp, d_clamp, err)
+
+    err = torch.mean(err, dim=-1).squeeze() # (I,)
+
+    err = err*w_loss
+
+    return err.sum()
+
+
 def get_loss_schedules(T, loss_names, schedule_types, schedule_params, constant=False):
+
     """
     Given a list of loss functions and schedule types, produce multiplicative weights
     as a function of timestep to apply on the loss.

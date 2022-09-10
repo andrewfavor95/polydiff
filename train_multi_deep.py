@@ -1,5 +1,5 @@
 # set to false if you dont want to use weights and biases 
-WANDB = True
+WANDB = False
 
 if WANDB:
     import wandb
@@ -26,6 +26,8 @@ from loss import *
 from util import *
 from util_module import ComputeAllAtomCoords
 from scheduler import get_stepwise_decay_schedule_with_warmup
+
+import rotation_conversions as rot_conv
 
 #added for inpainting training
 from icecream import ic
@@ -59,10 +61,10 @@ N_EXAMPLE_PER_EPOCH = 25600
 
 
 LOAD_PARAM = {'shuffle': False,
-              'num_workers': 4,
+              'num_workers': 0,
               'pin_memory': True}
 LOAD_PARAM2 = {'shuffle': False,
-              'num_workers': 4,
+              'num_workers': 0,
               'pin_memory': True}
 
 def add_weight_decay(model, l2_coeff):
@@ -156,6 +158,7 @@ class Trainer():
         self.valid_param['MINTPLT'] = 1
         self.valid_param['SEQID'] = 150.0
         self.loss_param = loss_param
+        ic(self.loss_param)
         self.ACCUM_STEP = accum_step
         self.batch_size = batch_size
 
@@ -223,7 +226,8 @@ class Trainer():
                   pred_lddt, idx, dataset, chosen_task, t, xyz_in, diffusion_mask, unclamp=False, negative=False,
                   w_dist=1.0, w_aa=1.0, w_str=1.0, w_all=0.5, w_exp=1.0,
                   w_lddt=1.0, w_blen=1.0, w_bang=1.0, w_lj=0.0, w_hb=0.0,
-                  lj_lin=0.75, use_H=False, w_disp=0.0, eps=1e-6):
+                  lj_lin=0.75, use_H=False, w_disp=0.0, w_ax_ang=0.0, eps=1e-6):
+
         #NB t is 1-indexed
         t_idx = t-1
  
@@ -285,6 +289,31 @@ class Trainer():
 
         tot_loss += w_disp*disp_loss*disp_tscale
         loss_dict['displacement'] = float(disp_loss.detach())
+
+        ######################################
+        #### squared L2 loss on rotations ####
+        ###################################### 
+        I,B,L = pred.shape[:3]
+        N_pred, Ca_pred, C_pred = pred[:,:,:,0], pred[:,:,:,1], pred[:,:,:,2]
+        N_true, Ca_true, C_true = true[:,:,0], true[:,:,1], true[:,:,2]
+        
+        # get predicted frames 
+        R_pred,_ = rigid_from_3_points(N_pred.reshape(I*B,L,3), 
+                                     Ca_pred.reshape(I*B,L,3), 
+                                     C_pred.reshape(I*B,L,3))
+        R_pred = R_pred.reshape(I,B,L,3,3)
+        # get true frames 
+        R_true,_ = rigid_from_3_points(N_true, Ca_true, C_true)
+
+        # convert to axis angle representation and calculate loss 
+        axis_angle_pred = rot_conv.matrix_to_axis_angle(R_pred)
+        axis_angle_true = rot_conv.matrix_to_axis_angle(R_true)
+        ax_ang_loss = axis_angle_loss(axis_angle_pred, axis_angle_true)
+        
+        # append to dictionary  
+        loss_dict['axis_angle'] = float(ax_ang_loss.detach())
+        tot_loss += w_ax_ang*ax_ang_loss*disp_tscale #NOTE: scheduled same as displacement
+
         
         # Calculate displacement on xt-1 backcalculated from px0 and x0.
         # Currently not backpropable
