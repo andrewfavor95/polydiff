@@ -63,7 +63,8 @@ def mask_inputs(seq,
                   'diffusion_mask'  :input_str_mask.squeeze(),
                   't_list':t_list}
 
-        _,_,_,_,_,diffused_fullatoms, aa_masks = diffuser.diffuse_pose(**kwargs)
+        diffused_fullatoms, aa_masks, true_crds = diffuser.diffuse_pose(**kwargs)
+        
 
 
         seq_mask = torch.ones_like(seq.squeeze()[0]).to(dtype=bool) # all revealed 
@@ -80,8 +81,6 @@ def mask_inputs(seq,
         xyz_t       = diffused_fullatoms[0][None,None]
         if predict_previous:
             true_crds = diffused_fullatoms[1][None]
-        else:
-            true_crds = true_crds_in 
 
 
         # scale confidence wrt t 

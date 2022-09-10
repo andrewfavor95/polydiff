@@ -278,7 +278,11 @@ class Trainer():
         loss_dict['exp_resolved'] = float(loss.detach())
 
         # Displacement prediction loss between xyz prev and xyz_true
-        disp_loss = calc_displacement_loss(pred, true, mask_BB.squeeze())
+        if unclamp:
+            disp_loss = calc_displacement_loss(pred, true, mask_BB, gamma=0.99, d_clamp=None)
+        else:
+            disp_loss = calc_displacement_loss(pred, true, mask_BB, gamma=0.99, d_clamp=10.0)
+
         tot_loss += w_disp*disp_loss*disp_tscale
         loss_dict['displacement'] = float(disp_loss.detach())
         

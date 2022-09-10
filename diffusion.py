@@ -786,6 +786,8 @@ class Diffuser():
             xyz = xyz - xyz[:,1,:].mean(dim=0)
 
         #xyz = xyz - xyz[nan_mask][:,1,:].mean(dim=0) # DJ aug 23, 2022 - commenting out bc now better logic to assert no nans 
+        xyz_true = torch.clone(xyz)
+
         xyz = xyz * self.crd_scale
 
         
@@ -845,5 +847,5 @@ class Diffuser():
 
         fa_stack = torch.stack(fa_stack, dim=0)
 
-
-        return diffused_T, deltas, diffused_frame_crds, diffused_frames, diffused_torsions, fa_stack, aa_masks
+        return fa_stack, aa_masks, xyz_true[None]
+        #return diffused_T, deltas, diffused_frame_crds, diffused_frames, diffused_torsions, fa_stack, aa_masks
