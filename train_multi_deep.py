@@ -1,11 +1,14 @@
 # set to false if you dont want to use weights and biases 
-WANDB = False
+DEBUG = True
+
+WANDB = True if not DEBUG else False 
 
 if WANDB:
     import wandb
 
 import sys, os
 import time
+import pickle 
 import numpy as np
 from copy import deepcopy
 from collections import OrderedDict
@@ -61,10 +64,10 @@ N_EXAMPLE_PER_EPOCH = 25600
 
 
 LOAD_PARAM = {'shuffle': False,
-              'num_workers': 0,
+              'num_workers': 8 if not DEBUG else 0,
               'pin_memory': True}
 LOAD_PARAM2 = {'shuffle': False,
-              'num_workers': 0,
+              'num_workers': 8 if not DEBUG else 0,
               'pin_memory': True}
 
 def add_weight_decay(model, l2_coeff):
@@ -226,7 +229,7 @@ class Trainer():
                   pred_lddt, idx, dataset, chosen_task, t, xyz_in, diffusion_mask, unclamp=False, negative=False,
                   w_dist=1.0, w_aa=1.0, w_str=1.0, w_all=0.5, w_exp=1.0,
                   w_lddt=1.0, w_blen=1.0, w_bang=1.0, w_lj=0.0, w_hb=0.0,
-                  lj_lin=0.75, use_H=False, w_disp=0.0, w_ax_ang=0.0, eps=1e-6):
+                  lj_lin=0.75, use_H=False, w_disp=0.0, w_ax_ang=0.0, w_frame_dist=0.0, eps=1e-6):
 
         #NB t is 1-indexed
         t_idx = t-1
@@ -305,14 +308,19 @@ class Trainer():
         # get true frames 
         R_true,_ = rigid_from_3_points(N_true, Ca_true, C_true)
 
-        # convert to axis angle representation and calculate loss 
+        # calculate frame distance loss 
+        loss_frame_dist = frame_distance_loss(R_pred, R_true.squeeze()) # NOTE: loss calc assumes batch size 1 due to squeeze 
+        loss_dict['frame_sqL2'] = float(loss_frame_dist.detach())
+        tot_loss += w_frame_dist*loss_frame_dist*disp_tscale #NOTE: scheduled same as coordinate displacement loss 
+
+        # convert to axis angle representation and calculate axis-angle loss 
         axis_angle_pred = rot_conv.matrix_to_axis_angle(R_pred)
         axis_angle_true = rot_conv.matrix_to_axis_angle(R_true)
         ax_ang_loss = axis_angle_loss(axis_angle_pred, axis_angle_true)
         
         # append to dictionary  
         loss_dict['axis_angle'] = float(ax_ang_loss.detach())
-        tot_loss += w_ax_ang*ax_ang_loss*disp_tscale #NOTE: scheduled same as displacement
+        tot_loss += w_ax_ang*ax_ang_loss*disp_tscale #NOTE: scheduled same as coordinate displacement loss 
 
         
         # Calculate displacement on xt-1 backcalculated from px0 and x0.
@@ -1079,10 +1087,18 @@ class Trainer():
                     else:
                         task_str = chosen_task[0]
                     
-                    sys.stdout.write("Local %s | %s: [%04d/%04d] Batch: [%05d/%05d] Time: %16.1f | total_loss: %8.4f | %s | %.4f %.4f %.4f | Max mem %.4f\n"%(\
-                            task_str, chosen_dataset[0], epoch, self.n_epoch, counter*self.batch_size*world_size, self.n_train, train_time, local_tot, \
-                            " ".join(["%8.4f"%l for l in local_loss]),\
-                            local_acc[0], local_acc[1], local_acc[2], max_mem))
+                    #sys.stdout.write("Local %s | %s: [%04d/%04d] Batch: [%05d/%05d] Time: %16.1f | total_loss: %8.4f | %s | %.4f %.4f %.4f | Max mem %.4f\n"%(\
+                    #        task_str, chosen_dataset[0], epoch, self.n_epoch, counter*self.batch_size*world_size, self.n_train, train_time, local_tot, \
+                    #        " ".join(["%8.4f"%l for l in local_loss]),\
+                    #        local_acc[0], local_acc[1], local_acc[2], max_mem))
+
+                    outstr = f"Local {task_str} | {chosen_dataset[0]}: [{epoch}/{self.n_epoch}] Batch: [{counter*self.batch_size*world_size}/{self.n_train}] Time: {train_time} Loss dict: "
+
+                    str_stack = []
+                    for k in sorted(list(loss_dict.keys())):
+                        str_stack.append(f'{k}--{round( float(loss_dict[k]), 4)}')
+                    outstr += '  '.join(str_stack)
+                    sys.stdout.write(outstr+'\n')
                     
                     if WANDB and rank == 0:
                         loss_dict.update({'t':little_t, 'total_examples':epoch*self.n_train+counter*world_size, 'dataset':chosen_dataset[0], 'task':chosen_task[0]})

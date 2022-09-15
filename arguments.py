@@ -172,7 +172,9 @@ def get_args():
     loss_group.add_argument('-w_disp', type=float, default=0.0,
             help="Weight on L2 CA displacement error [0.0]")
     loss_group.add_argument('-w_ax_ang', type=float, default=0.0,
-            help='Weight on squared L2 frame "displacement" error [0.0]')
+            help='Weight on squared L2 loss on axis-angle deviation error [0.0]')
+    loss_group.add_argument('-w_frame_dist', type=float, default=0.0,
+            help='Weight on squared L2 "frame distance" error') 
     loss_group.add_argument('-w_exp', type=float, default=0.1,
             help="Weight on experimental resolved in loss function [0.1]")
     loss_group.add_argument('-w_str', type=float, default=10.0,
@@ -272,7 +274,7 @@ def get_args():
     trunk_param['SE3_param_full'] = SE3_param_full
     trunk_param['SE3_param_topk'] = SE3_param_topk
     loss_param = {}
-    for param in ['w_ax_ang', 'w_dist', 'w_str', 'w_all', 'w_aa', 'w_lddt', 'w_blen', 'w_bang', 'w_lj', 'w_hb', 'lj_lin', 'use_H', 'w_disp', 'use_tschedule', 'scheduled_losses', 'scheduled_types', 'scheduled_params']:
+    for param in ['w_frame_dist', 'w_ax_ang', 'w_dist', 'w_str', 'w_all', 'w_aa', 'w_lddt', 'w_blen', 'w_bang', 'w_lj', 'w_hb', 'lj_lin', 'use_H', 'w_disp', 'use_tschedule', 'scheduled_losses', 'scheduled_types', 'scheduled_params']:
         loss_param[param] = getattr(args, param)
 
     return args, trunk_param, loader_param, loss_param, diffusion_params

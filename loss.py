@@ -16,6 +16,33 @@ torch.autograd.set_detect_anomaly(True)
 # 3. bond geometry loss
 # 4. predicted lddt loss
 
+def frame_distance_loss(R_pred, R_true, eps=1e-8, gamma=0.99):
+    """
+    Calculates squared L2 loss on frames
+    """
+    I,B,L = R_pred.shape[:3]
+    assert len(R_true.shape) == 3
+    assert B == 1
+
+    true_repeated = R_true.repeat((I,B,1,1,1))
+    eye_repeated  = torch.eye(3,3).repeat((I,B,L,1,1)).to(device=true_repeated.device)
+
+    # apply transpose of prediction to true
+    mm = torch.einsum('ablij,ablkj->ablik',true_repeated,R_pred)
+
+    # Squared L2 (squared Frobenius) norm of deviation from mm and eye (I,)
+    err = torch.square((mm - eye_repeated)+eps).sum(dim=(-1,-2)).mean(dim=-1).squeeze()
+
+    # decay on loss over iterations
+    w_loss = torch.pow(torch.full((I,), gamma, device=R_pred.device), torch.arange(I, device=R_pred.device))
+    w_loss = torch.flip(w_loss, (0,))
+    w_loss = w_loss / w_loss.sum()
+
+    err = err*w_loss
+
+    return err.sum()
+
+
 def normalize_ax_ang(V):
     """
     Gets axis angle representation normalized between [0,pi]
