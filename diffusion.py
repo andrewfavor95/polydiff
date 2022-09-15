@@ -314,6 +314,7 @@ class IGSO3():
                 self.igso3_vals['discrete_omega'])  # [N, 1]
             all_samples.append(sample_i)
         return np.stack(all_samples, axis=0)
+
     def sample_vec(self, ts, n_samples=1):
         """sample_vec generates a rotation vector(s) from IGSO(3) at time steps
         ts.
@@ -353,9 +354,10 @@ class IGSO3():
         omega = np.linalg.norm(vec, axis=-1)
         all_score_norm = []
         for t in ts:
+            t_idx = t-1 
             sigma_idx = self.t_to_idx(t)
             score_norm_t = np.interp(
-                omega[t],
+                omega[t_idx],
                 self.igso3_vals['discrete_omega'],
                 self.igso3_vals['score_norm'][sigma_idx]
             )[:, None]
@@ -368,6 +370,7 @@ class IGSO3():
         IGSO(3) with time parameter ts of shape [T].
         """
         sigma_idcs = [self.t_to_idx(t) for t in ts]
+        ic(sigma_idcs)
         return self.igso3_vals['exp_score_norms'][sigma_idcs]
 
     def diffuse_frames(self, xyz, t_list, diffusion_mask=None):
@@ -385,7 +388,7 @@ class IGSO3():
         if torch.is_tensor(xyz):
             xyz = xyz.numpy()
 
-        t = np.arange(self.T)
+        t = np.arange(self.T)+1 # 1-indexed!! 
         num_res = len(xyz)
 
         N  = torch.from_numpy(  xyz[None,:,0,:]  )
@@ -398,9 +401,9 @@ class IGSO3():
         Ca = Ca[0]
 
         # Sample rotations and scores from IGSO3
-        sampled_rots = self.sample_vec(range(self.T), n_samples=num_res)  # [T, N, 3]
-        rot_score = self.score_vec(range(self.T), sampled_rots)  # [T, N, 3]
-        rot_exp_score_norm = self.exp_score_norm(range(self.T))  # [T]
+        sampled_rots = self.sample_vec(t, n_samples=num_res)  # [T, N, 3]
+        rot_score = self.score_vec(t, sampled_rots)  # [T, N, 3]
+        rot_exp_score_norm = self.exp_score_norm(t)  # [T]
 
         if diffusion_mask is not None:
             non_diffusion_mask = 1 - diffusion_mask[None, :, None]
