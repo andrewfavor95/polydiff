@@ -771,6 +771,7 @@ class Diffuser():
 
 
         """
+
         if diffusion_mask is None:
             diffusion_mask = torch.zeros(len(xyz.squeeze())).to(dtype=bool)
 
@@ -804,7 +805,7 @@ class Diffuser():
 
         # 2 get  frames
         tick = time.time()
-        diffused_frame_crds, diffused_frames = self.so3_diffuser.diffuse_frames(xyz[:,:3,:].clone(), diffusion_mask=diffusion_mask.numpy(), t_list=t_list)
+        diffused_frame_crds, diffused_frames = self.so3_diffuser.diffuse_frames(xyz[:,:3,:].clone(), diffusion_mask=diffusion_mask.numpy(), t_list=None)
         diffused_frame_crds /= self.crd_scale 
         #print('Time to diffuse frames: ',time.time()-tick)
 
@@ -823,32 +824,50 @@ class Diffuser():
         tick = time.time()
         cum_delta = deltas.cumsum(dim=1)
         # The coordinates of the translated AND rotated frames
-        diffused_BB = (torch.from_numpy(diffused_frame_crds) + cum_delta[:,:,None,:]).transpose(0,1)
+        diffused_BB = (torch.from_numpy(diffused_frame_crds) + cum_delta[:,:,None,:]).transpose(0,1) # [n,L,3,3]
         #diffused_BB  = torch.from_numpy(diffused_frame_crds).transpose(0,1)
 
-
-        diffused_torsions_trig = torch.stack([torch.cos(diffused_torsions), 
-                                              torch.sin(diffused_torsions)], dim=-1)
+        # TODO make an official option eventually - NRB
+        diffuse_torsions = False
 
         # Full atom diffusions at all timepoints 
-        fa_stack = []
-        if t_list is None:
-            for t,alphas_t in enumerate(diffused_torsions_trig.transpose(0,1)):
-                xyz_bb_t = diffused_BB[t,:,:3]
+        if diffuse_torsions:
+            diffused_torsions_trig = torch.stack([torch.cos(diffused_torsions), 
+                                              torch.sin(diffused_torsions)], dim=-1)
+            fa_stack = []
+            if t_list is None:
+                for t,alphas_t in enumerate(diffused_torsions_trig.transpose(0,1)):
+                    xyz_bb_t = diffused_BB[t,:,:3]
 
-                _,fullatom_t = get_allatom(seq[None], xyz_bb_t[None], alphas_t[None])
-                fa_stack.append(fullatom_t)
+                    _,fullatom_t = get_allatom(seq[None], xyz_bb_t[None], alphas_t[None])
+                    fa_stack.append(fullatom_t)
+
+            else:
+                for t in t_list:
+                    t_idx=t-1
+                    xyz_bb_t  = diffused_BB[t_idx,:,:3]
+                    alphas_t = diffused_torsions_trig.transpose(0,1)[t_idx]
+
+                    _,fullatom_t = get_allatom(seq[None], xyz_bb_t[None], alphas_t[None])
+                    fa_stack.append(fullatom_t.squeeze())
+
+            fa_stack = torch.stack(fa_stack, dim=0)
 
         else:
-            for t in t_list:
-                t_idx=t-1
-                xyz_bb_t  = diffused_BB[t_idx,:,:3]
-                alphas_t = diffused_torsions_trig.transpose(0,1)[t_idx]
 
-                _,fullatom_t = get_allatom(seq[None], xyz_bb_t[None], alphas_t[None])
-                fa_stack.append(fullatom_t.squeeze())
+            # diffused_BB is [t_steps,L,3,3]
+            t_steps, L  = diffused_BB.shape[:2]
 
-        fa_stack = torch.stack(fa_stack, dim=0)
+            diffused_fa = torch.zeros(t_steps,L,27,3)
+            diffused_fa[:,:,:3,:] = diffused_BB
+
+            if t_list is None: fa_stack = diffused_fa
+            else:
+                t_idx_list = [t-1 for t in t_list]
+                fa_stack = diffused_fa[t_idx_list]
 
         return fa_stack, aa_masks, xyz_true[None]
         #return diffused_T, deltas, diffused_frame_crds, diffused_frames, diffused_torsions, fa_stack, aa_masks
+
+
+

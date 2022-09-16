@@ -104,6 +104,8 @@ def get_args():
             help='Total number of steps to decode amino acid identities and chi angles over.')
     diff_group.add_argument('-predict_previous', action='store_true',
             help='If True, model predictions x_t-1 instead of x0')
+    diff_group.add_argument('-prob_self_cond', type=float, default=0,
+            help='The probability the model will receive self conditioning information during training')
 
     # Trunk module properties
     trunk_group = parser.add_argument_group("Trunk module parameters")
@@ -249,7 +251,8 @@ def get_args():
     'diff_chi_type',
     'diff_T',
     'aa_decode_steps',
-    'predict_previous']:
+    'predict_previous',
+    'prob_self_cond']:
         diffusion_params[param] = getattr(args, param)
     
 

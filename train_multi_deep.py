@@ -834,30 +834,50 @@ class Trainer():
         
         print('About to enter train loader loop')
         for seq, msa, msa_masked, msa_full, mask_msa, true_crds, mask_crds, idx_pdb, xyz_t, t1d, xyz_prev, same_chain, unclamp, negative, masks_1d, chosen_task, chosen_dataset, atom_mask in train_loader:
-            # ic(seq)
-            # ic(msa)
-            # ic(msa_masked)
-            # ic(msa_full)
-            # ic(mask_msa)
-            # ic(true_crds)
-            # ic(mask_crds)
-            # ic(idx_pdb)
-            # ic(xyz_t)
-            # ic(t1d)
-            # ic(xyz_prev)
-            # ic(same_chain)
-            # ic(unclamp)
-            # ic(negative)
-            # ic(masks_1d)
-            # ic(chosen_task)
-            # ic(chosen_dataset)
-            # ic(atom_mask)
+
+            '''
+                Current Dimensions:
+                
+                seq (torch.tensor)        : [B,I,L]
+                
+                msa (torch.tensor)        : [B,I,?,L] 
+
+                msa_masked (torch.tensor) : [B,I,N_short,L,48] 
+                
+                msa_full (torch.tensor)   : [B,I,N_long,L,25]
+                
+                mask_msa (torch.tensor)   : [B,N_short,L] The msa mask
+
+                xyz_t (torch.tensor)      : [B,T,L,14,3]
+                
+                t1d (torch.tensor)        : [B,T,L,33]
+                
+                true_crds (torch.tensor)  : [B,L,14,3]
+            '''
+
+            if False:
+                ic(seq.shape)
+                ic(msa.shape)
+                ic(msa_masked.shape)
+                ic(msa_full.shape)
+                ic(mask_msa.shape)
+                ic(true_crds.shape)
+                ic(mask_crds.shape)
+                ic(idx_pdb.shape)
+                ic(xyz_t.shape)
+                ic(t1d.shape)
+                ic(xyz_prev.shape)
+                ic(same_chain)
+                ic(unclamp)
+                ic(negative)
+                ic(masks_1d)
+                ic(chosen_task)
+                ic(chosen_dataset)
+                ic(atom_mask)
 
             # torch.save(torch.clone(xyz_t), 'xyz_t.pt')
             # torch.save(torch.clone(seq), 'seq.pt')
             # torch.save(torch.clone(atom_mask), 'atom_mask.pt')
-
-
 
             # for saving pdbs
             seq_original = torch.clone(seq)
@@ -870,7 +890,8 @@ class Trainer():
                                                                                     msa_masked, 
                                                                                     msa_full, 
                                                                                     xyz_t, 
-                                                                                    t1d, mask_msa, 
+                                                                                    t1d,
+                                                                                    mask_msa, 
                                                                                     atom_mask=atom_mask, 
                                                                                     diffuser=self.diffuser,
                                                                                     predict_previous=self.diffusion_param['predict_previous'],
@@ -878,6 +899,46 @@ class Trainer():
                                                                                     **{k:v for k,v in masks_1d.items()})
 
             
+            '''
+                Current Dimensions:
+                
+                seq (torch.tensor)        : [B,n,I,L] noised integer sequence
+                
+                msa_masked (torch.tensor) : [B,n,I,N_short,L,48] 
+                
+                msa_full (torch.tensor)   : [B,n,I,N_long,L,25]
+                
+                xyz_t (torch.tensor)      : [B,n,T,L,14,3] Noised true coordinates at t+1 and t
+                
+                t1d (torch.tensor)        : [B,n,T,L,33] Template 1D features at t+1 and t
+                
+                mask_msa (torch.tensor)   : [B,n,N_short,L] The msa mask at t 
+                
+                little_t (torch.tensor)   : [n] The timesteps t+1 and t
+                
+                true_crds (torch.tensor)  : [L,14,3] The true coordinates before noising
+            '''
+
+            if False:
+                ic(seq.shape)
+                ic(msa.shape)
+                ic(msa_masked.shape)
+                ic(msa_full.shape)
+                ic(mask_msa.shape)
+                ic(true_crds.shape)
+                ic(mask_crds.shape)
+                ic(idx_pdb.shape)
+                ic(xyz_t.shape)
+                ic(t1d.shape)
+                ic(xyz_prev.shape)
+                ic(same_chain)
+                ic(unclamp)
+                ic(negative)
+                ic(masks_1d)
+                ic(chosen_task)
+                ic(chosen_dataset)
+                ic(atom_mask)
+
             # for saving pdbs
             seq_masked = torch.clone(seq)
             xyz_t_in = torch.clone(xyz_t)
@@ -906,16 +967,23 @@ class Trainer():
             # sanity check input crds 
             
             # processing template features
-            t2d = xyz_to_t2d(xyz_t)
+            t2d = xyz_to_t2d(xyz_t[0]) # [n,T,L,L,n_t2d]
+            t2d = t2d.unsqueeze(0) # [B,n,T,L,L,n_t2d]
+
             # get torsion angles from templates
-            seq_tmp = t1d[...,:-1].argmax(dim=-1).reshape(-1,L)
-            alpha, _, alpha_mask, _ = get_torsions(xyz_t.reshape(-1,L,27,3), seq_tmp, self.ti_dev, self.ti_flip, self.ang_ref)
-            alpha_mask = torch.logical_and(alpha_mask, ~torch.isnan(alpha[...,0]))
-            alpha[torch.isnan(alpha)] = 0.0
-            alpha = alpha.reshape(B,-1,L,10,2)
-            alpha_mask = alpha_mask.reshape(B,-1,L,10,1)
-            alpha_t = torch.cat((alpha, alpha_mask), dim=-1).reshape(B, -1, L, 30)
+            if False:
+                seq_tmp = t1d[...,:-1].argmax(dim=-1).reshape(-1,L)
+                alpha, _, alpha_mask, _ = get_torsions(xyz_t.reshape(-1,L,27,3), seq_tmp, self.ti_dev, self.ti_flip, self.ang_ref)
+                alpha_mask = torch.logical_and(alpha_mask, ~torch.isnan(alpha[...,0]))
+                alpha[torch.isnan(alpha)] = 0.0
+                alpha = alpha.reshape(B,-1,L,10,2)
+                alpha_mask = alpha_mask.reshape(B,-1,L,10,1)
+                alpha_t = torch.cat((alpha, alpha_mask), dim=-1).reshape(B, -1, L, 30)
+            else:
+                # Give model no sidechain info
+                alpha_t = torch.zeros(1,2,1,L,30) # [B,n,I,L,30]
             # processing template coordinates
+
             
             # dj - set xyz_prev to xyz_t
             xyz_prev = torch.squeeze(xyz_t, dim=0)
@@ -944,20 +1012,83 @@ class Trainer():
             # get diffusion_mask for the displacement loss
             diffusion_mask = masks_1d['input_str_mask'].squeeze()
 
+
+            unroll_performed = False
+
+            # Some percentage of the time, provide the model with the model's prediction of x_0 | x_t+1
+
+            # When little_t[0] == little_t[1] we are at t == T so we should not unroll
+            if not (little_t[0] == little_t[1]) and (torch.tensor(self.diffusion_param['prob_self_cond']) > torch.rand(1)):
+
+                unroll_performed = True
+
+                # Take 1 step back in time to get the training example to feed to the model
+                # For this model evaluation msa_prev, pair_prev, and state_prev are all None and i_cycle is
+                # constant at 0
+                with torch.no_grad():
+                    with ddp_model.no_sync():
+                        with torch.cuda.amp.autocast(enabled=USE_AMP):
+
+                            i_cycle = 0
+
+                            # Select timestep t = t+1
+                            use_msa_masked = msa_masked[:,0]
+                            use_msa_full   = msa_full[:,0]
+                            use_seq        = seq[:,0]
+                            xyz_prev       = xyz_prev[0] # grab t entry
+                            use_t1d        = t1d[:,0]
+                            use_t2d        = t2d[:,0]
+                            use_xyz_t      = xyz_t[:,0]
+                            use_alpha_t    = alpha_t[:,0]
+
+                            msa_prev, pair_prev, xyz_prev, state_prev, alpha = ddp_model(
+                                                                       use_msa_masked[:,i_cycle],
+                                                                       use_msa_full[:,i_cycle],
+                                                                       use_seq[:,i_cycle],
+                                                                       xyz_prev,
+                                                                       idx_pdb,
+                                                                       t1d=use_t1d,
+                                                                       t2d=use_t2d,
+                                                                       xyz_t=use_xyz_t,
+                                                                       alpha_t=use_alpha_t,
+                                                                       msa_prev=msa_prev,
+                                                                       pair_prev=pair_prev,
+                                                                       state_prev=None,
+                                                                       return_raw=True
+                                                                       )
+
+            # From here on out we will operate with t = t
+            msa_masked = msa_masked[:,1]
+            msa_full   = msa_full[:,1]
+            mask_msa   = mask_msa[:,1]
+            seq        = seq[:,1]
+            t1d        = t1d[:,1]
+            t2d        = t2d[:,1]
+            xyz_t      = xyz_t[:,1]
+            alpha_t    = alpha_t[:,1]
+            little_t   = little_t[1]
+
+            if not unroll_performed: xyz_prev = xyz_prev[1] # grad entry at t
+
             with torch.no_grad():
                 for i_cycle in range(N_cycle-1):
                     with ddp_model.no_sync():
                         with torch.cuda.amp.autocast(enabled=USE_AMP):
                             msa_prev, pair_prev, xyz_prev, state_prev, alpha = ddp_model(msa_masked[:,i_cycle],
                                                                       msa_full[:,i_cycle],
-                                                                      seq[:,i_cycle], xyz_prev, 
+                                                                      seq[:,i_cycle],
+                                                                      xyz_prev, 
                                                                       idx_pdb,
-                                                                      t1d=t1d, t2d=t2d,
-                                                                      xyz_t=xyz_t, alpha_t=alpha_t,
+                                                                      t1d=t1d,
+                                                                      t2d=t2d,
+                                                                      xyz_t=xyz_t,
+                                                                      alpha_t=alpha_t,
                                                                       msa_prev=msa_prev,
                                                                       pair_prev=pair_prev,
                                                                       state_prev=state_prev,
-                                                                      return_raw=True)
+                                                                      return_raw=True
+                                                                      )
+
                             #_, xyz_prev = self.compute_allatom_coords(seq[:,i_cycle], xyz_prev, alpha)
 
             i_cycle = N_cycle-1
