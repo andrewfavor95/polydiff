@@ -130,15 +130,16 @@ def mask_inputs(seq,
 
         # find decoded residues and select them with 21% probability 
         decoded_non_motif = torch.ones_like(seq.squeeze()[0]).to(dtype=bool)
-        decoded_non_motif[aa_mask_raw] = False                  # mark False where residues are masked via diffusion
-        decoded_non_motif[input_seq_mask.squeeze()] = False     # mark False where motif exists 
+
+        decoded_non_motif[~aa_mask_raw] = False                  # mark False where residues are masked via diffusion
+        decoded_non_motif[input_seq_mask.squeeze()] = False      # mark False where motif exists 
+
         # set (1-decode_mask_frac) proportion to False, keeping <decode_mask_frac> proportion still available 
-        tmp_mask = torch.rand(decoded_non_motif.size) < (1-decode_mask_frac)
+        tmp_mask = torch.rand(decoded_non_motif.shape) < (1-decode_mask_frac)
         decoded_non_motif[tmp_mask] = False 
 
-        # Anything left as True: (A) replace with blosum sample and (B) ensure loss enforced 
+        # Anything left as True, replace with blosum sample
         blosum_replacement = sampled_blosum[decoded_non_motif]
-        ### 
 
        
         xyz_t       = diffused_fullatoms[0][None,None]
@@ -160,8 +161,11 @@ def mask_inputs(seq,
     ###########
     B,_,_ = seq.shape
     assert B == 1, 'batch sizes > 1 not supported'
+    assert len(blosum_replacement) == decoded_non_motif.sum()
+
     #seq_mask = input_seq_mask[0] # DJ - old, commenting out bc using seq mask from diffuser 
     seq[:,:,~seq_mask] = 21 # mask token categorical value
+    seq[:,:,decoded_non_motif] = blosum_replacement 
 
     ### msa_masked ###
     ################## 
@@ -179,17 +183,32 @@ def mask_inputs(seq,
     # insertion/deletion stuff 
     msa_masked[:,:,:,~seq_mask,44:46] = 0
 
+    # blosum mutations 
+    msa_masked[:,:,:,decoded_non_motif,:] = 0
+    msa_masked[:,:,:,decoded_non_motif,blosum_replacement]  = 1
+    msa_masked[:,:,:,decoded_non_motif,22:44] = 0                  
+    msa_masked[:,:,:,decoded_non_motif,22+blosum_replacement] = 1
+    
+
     ### msa_full ### 
     ################
     msa_full[:,:,:,~seq_mask,:21] = 0
     msa_full[:,:,:,~seq_mask,21]  = 1
     msa_full[:,:,:,~seq_mask,-3]  = 0   #NOTE: double check this is insertions/deletions and 0 makes sense 
 
+    # blosum mutations 
+    msa_full[:,:,:,decoded_non_motif,:] = 0
+    msa_full[:,:,:,decoded_non_motif,blosum_replacement]  = 1
+
+
     ### t1d ###
     ########### 
     # NOTE: Not adjusting t1d last dim (confidence) from sequence mask
     t1d[:,:,~seq_mask,:20] = 0 
     t1d[:,:,~seq_mask,20]  = 1 # unknown
+    
+    t1d[:,:,decoded_non_motif,:] = 0
+    t1d[:,:,decoded_non_motif,blosum_replacement] = 1
 
     t1d[:,:,:,21] *= input_t1dconf_mask
     
@@ -199,11 +218,11 @@ def mask_inputs(seq,
 
     # Structure masking
     # str_mask = input_str_mask[0]
-    # xyz_t[:,:,~str_mask,:,:] = float('nan')
+    # xyz_t[:,:,~str_mask,:,:] = float('nan') # NOTE: not using this because diffusion is effectively the mask 
     
     ### mask_msa ###
     ################
-    # NOTE: this is for loss scoring
+    # this is for loss scoring
     mask_msa[:,:,:,~loss_seq_mask[0]] = False
     
     return seq, msa_masked, msa_full, xyz_t, t1d, mask_msa, t, true_crds 

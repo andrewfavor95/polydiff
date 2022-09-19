@@ -149,7 +149,7 @@ def generate_masks(msa, task, loader_params, chosen_dataset, full_chain=None): #
         input_t1dconf_mask = torch.ones(L)
 
         ## loss masks 
-        pass # apply everywhere for now 
+        loss_seq_mask[diffusion_mask] = False  # Dont score where diffusion mask is True (i.e., where things are not diffused)
 
     elif task == 'diff' and chosen_dataset == 'complex':
         '''

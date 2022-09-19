@@ -137,18 +137,15 @@ class Trainer():
                  n_epoch=100, lr=1.0e-4, l2_coeff=1.0e-2, port=None, interactive=False,
                  model_param={}, loader_param={}, loss_param={}, batch_size=1, accum_step=1, 
                  maxcycle=4, diffusion_param={}, outdir=f'./train_session{get_datetime()}', wandb_prefix=''):
+
         self.model_name = model_name #"BFF"
-        #self.model_name = "%s_%d_%d_%d_%d"%(model_name, model_param['n_module'], 
-        #                                    model_param['n_module_str'],
-        #                                    model_param['d_msa'],
-        #                                    model_param['d_pair'])
-        #
         self.n_epoch = n_epoch
         self.init_lr = lr
         self.l2_coeff = l2_coeff
         self.port = port
         self.interactive = interactive
         self.outdir = outdir
+
         if not os.path.isdir(self.outdir):
             os.makedirs(self.outdir, exist_ok=True)
         else:
@@ -516,7 +513,9 @@ class Trainer():
 
         #chk_fn = "models/%s_%s.pt"%(model_name, suffix)
         chk_fn = "models/extra_t1d_feat_BFF_last.pt"
-        #chk_fn='debug'
+        if DEBUG:
+            chk_fn='debug'
+
         loaded_epoch = -1
         best_valid_loss = 999999.9
         if not os.path.exists(chk_fn):
@@ -875,6 +874,9 @@ class Trainer():
                                                                                     diffuser=self.diffuser,
                                                                                     predict_previous=self.diffusion_param['predict_previous'],
                                                                                     true_crds_in=true_crds,
+                                                                                    decode_mask_frac=self.diffusion_param['decode_mask_frac'],
+                                                                                    corrupt_blosum=self.diffusion_param['decode_corrupt_blosum'],
+                                                                                    corrupt_uniform=self.diffusion_param['decode_corrupt_uniform'],
                                                                                     **{k:v for k,v in masks_1d.items()})
 
             

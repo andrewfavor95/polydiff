@@ -370,7 +370,6 @@ class IGSO3():
         IGSO(3) with time parameter ts of shape [T].
         """
         sigma_idcs = [self.t_to_idx(t) for t in ts]
-        ic(sigma_idcs)
         return self.igso3_vals['exp_score_norms'][sigma_idcs]
 
     def diffuse_frames(self, xyz, t_list, diffusion_mask=None):

@@ -104,6 +104,12 @@ def get_args():
             help='Total number of steps to decode amino acid identities and chi angles over.')
     diff_group.add_argument('-predict_previous', action='store_true',
             help='If True, model predictions x_t-1 instead of x0')
+    diff_group.add_argument('-decode_mask_frac', type=float, default=0.0,
+            help='Fraction of decoded+diffused residues exposed to potential mutations')
+    diff_group.add_argument('-decode_corrupt_blosum', type=float, default=0.9, 
+            help='Fraction of the time to mutate according to BLOSUM62 transitions.')
+    diff_group.add_argument('-decode_corrupt_uniform', type=float, default=0.1,
+            help='Fraction of the time to mutate according to uniform transitions')
 
     # Trunk module properties
     trunk_group = parser.add_argument_group("Trunk module parameters")
@@ -249,7 +255,10 @@ def get_args():
     'diff_chi_type',
     'diff_T',
     'aa_decode_steps',
-    'predict_previous']:
+    'predict_previous',
+    'decode_mask_frac',
+    'decode_corrupt_blosum',
+    'decode_corrupt_uniform']:
         diffusion_params[param] = getattr(args, param)
     
 
