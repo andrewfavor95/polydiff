@@ -1,8 +1,43 @@
 import torch
+import math
 from icecream import ic
 import random
+from blosum62 import p_j_given_i as P_JGI
 
 ic.configureOutput(includeContext=True)
+
+def sample_blosum_mutations(seq, p_blosum=0.9, p_uni=0.1, p_mask=0):
+    """
+    Given a sequence,
+    """
+    assert len(seq.shape) == 1
+    assert math.isclose(sum([p_blosum, p_uni, p_mask]), 1)
+    L = len(seq)
+
+    # uniform prob
+    U = torch.full((L,20), .05)
+    U = torch.cat((U,torch.zeros(L,1)), dim=-1)
+    U = U*p_uni
+
+    # mask prob
+    M = torch.full((L,21),0)
+    M[:,-1] = 1
+    M = M*p_mask
+
+    # blosum probs
+    B = torch.from_numpy( P_JGI[seq] ) # slice out the transition probabilities from blossom
+    B = torch.cat((B,torch.zeros(L,1)), dim=-1)
+    B = B*p_blosum
+
+    # build transition probabilities for each residue
+    P = U+M+B
+
+    C = torch.distributions.categorical.Categorical(probs=P)
+
+    sampled_seq = C.sample()
+
+    return sampled_seq
+
 
 def mask_inputs(seq, 
                 msa_masked, 
@@ -20,7 +55,10 @@ def mask_inputs(seq,
                 loss_str_mask_2d=None,
                 diffuser=None,
                 predict_previous=False,
-                true_crds_in=None):
+                true_crds_in=None,
+                decode_mask_frac=0.,
+                corrupt_blosum=0.9,
+                corrupt_uniform=0.1):
     """
     Parameters:
         seq (torch.tensor, required): (B,I,L) integer sequence 
@@ -36,6 +74,15 @@ def mask_inputs(seq,
         str_mask_1D (torch.tensor, required): Shape (L) rank 1 tensor where structure is masked at False positions 
 
         seq_mask_1D (torch.tensor, required): Shape (L) rank 1 tensor where seq is masked at False positions 
+
+        ...
+        
+        decode_mask_frac (float, optional): Fraction of decoded residues which are to be corrupted 
+
+        corrupt_blosum (float, optional): Probability that a decoded residue selected for corruption will transition according to BLOSUM62 probs 
+
+        corrupt_unifom (float, optional): Probability that ... according to uniform probs 
+
 
     NOTE: in the MSA, the order is 20aa, 1x unknown, 1x mask token. We set the masked region to 22 (masked).
         For the t1d, this has 20aa, 1x unkown, and 1x template conf. Here, we set the masked region to 21 (unknown).
@@ -77,6 +124,8 @@ def mask_inputs(seq,
         
         # reset to True any positions which aren't being diffused 
         seq_mask[input_seq_mask.squeeze()] = True
+
+        # DJ new - make mutations in the decoded sequence 
        
         xyz_t       = diffused_fullatoms[0][None,None]
         if predict_previous:
