@@ -113,7 +113,7 @@ def mask_inputs(seq,
         diffused_fullatoms, aa_masks, true_crds = diffuser.diffuse_pose(**kwargs)
         
 
-
+        # seq_mask - True-->revealed, False-->masked 
         seq_mask = torch.ones_like(seq.squeeze()[0]).to(dtype=bool) # all revealed 
 
         # grab noised inputs / create masks based on time t
@@ -125,7 +125,21 @@ def mask_inputs(seq,
         # reset to True any positions which aren't being diffused 
         seq_mask[input_seq_mask.squeeze()] = True
 
-        # DJ new - make mutations in the decoded sequence 
+        ###  DJ new - make mutations in the decoded sequence 
+        sampled_blosum = sample_blosum_mutations(seq.squeeze()[0])
+
+        # find decoded residues and select them with 21% probability 
+        decoded_non_motif = torch.ones_like(seq.squeeze()[0]).to(dtype=bool)
+        decoded_non_motif[aa_mask_raw] = False                  # mark False where residues are masked via diffusion
+        decoded_non_motif[input_seq_mask.squeeze()] = False     # mark False where motif exists 
+        # set (1-decode_mask_frac) proportion to False, keeping <decode_mask_frac> proportion still available 
+        tmp_mask = torch.rand(decoded_non_motif.size) < (1-decode_mask_frac)
+        decoded_non_motif[tmp_mask] = False 
+
+        # Anything left as True: (A) replace with blosum sample and (B) ensure loss enforced 
+        blosum_replacement = sampled_blosum[decoded_non_motif]
+        ### 
+
        
         xyz_t       = diffused_fullatoms[0][None,None]
         if predict_previous:
