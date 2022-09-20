@@ -4,7 +4,7 @@ import os
 
 TRUNK_PARAMS = ['n_extra_block', 'n_main_block', 'n_ref_block',\
                 'd_msa', 'd_msa_full', 'd_pair', 'd_templ',\
-                'n_head_msa', 'n_head_pair', 'n_head_templ', 'd_hidden', 'd_hidden_templ', 'p_drop']
+                'n_head_msa', 'n_head_pair', 'n_head_templ', 'd_hidden', 'd_hidden_templ', 'p_drop', 'd_t1d']
 
 SE3_PARAMS = ['num_layers_full', 'num_layers_topk', 'num_channels', 'num_degrees', 'n_heads', 'div', 
               'l0_in_features_full', 'l0_in_features_topk', 'l0_out_features_full', 'l0_out_features_topk',
@@ -19,6 +19,8 @@ def get_args():
     train_group = parser.add_argument_group("training parameters")
     train_group.add_argument("-model_name", default="BFF",
             help="model name for saving")
+    train_group.add_argument('-ckpt_load_path', default=None, 
+            help='Path for loading model checkpoint')
     train_group.add_argument('-batch_size', type=int, default=1,
             help="Batch size [1]")
     train_group.add_argument('-lr', type=float, default=1.0e-3, 
@@ -139,6 +141,8 @@ def get_args():
             help="Number of hidden features for templates [32]")
     trunk_group.add_argument("-p_drop", type=float, default=0.15,
             help="Dropout ratio [0.15]")
+    trunk_group.add_argument('-d_t1d', type=int, default=21+1+1, 
+            help='dimension of t1d raw inputs')
 
     # Structure module properties
     str_group = parser.add_argument_group("structure module parameters")

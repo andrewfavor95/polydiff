@@ -5,6 +5,7 @@ from Track_module import IterativeSimulator
 from AuxiliaryPredictor import DistanceNetwork, MaskedTokenNetwork, ExpResolvedNetwork, LDDTNetwork
 from util import INIT_CRDS
 from opt_einsum import contract as einsum
+from icecream import ic 
 
 class RoseTTAFoldModule(nn.Module):
     def __init__(self, n_extra_block=4, n_main_block=8, n_ref_block=4,\
@@ -12,10 +13,13 @@ class RoseTTAFoldModule(nn.Module):
                  n_head_msa=8, n_head_pair=4, n_head_templ=4,
                  d_hidden=32, d_hidden_templ=64,
                  p_drop=0.15,
+                 d_t1d=21+1+1,
                  SE3_param_full={'l0_in_features':32, 'l0_out_features':16, 'num_edge_features':32},
                  SE3_param_topk={'l0_in_features':32, 'l0_out_features':16, 'num_edge_features':32},
                  ):
         super(RoseTTAFoldModule, self).__init__()
+        print('t_1d input to RF')
+        ic(d_t1d)
         #
         # Input Embeddings
         d_state = SE3_param_topk['l0_out_features']
@@ -23,7 +27,7 @@ class RoseTTAFoldModule(nn.Module):
         self.full_emb = Extra_emb(d_msa=d_msa_full, d_init=25, p_drop=p_drop)
         self.templ_emb = Templ_emb(d_pair=d_pair, d_templ=d_templ, d_state=d_state,
                                    n_head=n_head_templ,
-                                   d_hidden=d_hidden_templ, p_drop=0.25)
+                                   d_hidden=d_hidden_templ, p_drop=0.25, d_t1d=d_t1d)
         # Update inputs with outputs from previous round
         self.recycle = Recycling(d_msa=d_msa, d_pair=d_pair, d_state=d_state)
         #

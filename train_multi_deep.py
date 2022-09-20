@@ -1,5 +1,5 @@
 # set to false if you dont want to use weights and biases 
-DEBUG = True
+DEBUG = False 
 
 WANDB = True if not DEBUG else False 
 
@@ -133,12 +133,13 @@ def get_datetime():
     return str(date.today()) + '_' + str(time.time())
 
 class Trainer():
-    def __init__(self, model_name='BFF',
+    def __init__(self, model_name='BFF', ckpt_load_path=None,
                  n_epoch=100, lr=1.0e-4, l2_coeff=1.0e-2, port=None, interactive=False,
                  model_param={}, loader_param={}, loss_param={}, batch_size=1, accum_step=1, 
                  maxcycle=4, diffusion_param={}, outdir=f'./train_session{get_datetime()}', wandb_prefix=''):
 
         self.model_name = model_name #"BFF"
+        self.ckpt_load_path = ckpt_load_path
         self.n_epoch = n_epoch
         self.init_lr = lr
         self.l2_coeff = l2_coeff
@@ -512,7 +513,9 @@ class Trainer():
     def load_model(self, model, optimizer, scheduler, scaler, model_name, rank, suffix='last', resume_train=False):
 
         #chk_fn = "models/%s_%s.pt"%(model_name, suffix)
-        chk_fn = "models/extra_t1d_feat_BFF_last.pt"
+        assert not (self.ckpt_load_path is None )
+        chk_fn = self.ckpt_load_path
+
         if DEBUG:
             chk_fn='debug'
 
@@ -522,6 +525,8 @@ class Trainer():
             print ('no model found', model_name)
             return -1, best_valid_loss
         print('*** FOUND MODEL CHECKPOINT ***')
+        print('Located at ',chk_fn)
+
         map_location = {"cuda:%d"%0: "cuda:%d"%rank}
         checkpoint = torch.load(chk_fn, map_location=map_location)
         rename_model = False
@@ -1607,6 +1612,7 @@ if __name__ == "__main__":
 
     mp.freeze_support()
     train = Trainer(model_name=args.model_name,
+                    ckpt_load_path=args.ckpt_load_path,
                     interactive=args.interactive,
                     n_epoch=args.num_epochs, lr=args.lr, l2_coeff=1.0e-2,
                     port=args.port, model_param=model_param, loader_param=loader_param, 
