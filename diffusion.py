@@ -849,5 +849,5 @@ class Diffuser():
 
         fa_stack = torch.stack(fa_stack, dim=0)
 
-        return fa_stack, aa_masks, xyz_true[None]
+        return fa_stack, aa_masks, xyz_true
         #return diffused_T, deltas, diffused_frame_crds, diffused_frames, diffused_torsions, fa_stack, aa_masks

@@ -1,5 +1,5 @@
 # set to false if you dont want to use weights and biases 
-DEBUG = False 
+DEBUG = True 
 
 WANDB = True if not DEBUG else False 
 
@@ -680,7 +680,7 @@ class Trainer():
                                      neg_IDs, loader_complex, neg_dict,
                                      fb_IDs, loader_fb, loader_fb_fixbb, fb_dict,
                                      cn_IDs, None, loader_cn_fixbb, cn_dict, # None is a placeholder as we don't currently have a loader_cn
-                                     homo, self.loader_param)
+                                     homo, self.loader_param, self.diffuser, self.ti_dev, self.ti_flip, self.ang_ref, self.diffusion_param)
 
         valid_pdb_set = Dataset(list(valid_pdb.keys())[:self.n_valid_pdb],
                                 loader_pdb, valid_pdb,
@@ -842,7 +842,7 @@ class Trainer():
         counter = 0
         
         print('About to enter train loader loop')
-        for seq, msa, msa_masked, msa_full, mask_msa, true_crds, mask_crds, idx_pdb, xyz_t, t1d, xyz_prev, same_chain, unclamp, negative, masks_1d, chosen_task, chosen_dataset, atom_mask in train_loader:
+        for seq, msa, msa_masked, msa_full, mask_msa, true_crds, mask_crds, idx_pdb, xyz_t, t1d, t2d, alpha_t, xyz_prev, same_chain, unclamp, negative, masks_1d, chosen_task, chosen_dataset, little_t in train_loader:
             # ic(seq)
             # ic(msa)
             # ic(msa_masked)
@@ -873,25 +873,7 @@ class Trainer():
 
             # Do diffusion + apply masks 
             start = time.time()
-
-            # predicting x0 so don't need to change the true answer 
-            seq, msa_masked, msa_full, xyz_t, t1d, mask_msa, little_t, true_crds = mask_inputs(seq, 
-                                                                                    msa_masked, 
-                                                                                    msa_full, 
-                                                                                    xyz_t, 
-                                                                                    t1d, mask_msa, 
-                                                                                    atom_mask=atom_mask, 
-                                                                                    diffuser=self.diffuser,
-                                                                                    predict_previous=self.diffusion_param['predict_previous'],
-                                                                                    true_crds_in=true_crds,
-                                                                                    decode_mask_frac=self.diffusion_param['decode_mask_frac'],
-                                                                                    corrupt_blosum=self.diffusion_param['decode_corrupt_blosum'],
-                                                                                    corrupt_uniform=self.diffusion_param['decode_corrupt_uniform'],
-                                                                                    **{k:v for k,v in masks_1d.items()})
-
-            
-            # for saving pdbs
-            seq_masked = torch.clone(seq)
+            seq_masked=torch.clone(seq)
             xyz_t_in = torch.clone(xyz_t)
 
             # transfer inputs to device
@@ -906,49 +888,19 @@ class Trainer():
             t1d = t1d.to(gpu, non_blocking=True)
             xyz_t = xyz_t.to(gpu, non_blocking=True)
             xyz_prev = xyz_prev.to(gpu, non_blocking=True)
-
-
             seq = seq.to(gpu, non_blocking=True)
             msa = msa.to(gpu, non_blocking=True)
             msa_masked = msa_masked.to(gpu, non_blocking=True)
             msa_full = msa_full.to(gpu, non_blocking=True)
             mask_msa = mask_msa.to(gpu, non_blocking=True)
+            xyz_prev = xyz_prev.to(gpu, non_blocking=True)
 
+            # Remove batch dimension from little_t
+            little_t = little_t[0]
 
-            # sanity check input crds 
-            
-            # processing template features
-            t2d = xyz_to_t2d(xyz_t)
-            # get torsion angles from templates
-            seq_tmp = t1d[...,:-1].argmax(dim=-1).reshape(-1,L)
-            alpha, _, alpha_mask, _ = get_torsions(xyz_t.reshape(-1,L,27,3), seq_tmp, self.ti_dev, self.ti_flip, self.ang_ref)
-            alpha_mask = torch.logical_and(alpha_mask, ~torch.isnan(alpha[...,0]))
-            alpha[torch.isnan(alpha)] = 0.0
-            alpha = alpha.reshape(B,-1,L,10,2)
-            alpha_mask = alpha_mask.reshape(B,-1,L,10,1)
-            alpha_t = torch.cat((alpha, alpha_mask), dim=-1).reshape(B, -1, L, 30)
-            # processing template coordinates
-            
-            # dj - set xyz_prev to xyz_t
-            xyz_prev = torch.squeeze(xyz_t, dim=0)
-            
-            # dj - remove get_init_xyz because we don't want to mess with the input crds 
-            #xyz_t = get_init_xyz(xyz_t)
-            #xyz_prev = get_init_xyz(xyz_prev[:,None]).reshape(B, L, 27, 3)
-
-            #ic(seq[0].argmax(dim=-1))
-            #ic(msa_masked[0].argmax(dim=-1))
-            #ic(msa_full[0].argmax(dim=-1))
-            #ic(t1d[0,...,20].argmax(dim=-1))
-            #ic(mask_msa)
-
-            counter += 1
+            counter += 1 
 
             N_cycle = np.random.randint(1, self.maxcycle+1) # number of recycling
-
-            #for i in range(4):
-            #    tmp_seq   = seq[:,i].squeeze().cpu()
-            #    tmp_xyz_t = xyz_t[:,i].squeeze().cpu()
 
             msa_prev = None
             pair_prev = None
