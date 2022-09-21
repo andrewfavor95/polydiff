@@ -173,7 +173,10 @@ class Trainer():
                        'schedule_type'  :diffusion_param['diff_schedule_type'],
                        'so3_type'       :diffusion_param['diff_so3_type'],
                        'chi_type'       :diffusion_param['diff_chi_type'],
-                       'aa_decode_steps':diffusion_param['aa_decode_steps']}
+                       'aa_decode_steps':diffusion_param['aa_decode_steps'],
+                       'crd_scale'      :diffusion_param['diff_crd_scale']}
+        
+        ic(diff_kwargs)
         self.diffuser = Diffuser(**diff_kwargs)
         self.schedule = self.diffuser.eucl_diffuser.beta_schedule
         self.alphabar_schedule = self.diffuser.eucl_diffuser.alphabar_schedule
@@ -706,7 +709,9 @@ class Trainer():
         valid_homo_sampler = data.distributed.DistributedSampler(valid_homo_set, num_replicas=world_size, rank=rank)
         valid_compl_sampler = data.distributed.DistributedSampler(valid_compl_set, num_replicas=world_size, rank=rank)
         valid_neg_sampler = data.distributed.DistributedSampler(valid_neg_set, num_replicas=world_size, rank=rank)
-       
+        
+        print('THIS IS LOAD PARAM GOING INTO DataLoader inits')
+        print(LOAD_PARAM)
         train_loader = data.DataLoader(train_set, sampler=train_sampler, batch_size=self.batch_size, **LOAD_PARAM)
         valid_pdb_loader = data.DataLoader(valid_pdb_set, sampler=valid_pdb_sampler, **LOAD_PARAM)
         valid_homo_loader = data.DataLoader(valid_homo_set, sampler=valid_homo_sampler, **LOAD_PARAM2)
