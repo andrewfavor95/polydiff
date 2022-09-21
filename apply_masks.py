@@ -61,15 +61,15 @@ def mask_inputs(seq,
                 corrupt_uniform=0.1):
     """
     Parameters:
-        seq (torch.tensor, required): (B,I,L) integer sequence 
+        seq (torch.tensor, required): (I,L) integer sequence 
 
-        msa_masked (torch.tensor, required): (B,I,N_short,L,48)
+        msa_masked (torch.tensor, required): (I,N_short,L,48)
 
-        msa_full  (torch,.tensor, required): (B,I,N_long,L,25)
+        msa_full  (torch,.tensor, required): (I,N_long,L,25)
         
-        xyz_t (torch,tensor): (B,T,L,14,3) template crds BEFORE they go into get_init_xyz 
+        xyz_t (torch,tensor): (T,L,14,3) template crds BEFORE they go into get_init_xyz 
         
-        t1d (torch.tensor, required): (B,I,L,22) this is the t1d before tacking on the chi angles 
+        t1d (torch.tensor, required): (I,L,22) this is the t1d before tacking on the chi angles 
         
         str_mask_1D (torch.tensor, required): Shape (L) rank 1 tensor where structure is masked at False positions 
 
@@ -104,8 +104,8 @@ def mask_inputs(seq,
             tprev = t-1 if t > 0 else t
             t_list.append(tprev)
 
-        kwargs = {'xyz'             :xyz_t.squeeze(),
-                  'seq'             :seq.squeeze()[0],
+        kwargs = {'xyz'             :xyz_t[0],
+                  'seq'             :seq[0],
                   'atom_mask'       :atom_mask.squeeze(),
                   'diffusion_mask'  :input_str_mask.squeeze(),
                   't_list':t_list}
@@ -141,8 +141,7 @@ def mask_inputs(seq,
         # Anything left as True, replace with blosum sample
         blosum_replacement = sampled_blosum[decoded_non_motif]
 
-       
-        xyz_t       = diffused_fullatoms[0][None,None]
+        xyz_t       = diffused_fullatoms[0][None]
         if predict_previous:
             true_crds = diffused_fullatoms[1][None]
 
@@ -151,7 +150,7 @@ def mask_inputs(seq,
         # multiplicitavely applied to a default conf mask of 1.0 everywhwere 
         input_t1dconf_mask[~input_str_mask] = 1 - t/diffuser.T 
 
-        mask_msa[:,:,:,seq_mask] = False # don't score revealed positions 
+        mask_msa[:,:,seq_mask] = False # don't score revealed positions 
     else:
         print('WARNING: Diffuser not being used in apply masks')
 
@@ -159,61 +158,59 @@ def mask_inputs(seq,
 
 
     ###########
-    B,_,_ = seq.shape
-    assert B == 1, 'batch sizes > 1 not supported'
     assert len(blosum_replacement) == decoded_non_motif.sum()
 
     #seq_mask = input_seq_mask[0] # DJ - old, commenting out bc using seq mask from diffuser 
-    seq[:,:,~seq_mask] = 21 # mask token categorical value
-    seq[:,:,decoded_non_motif] = blosum_replacement 
+    seq[:,~seq_mask] = 21 # mask token categorical value
+    seq[:,decoded_non_motif] = blosum_replacement 
 
     ### msa_masked ###
     ################## 
-    msa_masked[:,:,:,~seq_mask,:20] = 0
-    msa_masked[:,:,:,~seq_mask,21]  = 1 #set to mask token
-    msa_masked[:,:,:,~seq_mask,20]  = 0    
+    msa_masked[:,:,~seq_mask,:20] = 0
+    msa_masked[:,:,~seq_mask,21]  = 1 #set to mask token
+    msa_masked[:,:,~seq_mask,20]  = 0    
     
     # index 44/45 is insertion/deletion
     # index 43 is the masked token NOTE check this
     # index 42 is the unknown token 
-    msa_masked[:,:,:,~seq_mask,22:42] = 0
-    msa_masked[:,:,:,~seq_mask,43] = 1 
-    msa_masked[:,:,:,~seq_mask,42] = 0
+    msa_masked[:,:,~seq_mask,22:42] = 0
+    msa_masked[:,:,~seq_mask,43] = 1 
+    msa_masked[:,:,~seq_mask,42] = 0
 
     # insertion/deletion stuff 
-    msa_masked[:,:,:,~seq_mask,44:46] = 0
+    msa_masked[:,:,~seq_mask,44:46] = 0
 
     # blosum mutations 
-    msa_masked[:,:,:,decoded_non_motif,:] = 0
-    msa_masked[:,:,:,decoded_non_motif,blosum_replacement]  = 1
-    msa_masked[:,:,:,decoded_non_motif,22:44] = 0                  
-    msa_masked[:,:,:,decoded_non_motif,22+blosum_replacement] = 1
+    msa_masked[:,:,decoded_non_motif,:] = 0
+    msa_masked[:,:,decoded_non_motif,blosum_replacement]  = 1
+    msa_masked[:,:,decoded_non_motif,22:44] = 0                  
+    msa_masked[:,:,decoded_non_motif,22+blosum_replacement] = 1
     
 
     ### msa_full ### 
     ################
-    msa_full[:,:,:,~seq_mask,:21] = 0
-    msa_full[:,:,:,~seq_mask,21]  = 1
-    msa_full[:,:,:,~seq_mask,-3]  = 0   #NOTE: double check this is insertions/deletions and 0 makes sense 
+    msa_full[:,:,~seq_mask,:21] = 0
+    msa_full[:,:,~seq_mask,21]  = 1
+    msa_full[:,:,~seq_mask,-3]  = 0   #NOTE: double check this is insertions/deletions and 0 makes sense 
 
     # blosum mutations 
-    msa_full[:,:,:,decoded_non_motif,:] = 0
-    msa_full[:,:,:,decoded_non_motif,blosum_replacement]  = 1
+    msa_full[:,:,decoded_non_motif,:] = 0
+    msa_full[:,:,decoded_non_motif,blosum_replacement]  = 1
 
 
     ### t1d ###
     ########### 
     # NOTE: Not adjusting t1d last dim (confidence) from sequence mask
-    t1d[:,:,~seq_mask,:20] = 0 
-    t1d[:,:,~seq_mask,20]  = 1 # unknown
+    t1d[:,~seq_mask,:20] = 0 
+    t1d[:,~seq_mask,20]  = 1 # unknown
     
-    t1d[:,:,decoded_non_motif,:] = 0
-    t1d[:,:,decoded_non_motif,blosum_replacement] = 1
+    t1d[:,decoded_non_motif,:] = 0
+    t1d[:,decoded_non_motif,blosum_replacement] = 1
 
-    t1d[:,:,:,21] *= input_t1dconf_mask
+    t1d[:,:,21] *= input_t1dconf_mask
     
     # TRYING NOT PROVIDING diffused SIDECHAINS TO THE MODEL
-    xyz_t[:,:,~input_str_mask.squeeze(),3:,:] = float('nan')
+    xyz_t[:,~input_str_mask.squeeze(),3:,:] = float('nan')
     #xyz_t[:,:,~seq_mask,3:,:] = float('nan') # don't know sidechain information for masked seq 
 
     # Structure masking
@@ -223,6 +220,7 @@ def mask_inputs(seq,
     ### mask_msa ###
     ################
     # this is for loss scoring
-    mask_msa[:,:,:,~loss_seq_mask[0]] = False
-    
+    mask_msa[:,:,~loss_seq_mask[0]] = False
+  
+    assert torch.sum(torch.isnan(xyz_t[:,:,:3]))==0
     return seq, msa_masked, msa_full, xyz_t, t1d, mask_msa, t, true_crds 
