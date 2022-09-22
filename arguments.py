@@ -4,7 +4,7 @@ import os
 
 TRUNK_PARAMS = ['n_extra_block', 'n_main_block', 'n_ref_block',\
                 'd_msa', 'd_msa_full', 'd_pair', 'd_templ',\
-                'n_head_msa', 'n_head_pair', 'n_head_templ', 'd_hidden', 'd_hidden_templ', 'p_drop']
+                'n_head_msa', 'n_head_pair', 'n_head_templ', 'd_hidden', 'd_hidden_templ', 'p_drop', 'd_t1d']
 
 SE3_PARAMS = ['num_layers_full', 'num_layers_topk', 'num_channels', 'num_degrees', 'n_heads', 'div', 
               'l0_in_features_full', 'l0_in_features_topk', 'l0_out_features_full', 'l0_out_features_topk',
@@ -19,6 +19,8 @@ def get_args():
     train_group = parser.add_argument_group("training parameters")
     train_group.add_argument("-model_name", default="BFF",
             help="model name for saving")
+    train_group.add_argument('-ckpt_load_path', default=None, 
+            help='Path for loading model checkpoint')
     train_group.add_argument('-batch_size', type=int, default=1,
             help="Batch size [1]")
     train_group.add_argument('-lr', type=float, default=1.0e-3, 
@@ -88,14 +90,14 @@ def get_args():
             help='Minimum number of residues to diffuse if doing diffusion. Default 20')
     diff_group.add_argument('-diff_mask_high', type=int, default=999, 
             help='Maximum number of residues to diffuse if doing diffusion. Default 999 (all)')
-    diff_group.add_argument('-diff_b0', type=float, default=0.001, 
+    diff_group.add_argument('-diff_b0', type=float, default=1e-2, 
             help='b_0 paramter for Euclidean diffuser.')
-    diff_group.add_argument('-diff_bT', type=float, default=0.1, 
+    diff_group.add_argument('-diff_bT', type=float, default=7e-2, 
             help='b_T parameter for Euclidean diffuser.')
-    diff_group.add_argument('-diff_schedule_type', type=str, default='cosine', 
+    diff_group.add_argument('-diff_schedule_type', type=str, default='linear', 
             help='Type of schedule for (Euclidean) diffusion.')
-    diff_group.add_argument('-diff_so3_type', type=str, default='slerp',
-            help='Which type of SO3 diffusion to use. Default slerp')
+    diff_group.add_argument('-diff_so3_type', type=str, default='igso3',
+            help='Which type of SO3 diffusion to use. Default igso3')
     diff_group.add_argument('-diff_chi_type', type=str, default='interp',
             help='Which type of chi angle diffusion to use. Default linear interpolation.')
     diff_group.add_argument('-diff_T', type=int, default=100, 
@@ -116,7 +118,14 @@ def get_args():
             help='The type of sequence diffuser to use ["uniform", "continuous"]. Default: None (classic autoregressive decoding)')
     diff_group.add_argument('-seqdiff_lambda', type=float, default=1,
             help='Lamda parameter used to weight seq_aux and seq_vb for discrete sequence diffusion')
-
+    diff_group.add_argument('-decode_mask_frac', type=float, default=0.0,
+            help='Fraction of decoded+diffused residues exposed to potential mutations')
+    diff_group.add_argument('-decode_corrupt_blosum', type=float, default=0.9, 
+            help='Fraction of the time to mutate according to BLOSUM62 transitions.')
+    diff_group.add_argument('-decode_corrupt_uniform', type=float, default=0.1,
+            help='Fraction of the time to mutate according to uniform transitions')
+    diff_group.add_argument('-diff_crd_scale',  type=float, default=1./15, 
+            help='Coordinate scaling factor for diffusion')
 
     # Trunk module properties
     trunk_group = parser.add_argument_group("Trunk module parameters")
@@ -146,6 +155,8 @@ def get_args():
             help="Number of hidden features for templates [32]")
     trunk_group.add_argument("-p_drop", type=float, default=0.15,
             help="Dropout ratio [0.15]")
+    trunk_group.add_argument('-d_t1d', type=int, default=21+1+1, 
+            help='dimension of t1d raw inputs')
 
     # Structure module properties
     str_group = parser.add_argument_group("structure module parameters")
@@ -268,7 +279,11 @@ def get_args():
     'seqdiff_bT',
     'seqdiff_schedule_type',
     'seqdiff',
-    'seqdiff_lambda']:
+    'seqdiff_lambda',
+    'decode_mask_frac',
+    'decode_corrupt_blosum',
+    'decode_corrupt_uniform',
+    'diff_crd_scale']:
         diffusion_params[param] = getattr(args, param)
     
 

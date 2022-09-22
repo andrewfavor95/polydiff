@@ -134,22 +134,20 @@ def get_datetime():
     return str(date.today()) + '_' + str(time.time())
 
 class Trainer():
-    def __init__(self, model_name='BFF',
+    def __init__(self, model_name='BFF', ckpt_load_path=None,
                  n_epoch=100, lr=1.0e-4, l2_coeff=1.0e-2, port=None, interactive=False,
                  model_param={}, loader_param={}, loss_param={}, batch_size=1, accum_step=1, 
                  maxcycle=4, diffusion_param={}, outdir=f'./train_session{get_datetime()}', wandb_prefix=''):
+
         self.model_name = model_name #"BFF"
-        #self.model_name = "%s_%d_%d_%d_%d"%(model_name, model_param['n_module'], 
-        #                                    model_param['n_module_str'],
-        #                                    model_param['d_msa'],
-        #                                    model_param['d_pair'])
-        #
+        self.ckpt_load_path = ckpt_load_path
         self.n_epoch = n_epoch
         self.init_lr = lr
         self.l2_coeff = l2_coeff
         self.port = port
         self.interactive = interactive
         self.outdir = outdir
+
         if not os.path.isdir(self.outdir):
             os.makedirs(self.outdir, exist_ok=True)
         else:
@@ -176,7 +174,10 @@ class Trainer():
                        'schedule_type'  :diffusion_param['diff_schedule_type'],
                        'so3_type'       :diffusion_param['diff_so3_type'],
                        'chi_type'       :diffusion_param['diff_chi_type'],
-                       'aa_decode_steps':diffusion_param['aa_decode_steps']}
+                       'aa_decode_steps':diffusion_param['aa_decode_steps'],
+                       'crd_scale'      :diffusion_param['diff_crd_scale']}
+        
+        ic(diff_kwargs)
         self.diffuser = Diffuser(**diff_kwargs)
         self.schedule = self.diffuser.eucl_diffuser.beta_schedule
         self.alphabar_schedule = self.diffuser.eucl_diffuser.alphabar_schedule
@@ -285,7 +286,7 @@ class Trainer():
         lj_tscale = self.loss_schedules.get('lj',[1]*(t))[t_idx]
         hb_tscale = self.loss_schedules.get('lj',[1]*(t))[t_idx]
         str_tscale = self.loss_schedules.get('w_str',[1]*(t))[t_idx]
-        w_all_tscale = self.loss_schedules.get('w_all',[1]*(t+1))[t_idx]
+        w_all_tscale = self.loss_schedules.get('w_all',[1]*(t))[t_idx]
 
         # c6d loss
         for i in range(4):
@@ -381,7 +382,9 @@ class Trainer():
         # Calculate displacement on xt-1 backcalculated from px0 and x0.
         # Currently not backpropable
         
-        xt1_squared_disp, xt1_disp = track_xt1_displacement(true, pred, xyz_in, t, diffusion_mask, self.schedule, self.alphabar_schedule)
+        xt1_squared_disp, xt1_disp = track_xt1_displacement(true, pred, xyz_in,
+                t, diffusion_mask, self.schedule, self.alphabar_schedule)
+
         loss_dict['xt1_displacement'] = xt1_disp
         loss_dict['xt1_squared_displacement'] = xt1_squared_disp
 
@@ -570,14 +573,20 @@ class Trainer():
     def load_model(self, model, optimizer, scheduler, scaler, model_name, rank, suffix='last', resume_train=False):
 
         #chk_fn = "models/%s_%s.pt"%(model_name, suffix)
-        chk_fn = "/mnt/home/nrbennet/software/dl/devBFF/BFF/rf_diffusion/models/at2.pt"
-        if DEBUG: ic('DEBUG Not loading weights'); chk_fn='debug'
+        assert not (self.ckpt_load_path is None )
+        chk_fn = self.ckpt_load_path
+
+        if DEBUG:
+            chk_fn='debug'
+
         loaded_epoch = -1
         best_valid_loss = 999999.9
         if not os.path.exists(chk_fn):
             print ('no model found', model_name)
             return -1, best_valid_loss
         print('*** FOUND MODEL CHECKPOINT ***')
+        print('Located at ',chk_fn)
+
         map_location = {"cuda:%d"%0: "cuda:%d"%rank}
         checkpoint = torch.load(chk_fn, map_location=map_location)
         rename_model = False
@@ -728,7 +737,7 @@ class Trainer():
                                      neg_IDs, loader_complex, neg_dict,
                                      fb_IDs, loader_fb, loader_fb_fixbb, fb_dict,
                                      cn_IDs, None, loader_cn_fixbb, cn_dict, # None is a placeholder as we don't currently have a loader_cn
-                                     homo, self.loader_param)
+                                     homo, self.loader_param, self.diffuser, self.seq_diffuser, self.ti_dev, self.ti_flip, self.ang_ref, self.diffusion_param)
 
         valid_pdb_set = Dataset(list(valid_pdb.keys())[:self.n_valid_pdb],
                                 loader_pdb, valid_pdb,
@@ -757,7 +766,9 @@ class Trainer():
         valid_homo_sampler = data.distributed.DistributedSampler(valid_homo_set, num_replicas=world_size, rank=rank)
         valid_compl_sampler = data.distributed.DistributedSampler(valid_compl_set, num_replicas=world_size, rank=rank)
         valid_neg_sampler = data.distributed.DistributedSampler(valid_neg_set, num_replicas=world_size, rank=rank)
-       
+        
+        print('THIS IS LOAD PARAM GOING INTO DataLoader inits')
+        print(LOAD_PARAM)
         train_loader = data.DataLoader(train_set, sampler=train_sampler, batch_size=self.batch_size, **LOAD_PARAM)
         valid_pdb_loader = data.DataLoader(valid_pdb_set, sampler=valid_pdb_sampler, **LOAD_PARAM)
         valid_homo_loader = data.DataLoader(valid_homo_set, sampler=valid_homo_sampler, **LOAD_PARAM2)
@@ -892,66 +903,64 @@ class Trainer():
         counter = 0
         
         print('About to enter train loader loop')
-        for seq, msa, msa_masked, msa_full, mask_msa, true_crds, mask_crds, idx_pdb, xyz_t, t1d, xyz_prev, same_chain, unclamp, negative, masks_1d, chosen_task, chosen_dataset, atom_mask in train_loader:
-
+        for seq, msa, msa_masked, msa_full, mask_msa, true_crds, mask_crds, idx_pdb, xyz_t, t1d, t2d, alpha_t, xyz_prev, same_chain, unclamp, negative, masks_1d, chosen_task, chosen_dataset, little_t in train_loader:
             '''
                 Current Dimensions:
                 
-                seq (torch.tensor)        : [B,I,L]
-                
-                msa (torch.tensor)        : [B,I,?,L] 
+                seq (torch.tensor)        : [B,n,I,L,22] noised one hot sequence
 
-                msa_masked (torch.tensor) : [B,I,N_short,L,48] 
+                msa (torch.tensor)        : [B,I,N_long,L]
                 
-                msa_full (torch.tensor)   : [B,I,N_long,L,25]
+                msa_masked (torch.tensor) : [B,n,I,N_short,L,48] 
                 
-                mask_msa (torch.tensor)   : [B,N_short,L] The msa mask
+                msa_full (torch.tensor)   : [B,n,I,N_long,L,25]
 
-                xyz_t (torch.tensor)      : [B,T,L,14,3]
+                mask_msa (torch.tensor)   : [B,n,N_short,L] The msa mask at t 
+
+                true_crds (torch.tensor)  : [B,L,27,3]
+
+                mask_crds (torch.tensor)  : [B,L,27]
+
+                idx_pdb (torch.tensor)    : [B,L]
                 
-                t1d (torch.tensor)        : [B,T,L,33]
+                xyz_t (torch.tensor)      : [B,n,T,L,27,3] Noised true coordinates at t+1 and t
                 
-                true_crds (torch.tensor)  : [B,L,14,3]
+                t1d (torch.tensor)        : [B,n,T,L,33] Template 1D features at t+1 and t
+
+                t2d (torch.tensor)        : [B,n,T,L,L,44] Template 2D features at t+1 and t
+                
+                alpha_t (torch.tensor)    : [B,n,T,L,30]
+
+                xyz_prev (torch.tensor)   : [B,n,L,27,3]
+                
+                ...
+
+                little_t (torch.tensor)   : [n] The timesteps t+1 and t
             '''
 
-            if False:
-                ic(seq.shape)
-                ic(msa.shape)
-                ic(msa_masked.shape)
-                ic(msa_full.shape)
-                ic(mask_msa.shape)
-                ic(true_crds.shape)
-                ic(mask_crds.shape)
-                ic(idx_pdb.shape)
-                ic(xyz_t.shape)
-                ic(t1d.shape)
-                ic(xyz_prev.shape)
-                ic(same_chain)
-                ic(unclamp)
-                ic(negative)
-                ic(masks_1d)
-                ic(chosen_task)
-                ic(chosen_dataset)
-                ic(atom_mask)
-            if False:
-                ic(seq.type())
-                ic(msa.type())
-                ic(msa_masked.type())
-                ic(msa_full.shape)
-                ic(mask_msa.shape)
-                ic(true_crds.type())
-                ic(mask_crds.shape)
-                ic(idx_pdb.shape)
-                ic(xyz_t.shape)
-                ic(t1d.shape)
-                ic(xyz_prev.shape)
-                ic(same_chain)
-                ic(unclamp)
-                ic(negative)
-                ic(masks_1d)
-                ic(chosen_task)
-                ic(chosen_dataset)
-                ic(atom_mask)
+            # Checking whether this example was of poor quality and the dataloader just returned None - NRB
+            if seq.shape[1] == 0:
+                ic('Train cycle received bad example, skipping')
+                continue
+
+            #ic(seq.shape)
+            #ic(msa.shape)
+            #ic(msa_masked.shape)
+            #ic(msa_full.shape)
+            #ic(mask_msa.shape)
+            #ic(true_crds.shape)
+            #ic(mask_crds.shape)
+            #ic(idx_pdb.shape)
+            #ic(xyz_t.shape)
+            #ic(t1d.shape)
+            #ic(xyz_prev.shape)
+            #ic(same_chain)
+            # ic(unclamp)
+            # ic(negative)
+            # ic(masks_1d)
+            # ic(chosen_task)
+            # ic(chosen_dataset)
+            # ic(atom_mask)
 
             # torch.save(torch.clone(xyz_t), 'xyz_t.pt')
             # torch.save(torch.clone(seq), 'seq.pt')
@@ -962,66 +971,6 @@ class Trainer():
 
             # Do diffusion + apply masks 
             start = time.time()
-
-            if (not self.seq_diffuser is None) and torch.any(seq > 19):
-                print('Found sequence index greater than 19 while doing sequence diffusion, skipping example')
-                print(f'This is the offending sequence: {seq}')
-                continue
-
-            # predicting x0 so don't need to change the true answer 
-            seq, msa_masked, msa_full, xyz_t, t1d, mask_msa, little_t, true_crds = mask_inputs(seq, 
-                                                                                    msa_masked, 
-                                                                                    msa_full, 
-                                                                                    xyz_t, 
-                                                                                    t1d,
-                                                                                    mask_msa, 
-                                                                                    atom_mask=atom_mask, 
-                                                                                    diffuser=self.diffuser,
-                                                                                    seq_diffuser=self.seq_diffuser,
-                                                                                    predict_previous=self.diffusion_param['predict_previous'],
-                                                                                    true_crds_in=true_crds,
-                                                                                    **{k:v for k,v in masks_1d.items()})
-
-            
-            '''
-                Current Dimensions:
-                
-                seq (torch.tensor)        : [B,n,I,L,22] noised one hot sequence
-                
-                msa_masked (torch.tensor) : [B,n,I,N_short,L,48] 
-                
-                msa_full (torch.tensor)   : [B,n,I,N_long,L,25]
-                
-                xyz_t (torch.tensor)      : [B,n,T,L,14,3] Noised true coordinates at t+1 and t
-                
-                t1d (torch.tensor)        : [B,n,T,L,33] Template 1D features at t+1 and t
-                
-                mask_msa (torch.tensor)   : [B,n,N_short,L] The msa mask at t 
-                
-                little_t (torch.tensor)   : [n] The timesteps t+1 and t
-                
-                true_crds (torch.tensor)  : [L,14,3] The true coordinates before noising
-            '''
-
-            if False:
-                ic(seq.shape)
-                ic(msa.shape)
-                ic(msa_masked.shape)
-                ic(msa_full.shape)
-                ic(mask_msa.shape)
-                ic(true_crds.shape)
-                ic(mask_crds.shape)
-                ic(idx_pdb.shape)
-                ic(xyz_t.shape)
-                ic(t1d.shape)
-                ic(xyz_prev.shape)
-                ic(same_chain)
-                ic(unclamp)
-                ic(negative)
-                ic(masks_1d)
-                ic(chosen_task)
-                ic(chosen_dataset)
-                ic(atom_mask)
 
             # for saving pdbs
             seq_masked = torch.clone(seq)
@@ -1039,56 +988,16 @@ class Trainer():
             t1d = t1d.to(gpu, non_blocking=True)
             xyz_t = xyz_t.to(gpu, non_blocking=True)
             xyz_prev = xyz_prev.to(gpu, non_blocking=True)
-
-
             seq = seq.to(gpu, non_blocking=True)
             msa = msa.to(gpu, non_blocking=True)
             msa_masked = msa_masked.to(gpu, non_blocking=True)
             msa_full = msa_full.to(gpu, non_blocking=True)
             mask_msa = mask_msa.to(gpu, non_blocking=True)
+            xyz_prev = xyz_prev.to(gpu, non_blocking=True)
 
-
-            # sanity check input crds 
-            
-            # processing template features
-            t2d = xyz_to_t2d(xyz_t[0]) # [n,T,L,L,n_t2d]
-            t2d = t2d.unsqueeze(0) # [B,n,T,L,L,n_t2d]
-
-            # get torsion angles from templates
-            if False:
-                seq_tmp = t1d[...,:-1].argmax(dim=-1).reshape(-1,L)
-                alpha, _, alpha_mask, _ = get_torsions(xyz_t.reshape(-1,L,27,3), seq_tmp, self.ti_dev, self.ti_flip, self.ang_ref)
-                alpha_mask = torch.logical_and(alpha_mask, ~torch.isnan(alpha[...,0]))
-                alpha[torch.isnan(alpha)] = 0.0
-                alpha = alpha.reshape(B,-1,L,10,2)
-                alpha_mask = alpha_mask.reshape(B,-1,L,10,1)
-                alpha_t = torch.cat((alpha, alpha_mask), dim=-1).reshape(B, -1, L, 30)
-            else:
-                # Give model no sidechain info
-                alpha_t = torch.zeros(1,2,1,L,30) # [B,n,I,L,30]
-            # processing template coordinates
-
-            
-            # dj - set xyz_prev to xyz_t
-            xyz_prev = torch.squeeze(xyz_t, dim=0)
-            
-            # dj - remove get_init_xyz because we don't want to mess with the input crds 
-            #xyz_t = get_init_xyz(xyz_t)
-            #xyz_prev = get_init_xyz(xyz_prev[:,None]).reshape(B, L, 27, 3)
-
-            #ic(seq[0].argmax(dim=-1))
-            #ic(msa_masked[0].argmax(dim=-1))
-            #ic(msa_full[0].argmax(dim=-1))
-            #ic(t1d[0,...,20].argmax(dim=-1))
-            #ic(mask_msa)
-
-            counter += 1
+            counter += 1 
 
             N_cycle = np.random.randint(1, self.maxcycle+1) # number of recycling
-
-            #for i in range(4):
-            #    tmp_seq   = seq[:,i].squeeze().cpu()
-            #    tmp_xyz_t = xyz_t[:,i].squeeze().cpu()
 
             msa_prev = None
             pair_prev = None
@@ -1120,7 +1029,7 @@ class Trainer():
                             use_msa_masked = msa_masked[:,0]
                             use_msa_full   = msa_full[:,0]
                             use_seq        = seq[:,0]
-                            xyz_prev       = xyz_prev[0] # grab t entry
+                            xyz_prev       = xyz_prev[:,0] # grab t entry, could also make this None when not self conditioning
                             use_t1d        = t1d[:,0]
                             use_t2d        = t2d[:,0]
                             use_xyz_t      = xyz_t[:,0]
@@ -1158,7 +1067,7 @@ class Trainer():
             pair_prev  = None
             state_prev = None
 
-            if not unroll_performed: xyz_prev = xyz_prev[1] # grad entry at t
+            if not unroll_performed: xyz_prev = xyz_prev[:,1] # grad entry at t
 
             with torch.no_grad():
                 for i_cycle in range(N_cycle-1):
@@ -1217,7 +1126,7 @@ class Trainer():
                                 mask_BB, mask_2d, same_chain,
                                 pred_lddts, idx_pdb, chosen_dataset[0], chosen_task[0], diffusion_mask=diffusion_mask,
                                 seq_diffusion_mask=seq_diffusion_mask, seq_t=seq[:,0], xyz_in=xyz_t, unclamp=unclamp, 
-                                negative=negative, t=little_t, **self.loss_param)
+                                negative=negative, t=int(little_t), **self.loss_param)
                     loss = loss / self.ACCUM_STEP
 
                     if not torch.isnan(loss):
@@ -1255,7 +1164,7 @@ class Trainer():
                                 mask_BB, mask_2d, same_chain,
                                 pred_lddts, idx_pdb, chosen_dataset[0], chosen_task[0], diffusion_mask=diffusion_mask,
                                 seq_diffusion_mask=seq_diffusion_mask, seq_t=seq[:,0], xyz_in=xyz_t, unclamp=unclamp,
-                                t=little_t, negative=negative, **self.loss_param)
+                                t=int(little_t), negative=negative, **self.loss_param)
                 loss = loss / self.ACCUM_STEP
 
                 if not torch.isnan(loss):
@@ -1339,7 +1248,6 @@ class Trainer():
             top1_sequence = torch.clamp(top1_sequence, 0,19)
 
             if diffusion_param['seqdiff'] == 'continuous':
-                ic('Argmax decoding sequence')
                 top1_sequence = torch.argmax(logit_aa_s[:,:20,:], dim=1)
 
             # Also changed to allow for one-hot sequence input
@@ -1852,6 +1760,7 @@ if __name__ == "__main__":
 
     mp.freeze_support()
     train = Trainer(model_name=args.model_name,
+                    ckpt_load_path=args.ckpt_load_path,
                     interactive=args.interactive,
                     n_epoch=args.num_epochs, lr=args.lr, l2_coeff=1.0e-2,
                     port=args.port, model_param=model_param, loader_param=loader_param, 

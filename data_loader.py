@@ -8,11 +8,13 @@ from parsers import parse_a3m, parse_pdb
 from chemical import INIT_CRDS
 from kinematics import xyz_to_t2d
 
-# for inpainting training
+# for diffusion training
 from mask_generator import generate_masks
 from icecream import ic
 import pickle
 import random
+from apply_masks import mask_inputs
+import util
 
 base_dir = "/projects/ml/TrRosetta/PDB-2021AUG02"
 compl_dir = "/projects/ml/RoseTTAComplex"
@@ -1345,6 +1347,12 @@ class DistilledDataset(data.Dataset):
                  cn_dict,
                  homo,
                  params,
+                 diffuser,
+                 seq_diffuser,
+                 ti_dev,
+                 ti_flip,
+                 ang_ref,
+                 diffusion_param,
                  p_homo_cut=0.5):
         #
         self.pdb_IDs     = pdb_IDs
@@ -1401,7 +1409,18 @@ class DistilledDataset(data.Dataset):
         self.fb_inds = np.arange(len(self.fb_IDs))
         self.pdb_inds = np.arange(len(self.pdb_IDs))
         self.cn_inds = np.arange(len(self.cn_IDs))
-    
+        
+        # initialise diffusion class
+        self.diffuser     = diffuser
+        self.seq_diffuser = seq_diffuser
+
+        # get torsion variables
+        self.ti_dev = ti_dev
+        self.ti_flip = ti_flip
+        self.ang_ref = ang_ref
+
+        self.diffusion_param = diffusion_param
+
     def __len__(self):
         return len(self.fb_inds) + len(self.pdb_inds) + len(self.compl_inds) + len(self.neg_inds) + len(self.cn_inds)
 
@@ -1535,9 +1554,84 @@ class DistilledDataset(data.Dataset):
         # print("unclamp ",unclamp)
         # print("atom_mask ",atom_mask.shape)
         # print('same chain ',same_chain.shape)
-        mask_dict = generate_masks(msa, task, self.params, chosen_dataset, complete_chain)
+        masks_1d = generate_masks(msa, task, self.params, chosen_dataset, complete_chain)
+        
+        #Concatenate on the contacts tensor onto t1d
+        n_t1d = t1d.shape[0]
 
-        return seq, msa, msa_masked, msa_full, mask_msa, true_crds, atom_mask, idx_pdb, xyz_t, t1d, xyz_prev, same_chain, unclamp, negative, mask_dict, task, chosen_dataset, atom_mask
+        if (not self.seq_diffuser is None) and torch.any(seq > 19):
+            print('Found sequence index greater than 19 while doing sequence diffusion, skipping example')
+            print(f'This is the offending sequence: {seq}')
+
+            # If there is a better way to return null values to the train cycle I am open to suggestions - NRB
+            return [torch.tensor([]) for _ in range(20)]
+
+        seq, msa_masked, msa_full, xyz_t, t1d, mask_msa, little_t, true_crds = mask_inputs(seq,
+                                                                                    msa_masked,
+                                                                                    msa_full,
+                                                                                    xyz_t,
+                                                                                    t1d, mask_msa,
+                                                                                    atom_mask=atom_mask,
+                                                                                    diffuser=self.diffuser,
+                                                                                    seq_diffuser=self.seq_diffuser,
+                                                                                    predict_previous=self.diffusion_param['predict_previous'],
+                                                                                    true_crds_in=true_crds,
+                                                                                    **{k:v for k,v in masks_1d.items()})
+        '''
+            Current Dimensions:
+            
+            seq (torch.tensor)        : [n,I,L,22] noised one hot sequence
+            
+            msa_masked (torch.tensor) : [n,I,N_short,L,48] 
+            
+            msa_full (torch.tensor)   : [n,I,N_long,L,25]
+            
+            xyz_t (torch.tensor)      : [n,T,L,14,3] Noised true coordinates at t+1 and t
+            
+            t1d (torch.tensor)        : [n,T,L,33] Template 1D features at t+1 and t
+            
+            mask_msa (torch.tensor)   : [n,N_short,L] The msa mask at t 
+            
+            little_t (torch.tensor)   : [n] The timesteps t+1 and t
+            
+            true_crds (torch.tensor)  : [L,14,3] The true coordinates before noising
+        '''
+
+        if False:
+            ic(seq.shape)
+            ic(msa_masked.shape)
+            ic(msa_full.shape)
+            ic(xyz_t.shape)
+            ic(t1d.shape)
+            ic(mask_msa.shape)
+            ic(little_t.shape)
+            ic(true_crds.shape)
+
+        L = xyz_t.shape[2]
+
+        # Now make t2d
+        t2d = xyz_to_t2d(xyz_t) # [n,T,L,L]
+
+        # get torsion angles from templates
+        seq_tmp = t1d[...,:-1].argmax(dim=-1).reshape(-1,L)
+        alpha, _, alpha_mask, _ = util.get_torsions(xyz_t.reshape(-1,L,27,3), seq_tmp, self.ti_dev, self.ti_flip, self.ang_ref)
+        alpha_mask = torch.logical_and(alpha_mask, ~torch.isnan(alpha[...,0]))
+        alpha[torch.isnan(alpha)] = 0.0
+        alpha = alpha.reshape(-1,L,10,2)
+        alpha_mask = alpha_mask.reshape(-1,L,10,1)
+        alpha_t = torch.cat((alpha, alpha_mask), dim=-1).reshape(-1, L, 30) # [n,L,30]
+
+        alpha_t = alpha_t.unsqueeze(1) # [n,I,L,30]
+
+        # Get initial xyz_prev for the model - this is the diffused true coordinates
+        xyz_prev = xyz_t[:,0] # [n,L,14,3]
+
+        if torch.sum(masks_1d['input_str_mask']) > 0:
+            #assert torch.sum(xyz_prev[masks_1d['input_str_mask'],1]) - torch.sum(true_crds[masks_1d['input_str_mask'],1]) < 0.001
+            # TODO checkt this is correct - NRB
+            assert torch.mean(xyz_prev[:,masks_1d['input_str_mask'],1] - true_crds[None,masks_1d['input_str_mask'],1]) < 0.001
+
+        return seq, msa, msa_masked, msa_full, mask_msa, true_crds, atom_mask, idx_pdb, xyz_t, t1d, t2d, alpha_t, xyz_prev, same_chain, unclamp, negative, masks_1d, task, chosen_dataset, little_t
 
 class DistributedWeightedSampler(data.Sampler):
     def __init__(self, dataset, pdb_weights, compl_weights, neg_weights, fb_weights, cn_weights, p_seq2str, num_example_per_epoch=25600, \

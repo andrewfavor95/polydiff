@@ -370,7 +370,6 @@ class IGSO3():
         IGSO(3) with time parameter ts of shape [T].
         """
         sigma_idcs = [self.t_to_idx(t) for t in ts]
-        #ic(sigma_idcs)
         return self.igso3_vals['exp_score_norms'][sigma_idcs]
 
     def diffuse_frames(self, xyz, t_list, diffusion_mask=None):
@@ -867,7 +866,7 @@ class Diffuser():
                 fa_stack = diffused_fa[t_idx_list]
                 aa_masks = aa_masks[t_idx_list]
 
-        return fa_stack, aa_masks, xyz_true[None]
+        return fa_stack, aa_masks, xyz_true
         #return diffused_T, deltas, diffused_frame_crds, diffused_frames, diffused_torsions, fa_stack, aa_masks
 
 
