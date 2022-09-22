@@ -14,6 +14,7 @@ from util import reference_angles as REF_ANGLES
 from util_module import ComputeAllAtomCoords
 
 from diff_util import th_min_angle, th_interpolate_angles, get_aa_schedule 
+from diffusion import get_beta_schedule, cosine_interp
 
 from chemical import INIT_CRDS 
 import igso3
@@ -24,7 +25,7 @@ from icecream import ic
 
 torch.set_printoptions(sci_mode=False)
 
-class SequenceDiffuser():
+class DiscreteSeqDiffuser():
     '''
         Class to do discrete diffusion according to the method reported in [1]. This class will
         yield a noised sequence and also will return the "true" probability distributions at
@@ -85,6 +86,12 @@ class SequenceDiffuser():
         # A field variable that keeps track of whether we are working with a singly or doubly stochastic transition matrix
         self.singly_stochastic = rate_matrix in ['blosum']
 
+    def continuous_seq(self):
+        '''
+            This type of sequence diffuser does not use a continuous sequence representation so return False.
+        '''
+        return False
+    
     def diffuse_sequence(self,
                          seq,
                          diffusion_mask=None,
@@ -92,18 +99,30 @@ class SequenceDiffuser():
         '''
             Given a sequence, do discrete diffusion of the sequence and return the result at the
             specified timepoints.
+
             Args:
+
                 seq (torch.tensor [L], required): Torch tensor of true sequence to be noised. Integer sequence representation
+
                 diffusion_mask (torch.tensor [L], optional): Tensor of bools, True means NOT diffused at this residue, False means diffused
+
                 t_list (list, optional): If present, only return the diffused coordinates at timesteps t within the list
+
             Returns:
-                diffused_torsions
-                aa_masks
-                idx2steps
-                diffused_seq
+
+                diffused_seq (torch.tensor, [t,L])
+
+                true_seq     (torch.tensor, [L])
+
         '''
 
-        return self.apply_kernel_recursive(seq, diffusion_mask, t_list)
+
+        diffused_seq = self.apply_kernel_recursive(seq, diffusion_mask, t_list) # [t,L]
+        true_seq     = seq.clone() # [L]
+
+        assert( torch.all( diffused_seq[:,diffusion_mask] == true_seq[None,diffusion_mask] ) )
+
+        return diffused_seq, true_seq 
 
     def rowwise_normalize(self, B):
         ''' Given a [K,K] matrix, normalize each of the rows by the elements contained in the rows.'''
@@ -211,10 +230,10 @@ class SequenceDiffuser():
         # t_idx is 0-indexed
         t_idx = t - 1
 
-        Qt = self.get_Qt(t_idx) # [K,K]
+        bar_Qt = self.get_bar_Qt(t_idx) # [K,K]
 
         # Grab rows from Qt corresponding to the current sequence
-        seq_probs_t = Qt[seq] # [L,K]
+        seq_probs_t = bar_Qt[seq] # [L,K]
 
         # Sample a noised sequence from the probabilities
         out_seq = torch.multinomial(seq_probs_t, num_samples=1).squeeze() # [L]
@@ -248,13 +267,13 @@ class SequenceDiffuser():
 
         seq_stack = [self.apply_kernel(seq,t,diffusion_mask) for t in range(1,self.T+1)]
 
-        seq_stack = torch.stack(seq_stack).transpose(0,1) # [L,t]
+        seq_stack = torch.stack(seq_stack, dim=0) # [t,L]
 
         if t_list != None:
             t_idx = torch.tensor([t-1 for t in t_list])
             assert(t_idx>=0).all(), 'detected timestep less than 1'
 
-            seq_stack = seq_stack[:,t_idx]
+            seq_stack = seq_stack[t_idx,:]
 
         return seq_stack
 
@@ -355,7 +374,7 @@ class SequenceDiffuser():
         """KL computes the KL divergence for discrete PMFs q to p"""
         return q.dot(torch.log(q) - torch.log(p))
 
-    def loss(self, x_t, x_0, p_logit_x_0, t, seq_diffusion_mask):
+    def loss(self, x_t, x_0, p_logit_x_0, t, diffusion_mask):
         '''
             Compute the loss given the timestep
             This implementation follows equations 1 and 5 of Austin.
@@ -401,10 +420,10 @@ class SequenceDiffuser():
         loss = loss_vb + self.lamda * loss_aux
 
         # Default is all diffused
-        if seq_diffusion_mask is None: seq_diffusion_mask = torch.zeros_like(loss, dtype=torch.bool)
+        if diffusion_mask is None: diffusion_mask = torch.zeros_like(loss, dtype=torch.bool)
 
         # Not here is because True == seq is not diffused
-        return torch.sum(loss[~seq_diffusion_mask])
+        return torch.mean(loss[~diffusion_mask]), torch.mean(loss_aux[~diffusion_mask]), torch.mean(loss_vb[~diffusion_mask])
 
 class ContinuousSeqDiffuser():
 
@@ -422,18 +441,31 @@ class ContinuousSeqDiffuser():
                  s_b0,
                  s_bT,
                  schedule_type='linear',
-                 schedule_params={}):
+                 schedule_params={},
+                 loss_type='l2_loss'):
 
-        self.K = 22 # Mask and gap characters allowed
-        self.bitscale = 1 # analog bits are in [-self.bitscale, self.bitscale]
+        self.K = 20 # Mask and gap characters not allowed
+
+        # analog bits are in range [-self.bitscale, self.bitscale]
+        # This is also the std dev of the noise added during the forward process
+        self.bitscale = 1 
 
         self.T = T
 
+        self.loss_type = loss_type
+
         # make noise/beta schedule
-        self.beta_schedule, self.alpha_schedule, self.abar_t_schedule = get_beta_schedule(T, s_b0, s_bT, schedule_type, **schedule_params)
+        self.beta_schedule, _ = get_beta_schedule(T, s_b0, s_bT, schedule_type, **schedule_params)
+
+    def continuous_seq(self):
+        '''
+            This type of sequence diffuser uses a continuous sequence representation so return True
+        '''
+        return True
 
     def seq2bits(self,
-                 seq):
+                 seq,
+                 K=None):
         '''
             Given a sequence in integer representation return the sequence as analog bit.
 
@@ -446,9 +478,11 @@ class ContinuousSeqDiffuser():
                 seqbits (torch.tensor [L,K]): Torch tensor of sequence as analog bits [-1,1] at each position
 
         '''
+        
+        if K is None: K = self.K
 
-        seqbits = torch.nn.functional.one_hot(seq, num_classes=self.K)
-7
+        seqbits = torch.nn.functional.one_hot(seq, num_classes=K).float()
+
         # Scale and shift one hot encoding to be a bit encoding [-1,1]
         seqbits = (seqbits * 2 - 1) * self.bitscale
 
@@ -472,17 +506,26 @@ class ContinuousSeqDiffuser():
 
             Returns:
 
-                diffused_seq (torch.tensor [L,K,T] )
+                diffused_seq (torch.tensor [t,L,K] )
+                true_seq     (torch.tensor [L,K] )
 
         '''
 
-        return self.apply_kernel_recursive(seq, diffusion_mask, t_list)
+        true_seq     = self.seq2bits(seq.clone())
+        diffused_seq = self.apply_kernel_recursive(seq, diffusion_mask, t_list)
+
+        # Assert non-diffused regions match - NRB
+        if not diffusion_mask is None:
+            assert(torch.all( diffused_seq[:,diffusion_mask] == true_seq[None,diffusion_mask] ))
+
+        return diffused_seq, true_seq
 
     def apply_kernel_recursive(self,
                                seq,
                                diffusion_mask,
                                t_list):
 
+        curr_seq = self.seq2bits( seq.clone() )
         seq_stack = []
 
         for t in range(1,self.T+1):
@@ -492,15 +535,15 @@ class ContinuousSeqDiffuser():
 
             seq_stack.append(curr_seq)
 
-        seq_stack = torch.stack(seq_stack) # [L,K,T]
+        seq_stack = torch.stack(seq_stack, dim=0) # [T,L,K]
 
         if t_list != None:
             t_idx = torch.tensor([t-1 for t in t_list])
             assert(t_idx>=0).all(), 'detected timestep less than 1'
 
-            seq_stack = seq_stack[:,t_idx]
+            seq_stack = seq_stack[t_idx]
 
-        return seq_stack # [L,K,t]
+        return seq_stack # [t,L,K]
 
     def apply_kernel(self,
                      seq,
@@ -518,6 +561,7 @@ class ContinuousSeqDiffuser():
         # t_idx is 0-indexed
         t_idx = t-1
 
+        L,K = seq.shape
         b_t = self.beta_schedule[t_idx]
 
         # get noise at timestep t
@@ -534,18 +578,53 @@ class ContinuousSeqDiffuser():
 
         return out_seq
 
+    def loss(self,
+             seq_true,
+             seq_pred,
+             diffusion_mask):
+        '''
+            Wrapper function to decide which loss to run
+
+            Args:
+                
+                seq_true (torch.tensor, [L]): The true sequence as integers 
+
+                seq_pred (torch.tensor, [L,K]): The predicted sequence in analog bit form
+        '''
+
+        if self.loss_type == 'l2_loss':
+
+            true_bits = self.seq2bits(seq_true, K=21)
+
+            return self.l2_loss(true_bits, seq_pred, diffusion_mask)
+        else:
+            raise NotImplementedError()
+
     def l2_loss(self,
                 seq_true,
-                seq_pred):
+                seq_pred,
+                diffusion_mask):
         '''
             Loss described in Equation 2 of Chen et al.
 
             This is an L2 norm of the distance of the true bits from the predicted bits
+
+            Args:
+                
+                seq_true (torch.tensor, [L,K]): The true sequence in analog bit form
+
+                seq_pred (torch.tensor, [L,K]): The predicted sequence in analog bit form
+
+                diffusion_mask (torch.tensor, [L]): True means NOT diffused at this residue
         '''
 
         loss = torch.square( seq_true - seq_pred )
 
-        return torch.sum(loss)
+        # Sum loss across all categories
+        loss = torch.mean(loss, dim=-1)
+        loss = loss * diffusion_mask # Zero out entries that are not being diffused
+
+        return loss.sum() / (diffusion_mask.sum() + 1e-8)
 
     def sigmoid_loss(self,
                      seq_true,

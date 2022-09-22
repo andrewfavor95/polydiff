@@ -11,16 +11,19 @@ class RoseTTAFoldModule(nn.Module):
                  d_msa=256, d_msa_full=64, d_pair=128, d_templ=64,
                  n_head_msa=8, n_head_pair=4, n_head_templ=4,
                  d_hidden=32, d_hidden_templ=64,
-                 p_drop=0.15,
+                 p_drop=0.15, 
                  SE3_param_full={'l0_in_features':32, 'l0_out_features':16, 'num_edge_features':32},
                  SE3_param_topk={'l0_in_features':32, 'l0_out_features':16, 'num_edge_features':32},
+                 input_seq_onehot=False # For continuous vs. discrete sequence - NRB
                  ):
         super(RoseTTAFoldModule, self).__init__()
         #
         # Input Embeddings
         d_state = SE3_param_topk['l0_out_features']
-        self.latent_emb = MSA_emb(d_msa=d_msa, d_pair=d_pair, d_state=d_state, p_drop=p_drop)
-        self.full_emb = Extra_emb(d_msa=d_msa_full, d_init=25, p_drop=p_drop)
+        self.latent_emb = MSA_emb(d_msa=d_msa, d_pair=d_pair, d_state=d_state,
+                p_drop=p_drop, input_seq_onehot=input_seq_onehot) # Allowed to take onehotseq - NRB
+        self.full_emb = Extra_emb(d_msa=d_msa_full, d_init=25,
+                p_drop=p_drop, input_seq_onehot=input_seq_onehot) # Allowed to take onehotseq - NRB
         self.templ_emb = Templ_emb(d_pair=d_pair, d_templ=d_templ, d_state=d_state,
                                    n_head=n_head_templ,
                                    d_hidden=d_hidden_templ, p_drop=0.25)

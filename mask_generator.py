@@ -93,7 +93,8 @@ def generate_masks(msa, task, loader_params, chosen_dataset, full_chain=None): #
         -input_seq
         -input_str
         -input_floating = points to be represented as floating points (structure present but side chains masked out)
-        -input_t1dconf = scalar to multiply input t1d confidences by
+        -input_t1d_str_conf = scalar to multiply input str t1d confidences by
+        -input_t1d_seq_conf = scalar to multiply input seq t1d confidences by
 
     Output masks:
         -loss_seq
@@ -105,7 +106,8 @@ def generate_masks(msa, task, loader_params, chosen_dataset, full_chain=None): #
     input_seq_mask = torch.ones(L).bool()
     input_str_mask = torch.ones(L).bool()
     input_floating_mask = -1
-    input_t1dconf_mask = torch.ones(L).bool() * 0.9
+    input_t1d_str_conf_mask = torch.ones(L).bool() * 0.9
+    input_t1d_seq_conf_mask = torch.ones(L).bool() * 0.9
     loss_seq_mask = torch.ones(L).bool()
     loss_str_mask = torch.ones(L).bool()
     loss_str_mask_2d = torch.ones(L,L).bool()
@@ -119,7 +121,8 @@ def generate_masks(msa, task, loader_params, chosen_dataset, full_chain=None): #
         #input_seq_mask = torch.clone(seq2str_mask) #this is not 1D
         input_str_mask = torch.ones(L).bool()
         input_floating_mask = torch.ones(L).bool()
-        input_t1dconf_mask = torch.ones(L)*0.9 #scale seq2str t1d confidences by 0.9
+        input_t1d_str_conf_mask = torch.ones(L)*0.9 #scale seq2str t1d confidences by 0.9
+        input_t1d_seq_conf_mask = torch.ones(L) # Very confident about the true sequence
 
         #loss masks
         # Currently msa loss masking is performed in train_multi_EMA
@@ -146,7 +149,8 @@ def generate_masks(msa, task, loader_params, chosen_dataset, full_chain=None): #
         input_str_mask = diffusion_mask
         input_seq_mask = diffusion_mask
         # t1dconf scaling will be taken care of by diffuser, so just leave those at 1 here 
-        input_t1dconf_mask = torch.ones(L)
+        input_t1d_str_conf_mask = torch.ones(L)
+        input_t1d_seq_conf_mask = torch.ones(L)
 
         ## loss masks 
         pass # apply everywhere for now 
@@ -179,7 +183,8 @@ def generate_masks(msa, task, loader_params, chosen_dataset, full_chain=None): #
         input_floating_mask = torch.ones(L).bool()
         input_floating_mask[splice[0]-1] = False #immediate two flanking residues are set to false/floating
         input_floating_mask[splice[1]] = False
-        input_t1dconf_mask = torch.ones(L) #t1d confidences are unscaled in hal task
+        input_t1d_str_conf_mask = torch.ones(L) #t1d confidences are unscaled in hal task
+        input_t1d_seq_conf_mask = torch.ones(L) #t1d confidences are unscaled in hal task
 
         #loss masks
         loss_seq_mask = torch.zeros(L).bool()
@@ -214,7 +219,8 @@ def generate_masks(msa, task, loader_params, chosen_dataset, full_chain=None): #
         input_floating_mask = torch.ones(L).bool()
         input_floating_mask[splice[0]-1] = False #immediate two flanking residues are set to false/floating
         input_floating_mask[splice[1]] = False
-        input_t1dconf_mask = torch.ones(L) #t1d confidences are unscaled in hal task
+        input_t1d_str_conf_mask = torch.ones(L) #t1d confidences are unscaled in hal task
+        input_t1d_seq_conf_mask = torch.ones(L) #t1d confidences are unscaled in hal task
 
         #loss masks
         loss_seq_mask = torch.zeros(L).bool()
@@ -241,7 +247,8 @@ def generate_masks(msa, task, loader_params, chosen_dataset, full_chain=None): #
         input_seq_mask[start:start+len_to_mask] = False
         input_str_mask = torch.ones(L).bool()
         input_str_mask[start:start+len_to_mask] = False #not doing flanking masking now
-        input_t1dconf_mask = torch.ones(L) #t1d confidences are unscaled in str2seq task
+        input_t1d_str_conf_mask = torch.ones(L) #t1d confidences are unscaled in str2seq task
+        input_t1d_seq_conf_mask = torch.ones(L) #t1d confidences are unscaled in str2seq task
 
         #loss masks
         loss_seq_mask = torch.zeros(L).bool()
@@ -269,7 +276,8 @@ def generate_masks(msa, task, loader_params, chosen_dataset, full_chain=None): #
         input_seq_mask[start+len_to_mask:] = True
         input_str_mask = torch.ones(L).bool()
         input_str_mask[start:start+len_to_mask] = False #not doing flanking masking now. No AR unmasking of structure
-        input_t1dconf_mask = torch.ones(L) #t1d confidences are unscaled in str2seq task
+        input_t1d_str_conf_mask = torch.ones(L) #t1d confidences are unscaled in str2seq task
+        input_t1d_seq_conf_mask = torch.ones(L) #t1d confidences are unscaled in str2seq task
 
         #loss masks
         loss_seq_mask = torch.zeros(L).bool()
@@ -293,7 +301,8 @@ def generate_masks(msa, task, loader_params, chosen_dataset, full_chain=None): #
         input_str_mask[splice[0] - flank_width:splice[0]] = False #mask out flanks only (i.e. provide structure of the central region)
         input_str_mask[splice[1]:splice[1] + flank_width] = False
         input_floating_mask = torch.ones(L).bool()
-        input_t1dconf_mask = torch.ones(L) #t1d confidences are unscaled in str2seq task
+        input_t1d_str_conf_mask = torch.ones(L) #t1d confidences are unscaled in str2seq task
+        input_t1d_seq_conf_mask = torch.ones(L) #t1d confidences are unscaled in str2seq task
 
         #loss masks
         loss_seq_mask = torch.zeros(L).bool()
@@ -318,7 +327,8 @@ def generate_masks(msa, task, loader_params, chosen_dataset, full_chain=None): #
         input_seq_mask = torch.ones(L).bool()
         input_seq_mask[start:start+len_to_mask] = False
         input_str_mask = torch.ones(L).bool()
-        input_t1dconf_mask = torch.ones(L) #t1d confidences are unscaled in str2seq task
+        input_t1d_str_conf_mask = torch.ones(L) #t1d confidences are unscaled in str2seq task
+        input_t1d_seq_conf_mask = torch.ones(L) #t1d confidences are unscaled in str2seq task
  
         #loss masks
         loss_seq_mask = torch.zeros(L).bool()
@@ -339,7 +349,9 @@ def generate_masks(msa, task, loader_params, chosen_dataset, full_chain=None): #
         input_seq_mask = torch.rand(L).bool() < rand_prop
         input_str_mask = torch.ones(L).bool()
         input_floating_mask = torch.ones(L).bool()
-        input_t1dconf_mask = torch.ones(L) #t1d confidences are not scaled in str2seq_full task
+
+        input_t1d_str_conf_mask = torch.ones(L) #t1d confidences are not scaled in str2seq_full task
+        input_t1d_seq_conf_mask = torch.ones(L) #t1d confidences are not scaled in str2seq_full task
 
         #loss masks
         loss_seq_mask = torch.clone(input_seq_mask)
@@ -354,7 +366,8 @@ def generate_masks(msa, task, loader_params, chosen_dataset, full_chain=None): #
     mask_dict = {'input_seq_mask':input_seq_mask,
                 'input_str_mask':input_str_mask,
                 'input_floating_mask':input_floating_mask,
-                'input_t1dconf_mask':input_t1dconf_mask,
+                'input_t1d_str_conf_mask':input_t1d_str_conf_mask,
+                'input_t1d_seq_conf_mask':input_t1d_seq_conf_mask,
                 'loss_seq_mask':loss_seq_mask,
                 'loss_str_mask':loss_str_mask,
                 'loss_str_mask_2d':loss_str_mask_2d}

@@ -106,6 +106,17 @@ def get_args():
             help='If True, model predictions x_t-1 instead of x0')
     diff_group.add_argument('-prob_self_cond', type=float, default=0,
             help='The probability the model will receive self conditioning information during training')
+    diff_group.add_argument('-seqdiff_b0', type=float, default=0.001,
+            help='b_0 parameter for Sequence diffuser.')
+    diff_group.add_argument('-seqdiff_bT', type=float, default=0.1,
+            help='b_T parameter for Sequence diffuser.')
+    diff_group.add_argument('-seqdiff_schedule_type', type=str, default='cosine',
+            help='Type of schedule for Sequence diffusion')
+    diff_group.add_argument('-seqdiff', type=str, default=None,
+            help='The type of sequence diffuser to use ["uniform", "continuous"]. Default: None (classic autoregressive decoding)')
+    diff_group.add_argument('-seqdiff_lambda', type=float, default=1,
+            help='Lamda parameter used to weight seq_aux and seq_vb for discrete sequence diffusion')
+
 
     # Trunk module properties
     trunk_group = parser.add_argument_group("Trunk module parameters")
@@ -252,7 +263,12 @@ def get_args():
     'diff_T',
     'aa_decode_steps',
     'predict_previous',
-    'prob_self_cond']:
+    'prob_self_cond',
+    'seqdiff_b0',
+    'seqdiff_bT',
+    'seqdiff_schedule_type',
+    'seqdiff',
+    'seqdiff_lambda']:
         diffusion_params[param] = getattr(args, param)
     
 

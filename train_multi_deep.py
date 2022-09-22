@@ -1,4 +1,4 @@
-# set to false if you dont want to use weights and biases 
+# set to true if you dont want to use weights and biases 
 DEBUG = True
 
 WANDB = True if not DEBUG else False 
@@ -39,6 +39,7 @@ import random
 
 # added for diffusion training 
 from diffusion import Diffuser
+from seq_diffusion import ContinuousSeqDiffuser, DiscreteSeqDiffuser
 
 # added for logging git diff
 import subprocess
@@ -180,6 +181,34 @@ class Trainer():
         self.schedule = self.diffuser.eucl_diffuser.beta_schedule
         self.alphabar_schedule = self.diffuser.eucl_diffuser.alphabar_schedule
 
+        # For Sequence Diffusion
+        seq_diff_type = diffusion_param['seqdiff']
+        seqdiff_kwargs = {'T'             : diffusion_param['diff_T'], # Use same T as for str diff
+                          's_b0'           : diffusion_param['seqdiff_b0'],
+                          's_bT'           : diffusion_param['seqdiff_bT'],
+                          'schedule_type' : diffusion_param['seqdiff_schedule_type']
+                         }
+
+        if not seq_diff_type:
+            print('Training with autoregressive sequence decoding')
+            self.seq_diffuser = None
+
+        elif seq_diff_type == 'uniform':
+            print('Training with discrete sequence diffusion')
+            seqdiff_kwargs['rate_matrix'] = 'uniform'
+            seqdiff_kwargs['lamda'] = diffusion_param['seqdiff_lambda']
+
+            self.seq_diffuser = DiscreteSeqDiffuser(**seqdiff_kwargs)
+
+        elif seq_diff_type == 'continuous':
+            print('Training with continuous sequence diffusion')
+
+            self.seq_diffuser = ContinuousSeqDiffuser(**seqdiff_kwargs)
+
+        else: 
+            print(f'Sequence diffusion with type {seq_diff_type} is not implemented')
+            raise NotImplementedError()
+
         # for all-atom str loss
         self.ti_dev = torsion_indices
         self.ti_flip = torsion_can_flip
@@ -226,7 +255,8 @@ class Trainer():
     def calc_loss(self, logit_s, label_s,
                   logit_aa_s, label_aa_s, mask_aa_s, logit_exp,
                   pred, pred_tors, true, mask_crds, mask_BB, mask_2d, same_chain,
-                  pred_lddt, idx, dataset, chosen_task, t, xyz_in, diffusion_mask, unclamp=False, negative=False,
+                  pred_lddt, idx, dataset, chosen_task, t, xyz_in, diffusion_mask,
+                  seq_diffusion_mask, seq_t, unclamp=False, negative=False,
                   w_dist=1.0, w_aa=1.0, w_str=1.0, w_all=0.5, w_exp=1.0,
                   w_lddt=1.0, w_blen=1.0, w_bang=1.0, w_lj=0.0, w_hb=0.0,
                   lj_lin=0.75, use_H=False, w_disp=0.0, w_ax_ang=0.0, w_frame_dist=0.0, eps=1e-6):
@@ -269,12 +299,37 @@ class Trainer():
 
             loss_dict[f'c6d_{i}'] = float(loss.detach())
 
-        loss = self.loss_fn(logit_aa_s, label_aa_s.reshape(B, -1))
-        loss = loss * mask_aa_s.reshape(B, -1)
-        loss = loss.sum() / (mask_aa_s.sum() + 1e-8)
-        tot_loss += w_aa*loss*aa_tscale
-        loss_s.append(loss[None].detach())
+        if not self.seq_diffuser is None:
+            if self.seq_diffuser.continuous_seq():
+                # Continuous Analog Bit Diffusion
+                # Leave the shape of logit_aa_s as [L,21] so the model can learn to predict zero at 21st entry
+                logit_aa_s = logit_aa_s.squeeze() # [L,21]
+                logit_aa_s = logit_aa_s.transpose(0,1) # [L,21]
 
+                label_aa_s = label_aa_s.squeeze() # [L]
+
+                loss = self.seq_diffuser.loss(seq_true=label_aa_s, seq_pred=logit_aa_s, diffusion_mask=~seq_diffusion_mask)
+                tot_loss += w_aa*loss # Not scaling loss by timestep
+            else:
+                # Discrete Diffusion 
+
+                # Reshape logit_aa_s from [B,21,L] to [B,L,20]. 20 aa since seq diffusion cannot handle gap character
+                p_logit_aa_s = logit_aa_s[:,:20].transpose(1,2) # [B,L,21]
+
+                intseq_t = torch.argmax(seq_t, dim=-1)
+                loss, loss_aux, loss_vb = self.seq_diffuser.loss(x_t=intseq_t, x_0=seq, p_logit_x_0=p_logit_aa_s, t=t, diffusion_mask=seq_diffusion_mask)
+                tot_loss += w_aa*loss # Not scaling loss by timestep
+                
+                loss_dict['loss_aux'] = float(loss_aux.detach())
+                loss_dict['loss_vb']  = float(loss_vb.detach())
+        else:
+            # Classic Autoregressive Sequence Prediction
+            loss = self.loss_fn(logit_aa_s, label_aa_s.reshape(B, -1))
+            loss = loss * mask_aa_s.reshape(B, -1)
+            loss = loss.sum() / (mask_aa_s.sum() + 1e-8)
+            tot_loss += w_aa*loss*aa_tscale
+
+        loss_s.append(loss[None].detach())
         loss_dict['aa_cce'] = float(loss.detach())
 
         loss = nn.BCEWithLogitsLoss()(logit_exp, mask_BB.float())
@@ -515,8 +570,8 @@ class Trainer():
     def load_model(self, model, optimizer, scheduler, scaler, model_name, rank, suffix='last', resume_train=False):
 
         #chk_fn = "models/%s_%s.pt"%(model_name, suffix)
-        chk_fn = "models/extra_t1d_feat_BFF_last.pt"
-        #chk_fn='debug'
+        chk_fn = "/mnt/home/nrbennet/software/dl/devBFF/BFF/rf_diffusion/models/at2.pt"
+        if DEBUG: ic('DEBUG Not loading weights'); chk_fn='debug'
         loaded_epoch = -1
         best_valid_loss = 999999.9
         if not os.path.exists(chk_fn):
@@ -602,7 +657,7 @@ class Trainer():
                     project="fancy-pants ",
                     entity="bakerlab", 
                     name='_'.join([self.wandb_prefix, self.outdir.replace('./','')]))
-            
+
             all_param = {}
             all_param.update(self.loader_param)
             all_param.update(self.model_param)
@@ -727,10 +782,14 @@ class Trainer():
         
         #self.diffuser.get_allatom = self.compute_allatom_coords 
 
+        ic(f'Using onehot sequence input for model')
+        self.model_param['input_seq_onehot'] = True
+        
         # define model
         print('Making model...')
         model = EMA(RoseTTAFoldModule(**self.model_param).to(gpu), 0.999)
 
+        print('Instantiating DDP')
         ddp_model = DDP(model, device_ids=[gpu], find_unused_parameters=False)
         if rank == 0:
             print ("# of parameters:", count_parameters(ddp_model))
@@ -874,6 +933,25 @@ class Trainer():
                 ic(chosen_task)
                 ic(chosen_dataset)
                 ic(atom_mask)
+            if False:
+                ic(seq.type())
+                ic(msa.type())
+                ic(msa_masked.type())
+                ic(msa_full.shape)
+                ic(mask_msa.shape)
+                ic(true_crds.type())
+                ic(mask_crds.shape)
+                ic(idx_pdb.shape)
+                ic(xyz_t.shape)
+                ic(t1d.shape)
+                ic(xyz_prev.shape)
+                ic(same_chain)
+                ic(unclamp)
+                ic(negative)
+                ic(masks_1d)
+                ic(chosen_task)
+                ic(chosen_dataset)
+                ic(atom_mask)
 
             # torch.save(torch.clone(xyz_t), 'xyz_t.pt')
             # torch.save(torch.clone(seq), 'seq.pt')
@@ -885,6 +963,11 @@ class Trainer():
             # Do diffusion + apply masks 
             start = time.time()
 
+            if (not self.seq_diffuser is None) and torch.any(seq > 19):
+                print('Found sequence index greater than 19 while doing sequence diffusion, skipping example')
+                print(f'This is the offending sequence: {seq}')
+                continue
+
             # predicting x0 so don't need to change the true answer 
             seq, msa_masked, msa_full, xyz_t, t1d, mask_msa, little_t, true_crds = mask_inputs(seq, 
                                                                                     msa_masked, 
@@ -894,6 +977,7 @@ class Trainer():
                                                                                     mask_msa, 
                                                                                     atom_mask=atom_mask, 
                                                                                     diffuser=self.diffuser,
+                                                                                    seq_diffuser=self.seq_diffuser,
                                                                                     predict_previous=self.diffusion_param['predict_previous'],
                                                                                     true_crds_in=true_crds,
                                                                                     **{k:v for k,v in masks_1d.items()})
@@ -902,7 +986,7 @@ class Trainer():
             '''
                 Current Dimensions:
                 
-                seq (torch.tensor)        : [B,n,I,L] noised integer sequence
+                seq (torch.tensor)        : [B,n,I,L,22] noised one hot sequence
                 
                 msa_masked (torch.tensor) : [B,n,I,N_short,L,48] 
                 
@@ -1009,9 +1093,10 @@ class Trainer():
             msa_prev = None
             pair_prev = None
             state_prev = None
+            
             # get diffusion_mask for the displacement loss
-            diffusion_mask = masks_1d['input_str_mask'].squeeze()
-
+            diffusion_mask     = masks_1d['input_str_mask'].squeeze()
+            seq_diffusion_mask = masks_1d['input_seq_mask'].squeeze().to(gpu, non_blocking=True)
 
             unroll_performed = False
 
@@ -1067,6 +1152,11 @@ class Trainer():
             xyz_t      = xyz_t[:,1]
             alpha_t    = alpha_t[:,1]
             little_t   = little_t[1]
+
+            # Only provide previous xyz - NRB
+            msa_prev   = None
+            pair_prev  = None
+            state_prev = None
 
             if not unroll_performed: xyz_prev = xyz_prev[1] # grad entry at t
 
@@ -1125,8 +1215,9 @@ class Trainer():
                                 logit_aa_s, msa[:, i_cycle], mask_msa[:,i_cycle], logit_exp,
                                 pred_crds, alphas, true_crds, mask_crds,
                                 mask_BB, mask_2d, same_chain,
-                                pred_lddts, idx_pdb, chosen_dataset[0], chosen_task[0],diffusion_mask=diffusion_mask, xyz_in=xyz_t, unclamp=unclamp, negative=negative, t=little_t,
-                                **self.loss_param)
+                                pred_lddts, idx_pdb, chosen_dataset[0], chosen_task[0], diffusion_mask=diffusion_mask,
+                                seq_diffusion_mask=seq_diffusion_mask, seq_t=seq[:,0], xyz_in=xyz_t, unclamp=unclamp, 
+                                negative=negative, t=little_t, **self.loss_param)
                     loss = loss / self.ACCUM_STEP
 
                     if not torch.isnan(loss):
@@ -1162,10 +1253,11 @@ class Trainer():
                                 logit_aa_s, msa[:, i_cycle], mask_msa[:,i_cycle], logit_exp,
                                 pred_crds, alphas, true_crds, mask_crds,
                                 mask_BB, mask_2d, same_chain,
-                                pred_lddts, idx_pdb, chosen_dataset[0], chosen_task[0], diffusion_mask=diffusion_mask, xyz_in=xyz_t, t=little_t, unclamp=unclamp, negative=negative,
-                                **self.loss_param)
-                
+                                pred_lddts, idx_pdb, chosen_dataset[0], chosen_task[0], diffusion_mask=diffusion_mask,
+                                seq_diffusion_mask=seq_diffusion_mask, seq_t=seq[:,0], xyz_in=xyz_t, unclamp=unclamp,
+                                t=little_t, negative=negative, **self.loss_param)
                 loss = loss / self.ACCUM_STEP
+
                 if not torch.isnan(loss):
                     scaler.scale(loss).backward()
                 # gradient clipping
@@ -1245,13 +1337,20 @@ class Trainer():
             logits_argsort = torch.argsort(logit_aa_s, dim=1, descending=True)
             top1_sequence = (logits_argsort[:, :1])
             top1_sequence = torch.clamp(top1_sequence, 0,19)
-            clamped = top1_sequence
 
+            if diffusion_param['seqdiff'] == 'continuous':
+                ic('Argmax decoding sequence')
+                top1_sequence = torch.argmax(logit_aa_s[:,:20,:], dim=1)
+
+            # Also changed to allow for one-hot sequence input
+            seq_masked = torch.argmax(seq_masked[:,:,:,:20], dim=-1)
+
+            clamped = top1_sequence
 
             if chosen_task[0] != 'seq2str' and np.random.randint(0,100) == 0:
                 if not os.path.isdir(f'./{self.outdir}/training_pdbs/'):
                     os.makedirs(f'./{self.outdir}/training_pdbs')
-                writepdb(f'{self.outdir}/training_pdbs/test_epoch_{epoch}_{counter}_{chosen_task[0]}_{chosen_dataset[0]}_t_{little_t}pred.pdb',pred_crds[-1,0,:,:3,:],top1_sequence[0,0,:])
+                writepdb(f'{self.outdir}/training_pdbs/test_epoch_{epoch}_{counter}_{chosen_task[0]}_{chosen_dataset[0]}_t_{little_t}pred.pdb',pred_crds[-1,0,:,:3,:],top1_sequence[0,:])
                 writepdb(f'{self.outdir}/training_pdbs/test_epoch_{epoch}_{counter}_{chosen_task[0]}_{chosen_dataset[0]}_t_{little_t}true.pdb',true_crds[0,:,:3,:],torch.clamp(seq_original[0,0,:],0,19))
                 writepdb(f'{self.outdir}/training_pdbs/test_epoch_{epoch}_{counter}_{chosen_task[0]}_{chosen_dataset[0]}_t_{little_t}input.pdb',xyz_t[0,:,:,:3,:],torch.clamp(seq_masked[0,0,:],0,19))
                 with open(f'{self.outdir}/training_pdbs/test_epoch_{epoch}_{counter}_{chosen_task[0]}_{chosen_dataset[0]}_t_{little_t}pred_input.txt','w') as f:
@@ -1269,6 +1368,23 @@ class Trainer():
         train_tot = train_tot.cpu().detach()
         train_loss = train_loss.cpu().detach().numpy()
         train_acc = train_acc.cpu().detach().numpy()
+
+        if counter % 1000 == 0:
+            # Dump the model's weights every 1000 examples
+            torch.save({'epoch': epoch,
+                #'model_state_dict': ddp_model.state_dict(),
+                'model_state_dict': ddp_model.module.shadow.state_dict(),
+                'final_state_dict': ddp_model.module.model.state_dict(),
+                'optimizer_state_dict': optimizer.state_dict(),
+                'scheduler_state_dict': scheduler.state_dict(),
+                'scaler_state_dict': scaler.state_dict(),
+                'train_loss': train_loss,
+                'train_acc': train_acc,
+                'valid_loss': 999.9,
+                'valid_acc': 999.9,
+                'best_loss': 999.9},
+                self.checkpoint_fn(self.model_name, 'intermediate'))
+
         if rank == 0:
             
             train_time = time.time() - start_time
