@@ -1,6 +1,7 @@
 import argparse
 import data_loader
 import os
+import metrics
 
 TRUNK_PARAMS = ['n_extra_block', 'n_main_block', 'n_ref_block',\
                 'd_msa', 'd_msa_full', 'd_pair', 'd_templ',\
@@ -12,7 +13,7 @@ SE3_PARAMS = ['num_layers_full', 'num_layers_topk', 'num_channels', 'num_degrees
 
 
 
-def get_args():
+def get_args(in_args=None):
     parser = argparse.ArgumentParser()
 
     # training parameters
@@ -35,6 +36,8 @@ def get_args():
             help="Gradient accumulation when it's > 1 [1]")
     train_group.add_argument("-interactive", action="store_true", default=False,
             help="Use interactive node")
+    train_group.add_argument("-zero_weights", action="store_true", default=False,
+            help="Train with all weights in the model set to zero")
 
     # data-loading parameters
     data_group = parser.add_argument_group("data loading parameters")
@@ -232,6 +235,10 @@ def get_args():
     loss_group.add_argument('-scheduled_params',type=list,
             default=[{'sig_stretch':0.23, 'sig_shift':0.885, 'linear_start':1., 'linear_end':0.1}]*7,
             help='Parameters to be used for each loss schedule')
+    loss_group.add_argument('-w_motif_disp', type=float, default=0.0,
+            help="Weight on motif displacement")
+    loss_group.add_argument('-backprop_non_displacement_on_given',action='store_true', default=False,
+            help='True, apply all losses, not just the displacement loss on the given region')
 
     # other parameters
     parser.add_argument('-task_names', default='seq2str',
@@ -244,9 +251,10 @@ def get_args():
             help= 'for fixbb tasks, keep one chain complete. This is the maximum length of that chain (should be <60ish residues from max_length, so there is enough of the other chain)')
     parser.add_argument('-wandb_prefix', type=str, required=True,
             help='Prefix for name of session on wandb. This MUST be specified - make it clear what general parameters were used')
+    parser.add_argument('-metric', type=lambda m: getattr(metrics, m), action='append')
 
     # parse arguments
-    args = parser.parse_args()
+    args = parser.parse_args(in_args)
 
     # parse the task lists
     task_names = args.task_names.split(',')
@@ -308,7 +316,7 @@ def get_args():
     trunk_param['SE3_param_full'] = SE3_param_full
     trunk_param['SE3_param_topk'] = SE3_param_topk
     loss_param = {}
-    for param in ['w_frame_dist', 'w_ax_ang', 'w_dist', 'w_str', 'w_all', 'w_aa', 'w_lddt', 'w_blen', 'w_bang', 'w_lj', 'w_hb', 'lj_lin', 'use_H', 'w_disp', 'use_tschedule', 'scheduled_losses', 'scheduled_types', 'scheduled_params']:
+    for param in ['w_frame_dist', 'w_ax_ang', 'w_dist', 'w_str', 'w_all', 'w_aa', 'w_lddt', 'w_blen', 'w_bang', 'w_lj', 'w_hb', 'lj_lin', 'use_H', 'w_disp', 'w_motif_disp', 'backprop_non_displacement_on_given', 'use_tschedule', 'scheduled_losses', 'scheduled_types', 'scheduled_params']:
         loss_param[param] = getattr(args, param)
 
     return args, trunk_param, loader_param, loss_param, diffusion_params

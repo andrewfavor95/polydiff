@@ -167,7 +167,7 @@ def calc_ca_displacement_loss(xyz_1, xyz_2, squared=False):
 
     return err
 
-def calc_displacement_loss(pred, true, mask, gamma=0.99, d_clamp=None):
+def calc_displacement_loss(pred, true, gamma=0.99, d_clamp=None):
     """
     Calculates squared L2 norm of error between predicted and true CA 
 

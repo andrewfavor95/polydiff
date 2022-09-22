@@ -137,7 +137,8 @@ class Trainer():
     def __init__(self, model_name='BFF', ckpt_load_path=None,
                  n_epoch=100, lr=1.0e-4, l2_coeff=1.0e-2, port=None, interactive=False,
                  model_param={}, loader_param={}, loss_param={}, batch_size=1, accum_step=1, 
-                 maxcycle=4, diffusion_param={}, outdir=f'./train_session{get_datetime()}', wandb_prefix=''):
+                 maxcycle=4, diffusion_param={}, outdir=f'./train_session{get_datetime()}', wandb_prefix='',
+                 metrics=None, zero_weights=False):
 
         self.model_name = model_name #"BFF"
         self.ckpt_load_path = ckpt_load_path
@@ -147,6 +148,8 @@ class Trainer():
         self.port = port
         self.interactive = interactive
         self.outdir = outdir
+        self.zero_weights=zero_weights
+        self.metrics=metrics or []
 
         if not os.path.isdir(self.outdir):
             os.makedirs(self.outdir, exist_ok=True)
@@ -255,12 +258,12 @@ class Trainer():
         
     def calc_loss(self, logit_s, label_s,
                   logit_aa_s, label_aa_s, mask_aa_s, logit_exp,
-                  pred, pred_tors, true, mask_crds, mask_BB, mask_2d, same_chain,
+                  pred_in, pred_tors, true, mask_crds, mask_BB, mask_2d, same_chain,
                   pred_lddt, idx, dataset, chosen_task, t, xyz_in, diffusion_mask,
                   seq_diffusion_mask, seq_t, unclamp=False, negative=False,
                   w_dist=1.0, w_aa=1.0, w_str=1.0, w_all=0.5, w_exp=1.0,
                   w_lddt=1.0, w_blen=1.0, w_bang=1.0, w_lj=0.0, w_hb=0.0,
-                  lj_lin=0.75, use_H=False, w_disp=0.0, w_ax_ang=0.0, w_frame_dist=0.0, eps=1e-6):
+                  lj_lin=0.75, use_H=False, w_disp=0.0, w_motif_disp=0.0, w_ax_ang=0.0, w_frame_dist=0.0, eps=1e-6, backprop_non_displacement_on_given=False):
 
         #NB t is 1-indexed
         t_idx = t-1
@@ -287,6 +290,27 @@ class Trainer():
         hb_tscale = self.loss_schedules.get('lj',[1]*(t))[t_idx]
         str_tscale = self.loss_schedules.get('w_str',[1]*(t))[t_idx]
         w_all_tscale = self.loss_schedules.get('w_all',[1]*(t))[t_idx]
+
+	# Displacement prediction loss between xyz prev and xyz_true
+        if unclamp:
+            disp_loss = calc_displacement_loss(pred_in, true, gamma=0.99, d_clamp=None)
+        else:
+            disp_loss = calc_displacement_loss(pred_in, true, gamma=0.99, d_clamp=10.0)
+ 
+        tot_loss += w_disp*disp_loss*disp_tscale
+        loss_dict['displacement'] = float(disp_loss.detach())
+ 
+        # Displacement prediction loss between xyz prev and xyz_true for only motif region.
+        if diffusion_mask.any():
+            motif_disp_loss = calc_displacement_loss(pred_in[:,:,diffusion_mask], true[:,diffusion_mask], gamma=0.99, d_clamp=None)
+            tot_loss += w_motif_disp*motif_disp_loss*disp_tscale
+            loss_dict['motif_displacement'] = float(motif_disp_loss.detach())
+ 
+        if backprop_non_displacement_on_given:
+            pred = pred_in
+        else:
+            pred = torch.clone(pred_in)
+            pred[:,:,diffusion_mask] = pred_in[:,:,diffusion_mask].detach()
 
         # c6d loss
         for i in range(4):
@@ -331,6 +355,7 @@ class Trainer():
             tot_loss += w_aa*loss*aa_tscale
 
         loss_s.append(loss[None].detach())
+
         loss_dict['aa_cce'] = float(loss.detach())
 
         loss = nn.BCEWithLogitsLoss()(logit_exp, mask_BB.float())
@@ -339,15 +364,6 @@ class Trainer():
         loss_s.append(loss[None].detach())
 
         loss_dict['exp_resolved'] = float(loss.detach())
-
-        # Displacement prediction loss between xyz prev and xyz_true
-        if unclamp:
-            disp_loss = calc_displacement_loss(pred, true, mask_BB, gamma=0.99, d_clamp=None)
-        else:
-            disp_loss = calc_displacement_loss(pred, true, mask_BB, gamma=0.99, d_clamp=10.0)
-
-        tot_loss += w_disp*disp_loss*disp_tscale
-        loss_dict['displacement'] = float(disp_loss.detach())
 
         ######################################
         #### squared L2 loss on rotations ####
@@ -582,8 +598,9 @@ class Trainer():
         loaded_epoch = -1
         best_valid_loss = 999999.9
         if not os.path.exists(chk_fn):
-            print ('no model found', model_name)
-            return -1, best_valid_loss
+            if self.zero_weights:
+                return -1, best_valid_loss
+            raise Exception(f'no model found at path: {chk_fn}, pass -zero_weights if you intend to train the model with no initialization and no starting weights')
         print('*** FOUND MODEL CHECKPOINT ***')
         print('Located at ',chk_fn)
 
@@ -649,9 +666,12 @@ class Trainer():
         else:
             print ("Launched from interactive")
             world_size = torch.cuda.device_count()
-            mp.spawn(self.train_model, args=(world_size,), nprocs=world_size, join=True)
+            if world_size == 1:
+                self.train_model(0, 1)
+            else:
+                mp.spawn(self.train_model, args=(world_size,), nprocs=world_size, join=True)
 
-    def train_model(self, rank, world_size):
+    def train_model(self, rank, world_size, return_setup=False):
         #print ("running ddp on rank %d, world_size %d"%(rank, world_size))
         
         # save git diff from most recent commit
@@ -824,6 +844,9 @@ class Trainer():
         if loaded_epoch >= self.n_epoch:
             DDP_cleanup()
             return
+
+        if return_setup:
+            return ddp_model, train_loader, optimizer, scheduler, scaler
         
         #valid_pdb_sampler.set_epoch(0)
         #valid_homo_sampler.set_epoch(0)
@@ -966,6 +989,8 @@ class Trainer():
             # torch.save(torch.clone(seq), 'seq.pt')
             # torch.save(torch.clone(atom_mask), 'atom_mask.pt')
 
+
+
             # for saving pdbs
             seq_original = torch.clone(seq)
 
@@ -1002,7 +1027,6 @@ class Trainer():
             msa_prev = None
             pair_prev = None
             state_prev = None
-            
             # get diffusion_mask for the displacement loss
             diffusion_mask     = masks_1d['input_str_mask'].squeeze()
             seq_diffusion_mask = masks_1d['input_seq_mask'].squeeze().to(gpu, non_blocking=True)
@@ -1166,7 +1190,6 @@ class Trainer():
                                 seq_diffusion_mask=seq_diffusion_mask, seq_t=seq[:,0], xyz_in=xyz_t, unclamp=unclamp,
                                 t=int(little_t), negative=negative, **self.loss_param)
                 loss = loss / self.ACCUM_STEP
-
                 if not torch.isnan(loss):
                     scaler.scale(loss).backward()
                 # gradient clipping
@@ -1769,5 +1792,7 @@ if __name__ == "__main__":
                     accum_step=args.accum,
                     maxcycle=args.maxcycle,
                     diffusion_param=diffusion_param,
-                    wandb_prefix=args.wandb_prefix)
+                    wandb_prefix=args.wandb_prefix,
+                    metrics=args.metric,
+                    zero_weights=args.zero_weights)
     train.run_model_training(torch.cuda.device_count())
