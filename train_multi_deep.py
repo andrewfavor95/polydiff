@@ -1274,6 +1274,7 @@ class Trainer():
                 top1_sequence = torch.argmax(logit_aa_s[:,:20,:], dim=1)
 
             # Also changed to allow for one-hot sequence input
+            seq_original = torch.argmax(seq_original[:,:,:,:,:20], dim=-1)
             seq_masked = torch.argmax(seq_masked[:,:,:,:20], dim=-1)
 
             clamped = top1_sequence
