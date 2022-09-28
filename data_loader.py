@@ -1532,6 +1532,7 @@ class DistilledDataset(data.Dataset):
         # Original d_t1d == 22 (20aa + missing + mask + template confidence)
         # But, extra features can be added
         # TODO I think this could be changed at a later date, to specify added features and stack them in a different order
+<<<<<<< HEAD
         """
         # Masking this out, so now, if you're doing sequence diffusion, d_t1d == 23, and these last two features pertain to sequence diffusion, and if not, d_t1d=22
         # This obviously needs to be made more flexible down the line
@@ -1542,12 +1543,23 @@ class DistilledDataset(data.Dataset):
                 assert torch.sum(t1d[:,:,-1]) == 0 
         """
         # Add extra feature to t1d if doing sequence diffusion (the sequence diffusion 'timestep')
-        # NOTE DJ change the assertion logic here for the sinuisoidal timestep embedding        
-        if self.seq_diffuser is None:
+        if (self.seq_diffuser is None) and (self.model_param['d_time_emb'] == 0):
             assert self.preprocess_param['d_t1d'] == 22
-        else:
+        elif (self.seq_diffuser is None) and (self.model_param['d_time_emb'] > 0):
+            assert self.preprocess_param['d_t1d'] == 22 + self.model_param['d_time_emb_proj']
+        elif not (self.seq_diffuser is None) and (self.model_param['d_time_emb'] == 0):
             t1d=torch.cat((t1d, torch.zeros_like(t1d[...,:1])), dim=-1)
             assert self.preprocess_param['d_t1d'] == 23
+        else:
+            raise NotImplementedError('DJ - havent thought about being here yet. shouldnt be too hard.')     
+
+        # End by checking dimensions are the intended dimensions
+        if self.model_param['d_time_emb'] == 0:
+            assert t1d.shape[-1] == self.preprocess_param['d_t1d']
+        else:
+            pass # DJ - no check in this case because concat onto t1d happens in RF fwd pass 
+                 # Model will crash anyways if the dims mismatch
+                 # Also -- already checked the math works out in assertions above 
 
         # End by checking dimensions are the intended dimensions
         assert t1d.shape[-1] == self.preprocess_param['d_t1d']

@@ -383,6 +383,7 @@ def mask_inputs(seq,
         t1d[1,:,decoded_non_motif[1],blosum_replacement[1]] = 1
 
         t1d[:,:,:,21] = input_t1d_str_conf_mask[:,None,:]
+    
     # mask sidechains in the diffused region if preprocess_param['sidechain_input'] is False
     if preprocess_param['sidechain_input'] is False:
         xyz_t[:,:,~input_str_mask.squeeze(),3:,:] = float('nan')

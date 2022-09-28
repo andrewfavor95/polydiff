@@ -277,7 +277,7 @@ def get_args(in_args=None):
     preprocess_group = parser.add_argument_group("preprocess parameters")
     preprocess_group.add_argument("-sidechain_input", choices=("True","False"), required=True,
         help='Do you want to provide diffused sidechains to the model. No default - make up your mind')
-    preprocess_group.add_argument("-sequence_decode", choices=("True","False"), default=True,
+    preprocess_group.add_argument("-sequence_decode", choices=("True","False"), default="True",
         help='Do you want to decode sequence. Overrides aa_decode_steps. Default=True')
     preprocess_group.add_argument('-d_t1d', type=int, default=21+1+1,
             help='dimension of t1d raw inputs')
@@ -383,7 +383,11 @@ def get_args(in_args=None):
     
     # Collect preprocess_params
     preprocess_param = {}
+<<<<<<< HEAD
     for param in ['sidechain_input','sequence_decode', 'd_t1d', 'd_t2d', 'predict_previous', 'prob_self_cond']:
+=======
+    for param in ['sidechain_input','sequence_decode', 'd_t1d', 'd_t2d']:
+>>>>>>> f9ee002 (Added:)
         preprocess_param[param] = getattr(args, param)
 
     return args, trunk_param, loader_param, loss_param, diffusion_params, preprocess_param
