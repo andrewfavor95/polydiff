@@ -1353,6 +1353,7 @@ class DistilledDataset(data.Dataset):
                  ti_flip,
                  ang_ref,
                  diffusion_param,
+                 preprocess_param,
                  p_homo_cut=0.5):
         #
         self.pdb_IDs     = pdb_IDs
@@ -1420,6 +1421,7 @@ class DistilledDataset(data.Dataset):
         self.ang_ref = ang_ref
 
         self.diffusion_param = diffusion_param
+        self.preprocess_param = preprocess_param
 
     def __len__(self):
         return len(self.fb_inds) + len(self.pdb_inds) + len(self.compl_inds) + len(self.neg_inds) + len(self.cn_inds)
@@ -1481,17 +1483,6 @@ class DistilledDataset(data.Dataset):
 
         (seq, msa, msa_masked, msa_full, mask_msa, true_crds, atom_mask, idx_pdb, xyz_t, t1d, xyz_prev, same_chain, unclamp, negative, complete_chain, atom_mask) = out
 
-        # get masks for example
-        # Commenting this out. Because of popping Nans, need a new way of dealing with complexes, which will break the inpainting-style task mask generators.
-        """
-        if complete_chain[0] == 0:
-            if complete_chain[1] is not None:
-                complete_chain = [0,complete_chain[1]-1] #first and last index of the first chain (complete_chain[1] is length of first chain)
-            else:
-                complete_chain = [0, same_chain.shape[0] -1] #first and last index of full chain
-        else:
-            complete_chain=[complete_chain[1],same_chain.shape[0]-1]
-        """
         if complete_chain[1] is not None:
             chain_tensor, contacts = get_contacts(complete_chain, xyz_t)
         else:
@@ -1535,25 +1526,19 @@ class DistilledDataset(data.Dataset):
         if complete_chain[1] is not None:
             complete_chain = chain_tensor[pop]
         
-        #Concatenate on the contacts tensor onto t1d
-        t1d = torch.cat((t1d, contacts[None,...,None]), dim=-1)
-        if chosen_dataset != 'complex':
-            assert torch.sum(t1d[:,:,-1]) == 0 
-        # print('Printing shapes after popping')
-        # print("seq ",seq.shape)
-        # print("msa ",msa.shape)
-        # print("msa_masked ",msa_masked.shape)
-        # print("msa_full ",msa_full.shape)
-        # print("mask_msa ",mask_msa.shape)
-        # print("true_crds ",true_crds.shape)
-        # print("atom_mask ",atom_mask.shape )
-        # print("idx_pdb ",idx_pdb.shape)
-        # print("xyz_t ",xyz_t.shape)
-        # print("t1d ",t1d.shape)
-        # print("xyz_prev ",xyz_prev.shape)
-        # print("unclamp ",unclamp)
-        # print("atom_mask ",atom_mask.shape)
-        # print('same chain ',same_chain.shape)
+        # Assemble t1d here.
+        # Original d_t1d == 22 (20aa + missing + mask + template confidence)
+        # But, extra features can be added
+        # TODO I think this could be changed at a later date, to specify added features and stack them in a different order
+        if self.preprocess_param['d_t1d'] == 23: 
+            #Concatenate on the contacts tensor onto t1d
+            t1d = torch.cat((t1d, contacts[None,...,None]), dim=-1)
+            if chosen_dataset != 'complex':
+                assert torch.sum(t1d[:,:,-1]) == 0 
+       
+        # End by checking dimensions are the intended dimensions
+        assert t1d.shape[-1] == self.preprocess_param['d_t1d']
+
         masks_1d = generate_masks(msa, task, self.params, chosen_dataset, complete_chain)
         
         #Concatenate on the contacts tensor onto t1d
@@ -1576,6 +1561,8 @@ class DistilledDataset(data.Dataset):
                                                                                     seq_diffuser=self.seq_diffuser,
                                                                                     predict_previous=self.diffusion_param['predict_previous'],
                                                                                     true_crds_in=true_crds,
+                                                                                    preprocess_param=self.preprocess_param,
+                                                                                    diffusion_param=self.diffusion_param,
                                                                                     **{k:v for k,v in masks_1d.items()})
         '''
             Current Dimensions:
@@ -1611,6 +1598,13 @@ class DistilledDataset(data.Dataset):
 
         # Now make t2d
         t2d = xyz_to_t2d(xyz_t) # [n,T,L,L]
+        
+        # Assemble t2d here.
+        # Original d_t2d == 44 (20aa + missing + mask + template confidence)
+        # But, extra features can be added
+        # TODO I think this could be changed at a later date, to specify added features and stack them in a different order
+        # No added features yet, but they can go here
+        assert self.preprocess_param['d_t2d'] == t2d.shape[-1]
 
         # get torsion angles from templates
         seq_tmp = t1d[...,:-1].argmax(dim=-1).reshape(-1,L)

@@ -137,7 +137,7 @@ class Trainer():
     def __init__(self, model_name='BFF', ckpt_load_path=None,
                  n_epoch=100, lr=1.0e-4, l2_coeff=1.0e-2, port=None, interactive=False,
                  model_param={}, loader_param={}, loss_param={}, batch_size=1, accum_step=1, 
-                 maxcycle=4, diffusion_param={}, outdir=f'./train_session{get_datetime()}', wandb_prefix='',
+                 maxcycle=4, diffusion_param={}, preprocess_param={}, outdir=f'./train_session{get_datetime()}', wandb_prefix='',
                  metrics=None, zero_weights=False):
 
         self.model_name = model_name #"BFF"
@@ -168,6 +168,7 @@ class Trainer():
         self.batch_size = batch_size
 
         self.diffusion_param = diffusion_param
+        self.preprocess_param = preprocess_param
         self.wandb_prefix=wandb_prefix
 
         # For diffusion
@@ -256,6 +257,16 @@ class Trainer():
         
         print (model_param, loader_param, loss_param)
         
+        # Assemble "Config" for inference
+        self.assemble_config()
+
+    def assemble_config(self):
+        config_dict = {}
+        config_dict['model'] = self.model_param
+        config_dict['diffuser'] = self.diffusion_param
+        config_dict['preprocess'] = self.preprocess_param
+        self.config_dict = config_dict
+
     def calc_loss(self, logit_s, label_s,
                   logit_aa_s, label_aa_s, mask_aa_s, logit_exp,
                   pred_in, pred_tors, true, mask_crds, mask_BB, mask_2d, same_chain,
@@ -757,7 +768,7 @@ class Trainer():
                                      neg_IDs, loader_complex, neg_dict,
                                      fb_IDs, loader_fb, loader_fb_fixbb, fb_dict,
                                      cn_IDs, None, loader_cn_fixbb, cn_dict, # None is a placeholder as we don't currently have a loader_cn
-                                     homo, self.loader_param, self.diffuser, self.seq_diffuser, self.ti_dev, self.ti_flip, self.ang_ref, self.diffusion_param)
+                                     homo, self.loader_param, self.diffuser, self.seq_diffuser, self.ti_dev, self.ti_flip, self.ang_ref, self.diffusion_param, self.preprocess_param)
 
         valid_pdb_set = Dataset(list(valid_pdb.keys())[:self.n_valid_pdb],
                                 loader_pdb, valid_pdb,
@@ -899,7 +910,8 @@ class Trainer():
                             'train_acc': train_acc,
                             'valid_loss': 999.9,
                             'valid_acc': 999.9,
-                            'best_loss': 999.9},
+                            'best_loss': 999.9,
+                            'config_dict':self.config_dict},
                             self.checkpoint_fn(self.model_name, str(epoch)))
                 
         dist.destroy_process_group()
@@ -1776,7 +1788,7 @@ class Trainer():
 
 if __name__ == "__main__":
     from arguments import get_args
-    args, model_param, loader_param, loss_param, diffusion_param = get_args()
+    args, model_param, loader_param, loss_param, diffusion_param, preprocess_param = get_args()
 
     # set random seed
     torch.manual_seed(args.seed)
@@ -1793,6 +1805,7 @@ if __name__ == "__main__":
                     accum_step=args.accum,
                     maxcycle=args.maxcycle,
                     diffusion_param=diffusion_param,
+                    preprocess_param=preprocess_param,
                     wandb_prefix=args.wandb_prefix,
                     metrics=args.metric,
                     zero_weights=args.zero_weights)

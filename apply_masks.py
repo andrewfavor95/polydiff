@@ -6,7 +6,7 @@ from blosum62 import p_j_given_i as P_JGI
 
 ic.configureOutput(includeContext=True)
 
-def sample_blosum_mutations(seq, p_blosum=0.9, p_uni=0.1, p_mask=0):
+def sample_blosum_mutations(seq, p_blosum, p_uni, p_mask):
     """
     Given a sequence,
     """
@@ -46,6 +46,8 @@ def mask_inputs(seq,
                 t1d, 
                 mask_msa, 
                 atom_mask,
+                preprocess_param,
+                diffusion_param,
                 input_seq_mask=None, 
                 input_str_mask=None, 
                 input_floating_mask=None, 
@@ -57,10 +59,7 @@ def mask_inputs(seq,
                 diffuser=None,
                 seq_diffuser=None,
                 predict_previous=False,
-                true_crds_in=None,
-                decode_mask_frac=0.,
-                corrupt_blosum=0.9,
-                corrupt_uniform=0.1):
+                true_crds_in=None):
     """
     Parameters:
         seq (torch.tensor, required): (I,L) integer sequence 
@@ -88,13 +87,21 @@ def mask_inputs(seq,
         loss_str_mask_2d (torch.tensor, required): Shape (L,L) 
 
         ...
+
+        Other parameters are then contained in preprocess_param and diffusion_param:
         
-        decode_mask_frac (float, optional): Fraction of decoded residues which are to be corrupted 
+        -preprocess_param:
 
-        corrupt_blosum (float, optional): Probability that a decoded residue selected for corruption will transition according to BLOSUM62 probs 
+            sidechain_input (boolean). Whether or not diffused sidechains should be input to the model
+        
+        -diffusion_param:
 
-        corrupt_unifom (float, optional): Probability that ... according to uniform probs 
+            decode_mask_frac (float, optional): Fraction of decoded residues which are to be corrupted 
 
+            corrupt_blosum (float, optional): Probability that a decoded residue selected for corruption will transition according to BLOSUM62 probs 
+
+            corrupt_unifom (float, optional): Probability that ... according to uniform probs 
+        
 
     NOTE: in the MSA, the order is 20aa, 1x unknown, 1x mask token. We set the masked region to 22 (masked).
         For the t1d, this has 20aa, 1x unkown, and 1x template conf. Here, we set the masked region to 21 (unknown).
@@ -156,11 +163,14 @@ def mask_inputs(seq,
         # seq_mask - True-->revealed, False-->masked 
         seq_mask = torch.ones(2,L).to(dtype=bool) # all revealed [t,L]
 
-        # grab noised inputs / create masks based on time t
-        #aa_mask_raw = aa_masks # [t,L]
-    
+        # JW - moved this here
+        mask_msa = torch.stack([mask_msa,mask_msa], dim=0) # [n,I,N_long,L,25]
+
         if not seq_diffuser is None:
             seq_mask[:,~input_seq_mask.squeeze()] = False # All non-fixed positions are diffused in sequence diffusion
+            
+            # JW - moved mask_msa masking here
+            mask_msa[:,:,:,~input_seq_mask.squeeze()] = False # don't score non-diffused positions
         else:
             # mark False where aa_mask_raw is False -- assumes everybody is potentially diffused
             seq_mask[0,~aa_masks[0]] = False
@@ -170,7 +180,10 @@ def mask_inputs(seq,
             seq_mask[:,input_seq_mask.squeeze()] = True
 
             ###  DJ new - make mutations in the decoded sequence 
-            sampled_blosum = torch.stack([sample_blosum_mutations(seq.squeeze(0)), sample_blosum_mutations(seq.squeeze(0))], dim=0) # [n,L]
+            ### JW - changed this so the sampled mutations are the same for both timesteps
+            #sampled_blosum = torch.stack([sample_blosum_mutations(seq.squeeze(0), p_blosum=diffusion_param['decode_corrupt_blosum'], p_uni=diffusion_param['decode_corrupt_uniform'], p_mask=0),\
+            #                              sample_blosum_mutations(seq.squeeze(0), p_blosum=diffusion_param['decode_corrupt_blosum'], p_uni=diffusion_param['decode_corrupt_uniform'], p_mask=0)], dim=0) # [n,L]
+            sampled_blosum = sample_blosum_mutations(seq.squeeze(0), p_blosum=diffusion_param['decode_corrupt_blosum'], p_uni=diffusion_param['decode_corrupt_uniform'], p_mask=0)[None].repeat(2,1) # [n, L]
 
             # find decoded residues and select them with 21% probability 
             decoded_non_motif = torch.ones_like(sampled_blosum).to(dtype=bool) # [n,L]
@@ -180,10 +193,22 @@ def mask_inputs(seq,
             decoded_non_motif[1,~aa_masks[1]] = False
 
             decoded_non_motif[:,input_seq_mask.squeeze()] = False      # mark False where motif exists 
-
+            decode_scoring_mask = torch.clone(decoded_non_motif)
+            
             # set (1-decode_mask_frac) proportion to False, keeping <decode_mask_frac> proportion still available 
-            tmp_mask = torch.rand(decoded_non_motif.shape) < (1-decode_mask_frac) # [n,L]
+            # JW - changed this slightly, for scoring purposes.
+            # In a manner akin to RF/AF, we apply loss on sequence that has been mutated/corrupted, as well as to the same proportion
+            # of sequence that has not been corrupted. 
+            # Therefore, network must learn which residues to change, and which to keep fixed.
+            # This should also make aa_cce more comparable between runs, if we vary decode_mask_frac
+            
+            # First, make the 'scoring' mask, which score twice the proportion of residues as 'decode_mask_frac'
+            scoring_mask = torch.rand(decoded_non_motif.shape) < (1-2*diffusion_param['decode_mask_frac']) # [n,L]
 
+            # Now, make tmp mask, which is 50:50 corrupt vs not (so total proportion to be corrupted == 'decode_mask_frac'
+            # This yields a mask where True == unchanged, False == Corrupted residue
+            tmp_mask = torch.logical_and(~scoring_mask, torch.rand(decoded_non_motif.shape) < 0.5)
+            
             decoded_non_motif[0,tmp_mask[0]] = False 
             decoded_non_motif[1,tmp_mask[1]] = False 
 
@@ -195,7 +220,15 @@ def mask_inputs(seq,
             blosum_replacement.append(sampled_blosum[1,decoded_non_motif[1]])
 
             onehot_blosum_rep = [torch.nn.functional.one_hot(i, num_classes=20).float() for i in blosum_replacement] # [n,dim_replace,20]
-
+            
+            # JW Move mask_msa masking here, and apply new masks (see above)
+            # 1.) make all decoded residues False (so not scored scored)
+            mask_msa[0,:,:,seq_mask[0]] = False
+            mask_msa[1,:,:,seq_mask[1]] = False
+            # 2.) Now, bring back any residues to score (both those corrupted by blosum, and the equivalent proportion of non-corrupted)
+            scoring_mask[:,input_seq_mask.squeeze()] = True
+            mask_msa[0,:,:,~scoring_mask[0]] = True
+            mask_msa[1,:,:,~scoring_mask[1]] = True
             ### End DJ new
        
         xyz_t       = diffused_fullatoms[:2].unsqueeze(1) # [n,T,L,27,3]
@@ -214,14 +247,6 @@ def mask_inputs(seq,
         input_t1d_seq_conf_mask = torch.stack([input_t1d_seq_conf_mask,input_t1d_seq_conf_mask], dim=0) # [n,L]
         input_t1d_seq_conf_mask[0,~input_seq_mask.squeeze()] = 1 - t_list[0]/diffuser.T
         input_t1d_seq_conf_mask[1,~input_seq_mask.squeeze()] = 1 - t_list[1]/diffuser.T
-
-        mask_msa = torch.stack([mask_msa,mask_msa], dim=0) # [n,I,N_long,L,25]
-
-        if not seq_diffuser is None:
-            mask_msa[:,:,:,~input_seq_mask.squeeze()] = False # don't score non-diffused positions
-        else:
-            mask_msa[0,:,:,seq_mask[0]] = False # don't score revealed positions 
-            mask_msa[1,:,:,seq_mask[1]] = False # don't score revealed positions 
 
     else:
         print('WARNING: Diffuser not being used in apply masks')
@@ -354,23 +379,19 @@ def mask_inputs(seq,
 
     # input_t1d_conf_mask is shape [n,L]
     t1d[:,:,:,21] *= input_t1d_str_conf_mask[:,None,:]
-    t1d[:,:,:,22] *= input_t1d_seq_conf_mask[:,None,:]
+    
+    #JW - removed this as I don't think it makes sense (dim 22 = 'contacting or not')
+    #t1d[:,:,:,22] *= input_t1d_seq_conf_mask[:,None,:]
 
-    # Try providing no sidechains to the model - NRB
-    #xyz_t[:,:,:,3:,:] = float('nan') # [n,I,L,27,3]
-
-    # TRYING NOT PROVIDING diffused SIDECHAINS TO THE MODEL
-    xyz_t[:,:,~input_str_mask.squeeze(),3:,:] = float('nan') # [n,I,L,27,3]
-
-    #xyz_t[:,:,~seq_mask,3:,:] = float('nan') # don't know sidechain information for masked seq 
+    # mask sidechains in the diffused region if preprocess_param['sidechain_input'] is False
+    if preprocess_param['sidechain_input'] is False:
+        xyz_t[:,:,~input_str_mask.squeeze(),3:,:] = float('nan')
+    else:
+        #only mask the sequence-masked sidechains
+        xyz_t[:,:,~seq_mask,3:,:] = float('nan') # don't know sidechain information for masked seq
 
     # Structure masking
     # str_mask = input_str_mask[0]
     # xyz_t[:,:,~str_mask,:,:] = float('nan') # NOTE: not using this because diffusion is effectively the mask 
-    
-    ### mask_msa ###
-    ################
-    # NOTE: this is for loss scoring
-    mask_msa[:,:,:,~loss_seq_mask[0]] = False # n dimension is accounted for - NRB
     
     return seq, msa_masked, msa_full, xyz_t, t1d, mask_msa, t_list[:2], true_crds 

@@ -158,8 +158,6 @@ def get_args(in_args=None):
             help="Number of hidden features for templates [32]")
     trunk_group.add_argument("-p_drop", type=float, default=0.15,
             help="Dropout ratio [0.15]")
-    trunk_group.add_argument('-d_t1d', type=int, default=21+1+1, 
-            help='dimension of t1d raw inputs')
 
     # Structure module properties
     str_group = parser.add_argument_group("structure module parameters")
@@ -252,9 +250,24 @@ def get_args(in_args=None):
     parser.add_argument('-wandb_prefix', type=str, required=True,
             help='Prefix for name of session on wandb. This MUST be specified - make it clear what general parameters were used')
     parser.add_argument('-metric', type=lambda m: getattr(metrics, m), action='append')
+    
+    # Preprocessing parameters
+    preprocess_group = parser.add_argument_group("preprocess parameters")
+    preprocess_group.add_argument("-sidechain_input", choices=("True","False"), required=True,
+        help='Do you want to provide diffused sidechains to the model. No default - make up your mind')
+    preprocess_group.add_argument("-sequence_decode", choices=("True","False"), required=True,
+        help='Do you want to decode sequence. Overrides aa_decode_steps. No default - make up your mind')
+    preprocess_group.add_argument('-d_t1d', type=int, default=21+1+1,
+            help='dimension of t1d raw inputs')
+    preprocess_group.add_argument('-d_t2d', type=int, default = 44,
+            help = 'dimension of t2d raw inputs')
 
     # parse arguments
     args = parser.parse_args(in_args)
+    
+    # parse boolean arguments
+    args.sidechain_input = args.sidechain_input == 'True'
+    args.sequence_decode = args.sequence_decode == 'True'
 
     # parse the task lists
     task_names = args.task_names.split(',')
@@ -318,5 +331,10 @@ def get_args(in_args=None):
     loss_param = {}
     for param in ['w_frame_dist', 'w_ax_ang', 'w_dist', 'w_str', 'w_all', 'w_aa', 'w_lddt', 'w_blen', 'w_bang', 'w_lj', 'w_hb', 'lj_lin', 'use_H', 'w_disp', 'w_motif_disp', 'backprop_non_displacement_on_given', 'use_tschedule', 'scheduled_losses', 'scheduled_types', 'scheduled_params']:
         loss_param[param] = getattr(args, param)
+    
+    # Collect preprocess_params
+    preprocess_param = {}
+    for param in ['sidechain_input','sequence_decode', 'd_t1d', 'd_t2d']:
+        preprocess_param[param] = getattr(args, param)
 
-    return args, trunk_param, loader_param, loss_param, diffusion_params
+    return args, trunk_param, loader_param, loss_param, diffusion_params, preprocess_param
