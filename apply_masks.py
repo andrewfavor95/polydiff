@@ -71,7 +71,7 @@ def mask_inputs(seq,
         
         xyz_t (torch,tensor): (T,L,27,3) template crds BEFORE they go into get_init_xyz 
         
-        t1d (torch.tensor, required): (I,L,22) this is the t1d before tacking on the chi angles 
+        t1d (torch.tensor, required): (T,L,22) this is the t1d before tacking on the chi angles 
         
         input_seq_mask (torch.tensor, required): Shape (L) rank 1 tensor where sequence is masked at False positions 
 
@@ -117,6 +117,11 @@ def mask_inputs(seq,
             # grab previous t. if t is 0 force a prediction of x_t=0
             tprev = t-1 if t > 0 else t
             t_list.append(tprev)
+        
+        # Ensures that all I dimensions are size 1 - NRB
+        seq        = seq[:1] 
+        msa_masked = msa_masked[:1]
+        msa_full   = msa_full[:1]
 
         assert(seq.shape[0] == 1), "Number of repeats of seq must be 1"
         L = seq.shape[-1]

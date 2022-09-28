@@ -1097,9 +1097,9 @@ class Trainer():
                 for i_cycle in range(N_cycle-1):
                     with ddp_model.no_sync():
                         with torch.cuda.amp.autocast(enabled=USE_AMP):
-                            msa_prev, pair_prev, xyz_prev, state_prev, alpha = ddp_model(msa_masked[:,i_cycle],
-                                                                      msa_full[:,i_cycle],
-                                                                      seq[:,i_cycle],
+                            msa_prev, pair_prev, xyz_prev, state_prev, alpha = ddp_model(msa_masked[:,0],
+                                                                      msa_full[:,0],
+                                                                      seq[:,0],
                                                                       xyz_prev, 
                                                                       idx_pdb,
                                                                       t1d=t1d,
@@ -1119,9 +1119,9 @@ class Trainer():
             if counter%self.ACCUM_STEP != 0:
                 with ddp_model.no_sync():
                     with torch.cuda.amp.autocast(enabled=USE_AMP):
-                        logit_s, logit_aa_s, logit_exp, pred_crds, alphas, pred_lddts = ddp_model(msa_masked[:,i_cycle],
-                                                                   msa_full[:,i_cycle],
-                                                                   seq[:,i_cycle], xyz_prev,
+                        logit_s, logit_aa_s, logit_exp, pred_crds, alphas, pred_lddts = ddp_model(msa_masked[:,0],
+                                                                   msa_full[:,0],
+                                                                   seq[:,0], xyz_prev,
                                                                    idx_pdb,
                                                                    t1d=t1d, t2d=t2d,
                                                                    xyz_t=xyz_t, alpha_t=alpha_t,
@@ -1158,9 +1158,9 @@ class Trainer():
                         scaler.scale(loss).backward()
             else:
                 with torch.cuda.amp.autocast(enabled=USE_AMP):
-                    logit_s, logit_aa_s, logit_exp, pred_crds, alphas, pred_lddts = ddp_model(msa_masked[:,i_cycle],
-                                                               msa_full[:,i_cycle],
-                                                               seq[:,i_cycle], xyz_prev,
+                    logit_s, logit_aa_s, logit_exp, pred_crds, alphas, pred_lddts = ddp_model(msa_masked[:,0],
+                                                               msa_full[:,0],
+                                                               seq[:,0], xyz_prev,
                                                                idx_pdb,
                                                                t1d=t1d, t2d=t2d,
                                                                xyz_t=xyz_t, alpha_t=alpha_t,
