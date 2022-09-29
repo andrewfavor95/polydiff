@@ -359,14 +359,15 @@ def mask_inputs(seq,
     # NOTE: Not adjusting t1d last dim (confidence) from sequence mask
 
     t1d = torch.stack([t1d,t1d], dim=0) # [n,I,L,22]
+    # NOTE DJ, add the sinusoidal timestep embedding logic here
     if not seq_diffuser is None:
         t1d[...,:20] = diffused_seq_bits[:,None,:,:]
         
         t1d[...,20]  = 0 # No unknown characters in seq diffusion
 
         #JW moved this here
-        t1d[:,:,:,21] *= input_t1d_seq_conf_mask[:,None,:]
-        t2d[:,:,:,22] *= input_t1d_seq_conf_mask[:,None,:]
+        t1d[:,:,:,21] = input_t1d_str_conf_mask[:,None,:]
+        t1d[:,:,:,22] = input_t1d_seq_conf_mask[:,None,:]
     else:
         t1d[0,:,~seq_mask[0],:20] = 0 
         t1d[1,:,~seq_mask[1],:20] = 0 
@@ -380,8 +381,7 @@ def mask_inputs(seq,
         t1d[0,:,decoded_non_motif[0],blosum_replacement[0]] = 1
         t1d[1,:,decoded_non_motif[1],blosum_replacement[1]] = 1
 
-        t1d[:,:,:,21] *= input_t1d_str_conf_mask[:,None,:]
-        
+        t1d[:,:,:,21] = input_t1d_str_conf_mask[:,None,:]
     # mask sidechains in the diffused region if preprocess_param['sidechain_input'] is False
     if preprocess_param['sidechain_input'] is False:
         xyz_t[:,:,~input_str_mask.squeeze(),3:,:] = float('nan')

@@ -186,13 +186,13 @@ class Trainer():
                        'aa_decode_steps':diffusion_param['aa_decode_steps'],
                        'crd_scale'      :diffusion_param['diff_crd_scale']}
         
-        ic(diff_kwargs)
         self.diffuser = Diffuser(**diff_kwargs)
         self.schedule = self.diffuser.eucl_diffuser.beta_schedule
         self.alphabar_schedule = self.diffuser.eucl_diffuser.alphabar_schedule
 
         # For Sequence Diffusion
         seq_diff_type = diffusion_param['seqdiff']
+        self.seq_diff_type = seq_diff_type
         seqdiff_kwargs = {'T'             : diffusion_param['diff_T'], # Use same T as for str diff
                           's_b0'           : diffusion_param['seqdiff_b0'],
                           's_bT'           : diffusion_param['seqdiff_bT'],
@@ -242,9 +242,6 @@ class Trainer():
         print('These are the loss names which have t_scheduling activated')
         print(self.loss_schedules.keys())
 
-
-
-
         self.hbtypes = hbtypes
         self.hbbaseatoms = hbbaseatoms
         self.hbpolys = hbpolys
@@ -263,12 +260,21 @@ class Trainer():
         print (model_param, loader_param, loss_param)
         
         # Assemble "Config" for inference
+        self.diff_kwargs = diff_kwargs
+        self.seqdiff_kwargs = seqdiff_kwargs
         self.assemble_config()
-
-    def assemble_config(self):
+    
+    def assemble_config(self) -> None:
         config_dict = {}
         config_dict['model'] = self.model_param
-        config_dict['diffuser'] = self.diffusion_param
+        
+        #rename diffusion params to match config
+        #infer_names=dict(zip([i for i in self.diffusion_param.keys()],[i[5:] if i[:5] == 'diff_' else i for i in self.diffusion_param.keys()]))
+        #config_dict['diffuser'] = {infer_names[k]: v for k, v in self.diffusion_param.items()}
+        config_dict['diffuser'] = self.diff_kwargs
+        config_dict['seq_diffuser'] = self.seqdiff_kwargs
+        # Add seq_diff_type
+        config_dict['seq_diffuser']['seq_diff_type'] = self.seq_diff_type
         config_dict['preprocess'] = self.preprocess_param
         self.config_dict = config_dict
 
@@ -1053,7 +1059,7 @@ class Trainer():
             # Some percentage of the time, provide the model with the model's prediction of x_0 | x_t+1
 
             # When little_t[0] == little_t[1] we are at t == T so we should not unroll
-            if not (little_t[0] == little_t[1]) and (torch.tensor(self.diffusion_param['prob_self_cond']) > torch.rand(1)):
+            if not (little_t[0] == little_t[1]) and (torch.tensor(self.preprocess_param['prob_self_cond']) > torch.rand(1)):
 
                 unroll_performed = True
 

@@ -49,7 +49,18 @@ class Sampler:
         
         # Assemble config from the checkpoint
         self.assemble_config_from_chk() 
-        ic(self._conf)
+        print('-'*100)
+        print(' ')
+        print("WARNING: The following options are not currently implemented at inference. Decide if this matters.")
+        print("Delete these in inference/model_runners once they are implements/once you decide they are not required for inference -- JW")
+        print(" -predict_previous")
+        print(" -prob_self_cond")
+        print(" -seqdiff_b0")
+        print(" -seqdiff_bT")
+        print(" -seqdiff_schedule_type")
+        print(" -seqdiff")
+        print(" ")
+        print("-"*100)
         # Initialize helper objects
         self.inf_conf = self._conf.inference
         self.contig_conf = self._conf.contigmap
@@ -88,7 +99,7 @@ class Sampler:
         
         # Get recycle schedule
         self.recycle_schedule = iu.recycle_schedule(self.T, self.inf_conf.recycle_schedule, self.inf_conf.num_recycles)
-    
+         
     @property
     def T(self):
         '''
@@ -127,15 +138,21 @@ class Sampler:
         
         # get overrides to re-apply after building the config from the checkpoint
         overrides = HydraConfig.get().overrides.task
-        ic(HydraConfig.get().overrides)
         if 'config_dict' in self.ckpt.keys():
             print("Assembling -model, -diffuser and -preprocess configs from checkpoint")
 
             # First, check all flags in the checkpoint config dict are in the config file
             assert all([i in self._conf.model.keys() for i in self.ckpt['config_dict']['model'].keys()]), 'There are keys in the checkpoint config_dict "model" params not in the config file'
             assert all([i in self._conf.diffuser.keys() for i in self.ckpt['config_dict']['diffuser'].keys()]), 'There are keys in the checkpoint config_dict "diffuser" params not in the config file'
+            assert all([i in self._conf.seqdiffuser.keys() for i in self.ckpt['config_dict']['seqdiffuser'].keys()]), 'There are keys in the checkpoint config_dict "seqdiffuser" params not in the config file'
             assert all([i in self._conf.preprocess.keys() for i in self.ckpt['config_dict']['preprocess'].keys()]), 'There are keys in the checkpoint config_dict "preprocess" params not in the config file'
-
+            for cat in ['model','diffuser','seqdiffuser','preprocess']:
+                for key in self._conf[cat]:
+                    try:
+                        self._conf[cat][key] = self.ckpt['config_dict'][cat][key]
+                    except:
+                        print(f'WARNING: config {cat}.{key} is not saved in the checkpoint. Check that conf.{cat}.{key} = {self._conf[cat][key]} is correct')
+            """
             for key in self._conf.model:
                 try:
                     self._conf.model[key] = self.ckpt['config_dict']['model'][key]
@@ -147,16 +164,22 @@ class Sampler:
                     self._conf.diffuser[key] = self.ckpt['config_dict']['diffuser'][key]
                 except:
                     print(f'WARNING: config diffuser.{key} is not saved in the checkpoint. Check that conf.diffuser.{key} = {self._conf.diffuser[key]} is correct')
+            
+            for key in self._conf.diffuser:
+                try:
+                    self._conf.diffuser[key] = self.ckpt['config_dict']['diffuser'][key]
+                except:
+                    print(f'WARNING: config diffuser.{key} is not saved in the checkpoint. Check that conf.diffuser.{key} = {self._conf.diffuser[key]} is correct')    
 
             for key in self._conf.preprocess:
                 try:
                     self._conf.preprocess[key] = self.ckpt['config_dict']['preprocess'][key]
                 except:
                     print(f'WARNING: config preprocess.{key} is not saved in the checkpoint. Check that conf.preprocess.{key} = {self._conf.preprocess[key]} is correct')
-            
+            """
             # add back in overrides again
             for override in overrides:
-                if override.split(".")[0] in ['model','diffuser','preprocess']:
+                if override.split(".")[0] in ['model','diffuser','seqdiffuser','preprocess']:
                     print(f'WARNING: You are changing {override.split("=")[0]} from the value this model was trained with. Are you sure you know what you are doing?') 
                 mytype = type(self._conf[override.split(".")[0]][override.split(".")[1].split("=")[0]])
                 self._conf[override.split(".")[0]][override.split(".")[1].split("=")[0]] = mytype(override.split("=")[1])

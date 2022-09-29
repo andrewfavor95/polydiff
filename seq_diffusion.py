@@ -455,7 +455,7 @@ class ContinuousSeqDiffuser():
         self.loss_type = loss_type
 
         # make noise/beta schedule
-        self.beta_schedule, _ = get_beta_schedule(T, s_b0, s_bT, schedule_type, **schedule_params)
+        self.beta_schedule, _, _ = get_beta_schedule(T, s_b0, s_bT, schedule_type, **schedule_params)
 
     def continuous_seq(self):
         '''

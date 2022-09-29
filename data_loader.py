@@ -1539,9 +1539,12 @@ class DistilledDataset(data.Dataset):
             if chosen_dataset != 'complex':
                 assert torch.sum(t1d[:,:,-1]) == 0 
         """
-        if seq_diffuser is None:
+        # Add extra feature to t1d if doing sequence diffusion (the sequence diffusion 'timestep')
+        # NOTE DJ change the assertion logic here for the sinuisoidal timestep embedding        
+        if self.seq_diffuser is None:
             assert self.preprocess_param['d_t1d'] == 22
         else:
+            t1d=torch.cat((t1d, torch.zeros_like(t1d[...,:1])), dim=-1)
             assert self.preprocess_param['d_t1d'] == 23
 
         # End by checking dimensions are the intended dimensions
@@ -1567,7 +1570,7 @@ class DistilledDataset(data.Dataset):
                                                                                     atom_mask=atom_mask,
                                                                                     diffuser=self.diffuser,
                                                                                     seq_diffuser=self.seq_diffuser,
-                                                                                    predict_previous=self.diffusion_param['predict_previous'],
+                                                                                    predict_previous=self.preprocess_param['predict_previous'],
                                                                                     true_crds_in=true_crds,
                                                                                     preprocess_param=self.preprocess_param,
                                                                                     diffusion_param=self.diffusion_param,
@@ -1583,7 +1586,7 @@ class DistilledDataset(data.Dataset):
             
             xyz_t (torch.tensor)      : [n,T,L,14,3] Noised true coordinates at t+1 and t
             
-            t1d (torch.tensor)        : [n,T,L,33] Template 1D features at t+1 and t
+            t1d (torch.tensor)        : [n,T,L,22/23] Template 1D features at t+1 and t
             
             mask_msa (torch.tensor)   : [n,N_short,L] The msa mask at t 
             

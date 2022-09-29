@@ -88,6 +88,11 @@ diffuser:
   min_sigma: 0.02
   max_sigma: 1.5
 
+seqdiffuser:
+  seqdiff_b0: null
+  seqdiff_bT: null
+  seqdiff_schedule_type: null
+  seqdiff: null
 
 denoiser:
   noise_scale_ca: 1
@@ -115,3 +120,5 @@ preprocess:
   sequence_decode: True
   d_t1d: 22
   d_t2d: 44
+  prob_self_cond: 0.0
+  predict_previous: False
