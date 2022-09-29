@@ -44,7 +44,7 @@ class MSA_emb(nn.Module):
         self.pos = PositionalEncoding2D(d_pair, minpos=minpos, maxpos=maxpos, p_drop=p_drop)
         
         self.input_seq_onehot=input_seq_onehot
-
+        
         self.reset_parameter()
     
     def reset_parameter(self):
@@ -89,7 +89,7 @@ class MSA_emb(nn.Module):
         pair = self.pos(pair, idx) # add relative position
 
         # state embedding
-        if True:
+        if self.input_seq_onehot:
             # Sergey's one hot trick
             state = self.drop(seq @ self.emb_state.weight)
         else:

@@ -1,0 +1,652 @@
+import torch
+import numpy as np
+from omegaconf import DictConfig, OmegaConf
+from icecream import ic
+from RoseTTAFoldModel import RoseTTAFoldModule
+from kinematics import get_init_xyz, xyz_to_t2d
+from diffusion import Diffuser
+from chemical import seq2chars, INIT_CRDS
+from util_module import ComputeAllAtomCoords
+from contigs import ContigMap
+from inference import utils as iu
+from potentials.manager import PotentialManager
+from inference import symmetry
+import logging
+import torch.nn.functional as nn
+import util
+import hydra
+from hydra.core.hydra_config import HydraConfig
+
+import sys
+sys.path.append('../') # to access RF structure prediction stuff 
+import data_loader 
+
+TOR_INDICES = util.torsion_indices
+TOR_CAN_FLIP = util.torsion_can_flip
+REF_ANGLES = util.reference_angles
+
+class Sampler:
+
+    def __init__(self, conf: DictConfig):
+        """Initialize sampler.
+        Args:
+            conf: Configuration.
+        """
+        self._log = logging.getLogger(__name__)
+        if torch.cuda.is_available():
+            self.device = torch.device('cuda')
+        else:
+            self.device = torch.device('cpu')
+        
+        # Assign config to Sampler
+        self._conf = conf
+
+        # Initialize inference only helper objects to Sampler
+        self.ckpt_path = conf.inference.ckpt_path
+
+        # Load checkpoint, so that we can assemble the config
+        self.load_checkpoint()
+        
+        # Assemble config from the checkpoint
+        self.assemble_config_from_chk() 
+        ic(self._conf)
+        # Initialize helper objects
+        self.inf_conf = self._conf.inference
+        self.contig_conf = self._conf.contigmap
+        self.denoiser_conf = self._conf.denoiser
+        self.ppi_conf = self._conf.ppi
+        self.potential_conf = self._conf.potentials
+        self.diffuser_conf = self._conf.diffuser
+        self.preprocess_conf = self._conf.preprocess
+        self.diffuser = Diffuser(**self._conf.diffuser)
+        
+        # Now actually load the model weights into RF
+        self.model = self.load_model()
+
+        if self.inf_conf.symmetry is not None:
+            self.symmetry = symmetry.SymGen(
+                self.inf_conf.symmetry,
+                self.inf_conf.model_only_neighbors,
+                self.inf_conf.recenter,
+                self.inf_conf.radius, 
+            )
+        else:
+            self.symmetry = None
+        self.allatom = ComputeAllAtomCoords().to(self.device)
+        self.target_feats = iu.process_target(self.inf_conf.input_pdb)
+        self.chain_idx = None
+
+        if self.diffuser_conf.partial_T:
+            assert self.diffuser_conf.partial_T <= self.diffuser_conf.T
+            self.t_step_input = int(self.diffuser_conf.partial_T)
+        else:
+            self.t_step_input = int(self.diffuser_conf.T)
+        if self.inf_conf.ppi_design and self.inf_conf.autogenerate_contigs:
+            self.ppi_conf.binderlen = ''.join(chain_idx[0] for chain_idx in self.target_feats['pdb_idx']).index('B')
+
+        self.potential_manager = PotentialManager(self.potential_conf, self.ppi_conf, self.diffuser_conf)
+        
+        # Get recycle schedule
+        self.recycle_schedule = iu.recycle_schedule(self.T, self.inf_conf.recycle_schedule, self.inf_conf.num_recycles)
+    
+    @property
+    def T(self):
+        '''
+            Return the maximum number of timesteps
+            that this design protocol will perform.
+
+            Output:
+                T (int): The maximum number of timesteps to perform
+        '''
+        return self.diffuser_conf.T
+    
+    def load_checkpoint(self) -> None:
+        """Loads RF checkpoint, from which config can be generated."""
+        self._log.info(f'Reading checkpoint from {self.ckpt_path}')
+        print('This is inf_conf.ckpt_path')
+        print(self.ckpt_path)
+        self.ckpt  = torch.load(
+            self.ckpt_path, map_location=self.device)
+
+    def assemble_config_from_chk(self) -> None:
+        """
+        Function for loading model config from checkpoint directly.
+    
+        Takes:
+            - config file
+    
+        Actions:
+            - Replaces all -model and -diffuser items
+            - Throws a warning if there are items in -model and -diffuser that aren't in the checkpoint
+        
+        This throws an error if there is a flag in the checkpoint 'config_dict' that isn't in the inference config.
+        This should ensure that whenever a feature is added in the training setup, it is accounted for in the inference script.
+
+        JW
+        """
+        
+        # get overrides to re-apply after building the config from the checkpoint
+        overrides = HydraConfig.get().overrides.task
+        ic(HydraConfig.get().overrides)
+        if 'config_dict' in self.ckpt.keys():
+            print("Assembling -model, -diffuser and -preprocess configs from checkpoint")
+
+            # First, check all flags in the checkpoint config dict are in the config file
+            assert all([i in self._conf.model.keys() for i in self.ckpt['config_dict']['model'].keys()]), 'There are keys in the checkpoint config_dict "model" params not in the config file'
+            assert all([i in self._conf.diffuser.keys() for i in self.ckpt['config_dict']['diffuser'].keys()]), 'There are keys in the checkpoint config_dict "diffuser" params not in the config file'
+            #assert all([i in self._conf.preprocess.keys() for i in self.ckpt['config_dict']['preprocess'].keys()]), 'There are keys in the checkpoint config_dict "preprocess" params not in the config file'
+
+            for key in self._conf.model:
+                try:
+                    self._conf.model[key] = self.ckpt['config_dict']['model'][key]
+                except:
+                    print(f'WARNING: config model.{key} is not saved in the checkpoint. Check that conf.model.{key} = {self._conf.model[key]} is correct')
+            
+            for key in self._conf.diffuser:
+                try:
+                    self._conf.diffuser[key] = self.ckpt['config_dict']['diffuser'][key]
+                except:
+                    print(f'WARNING: config diffuser.{key} is not saved in the checkpoint. Check that conf.diffuser.{key} = {self._conf.diffuser[key]} is correct')
+
+            for key in self._conf.preprocess:
+                try:
+                    self._conf.preprocess[key] = self.ckpt['config_dict']['preprocess'][key]
+                except:
+                    print(f'WARNING: config preprocess.{key} is not saved in the checkpoint. Check that conf.preprocess.{key} = {self._conf.preprocess[key]} is correct')
+            
+            # add back in overrides again
+            for override in overrides:
+                if override.split(".")[0] in ['model','diffuser','preprocess']:
+                    print(f'WARNING: You are changing {override.split("=")[0]} from the value this model was trained with. Are you sure you know what you are doing?') 
+                mytype = type(self._conf[override.split(".")[0]][override.split(".")[1].split("=")[0]])
+                self._conf[override.split(".")[0]][override.split(".")[1].split("=")[0]] = mytype(override.split("=")[1])
+        else:
+            print('WARNING: Model, Diffuser and Preprocess parameters are not saved in this checkpoint. Check carefully that the values specified in the config are correct for this checkpoint')     
+
+    def load_model(self):
+        """Create RosettaFold model from preloaded checkpoint."""
+        
+        # Now read input dimensions from checkpoint. TODO save these automatically during training
+        self.d_t1d=self._conf.preprocess.d_t1d
+        self.d_t2d=self._conf.preprocess.d_t2d
+
+        model = RoseTTAFoldModule(**self._conf.model, d_t1d=self.preprocess_conf.d_t1d, d_t2d=self.preprocess_conf.d_t2d).to(self.device)
+        model = model.eval()
+        self._log.info(f'Loading checkpoint.')
+        model.load_state_dict(self.ckpt['model_state_dict'], strict=True)
+        return model
+
+    def construct_contig(self, target_feats):
+        """Create contig from target features."""
+        if self.inf_conf.ppi_design and self.inf_conf.autogenerate_contigs:
+            seq_len = target_feats['seq'].shape[0]
+            self.contig_conf.contigs = [f'{self.ppi_conf.binderlen}',f'B{self.ppi_conf.binderlen+1}-{seq_len}']
+        self._log.info(f'Using contig: {self.contig_conf.contigs}')
+        return ContigMap(target_feats, **self.contig_conf)
+
+    def construct_denoiser(self, L):
+        """Make length-specific denoiser."""
+        # TODO: Denoiser seems redundant. Combine with diffuser.
+        denoise_kwargs = OmegaConf.to_container(self.diffuser_conf)
+        denoise_kwargs.update(OmegaConf.to_container(self.denoiser_conf))
+        denoise_kwargs.update({
+            'L': L,
+            'diffuser': self.diffuser,
+            'potential_manager': self.potential_manager
+        })
+        return iu.Denoise(**denoise_kwargs)
+
+    def sample_init(self):
+        """Initial features to start the sampling process.
+        
+        Modify signature and function body for different initialization
+        based on the config.
+        
+        Returns:
+            xt: Starting positions with a portion of them randomly sampled.
+            seq_t: Starting sequence with a portion of them set to unknown.
+        """
+
+        # moved this here as should be updated each iteration of diffusion
+        self.contig_map = self.construct_contig(self.target_feats)
+        self.denoiser = self.construct_denoiser(len(self.contig_map.ref))
+        self.mask_seq = torch.from_numpy(self.contig_map.inpaint_seq)[None,:]
+        self.mask_str = torch.from_numpy(self.contig_map.inpaint_str)[None,:]
+         
+        target_feats = self.target_feats
+        contig_map = self.contig_map
+
+        xyz_27 = target_feats['xyz_27']
+        mask_27 = target_feats['mask_27']
+        seq_orig = target_feats['seq']
+        L_mapped = len(self.contig_map.ref)
+        # adjust size of input xt according to residue map 
+        if self.diffuser_conf.partial_T:
+            # Partially diffusing from a known structure
+            xyz_mapped=xyz_27
+            atom_mask_mapped = mask_27
+        else:
+            # Fully diffusing from points initialised at the origin
+            # adjust size of input xt according to residue map
+            xyz_mapped = torch.full((1,1,L_mapped,27,3), np.nan)
+            xyz_mapped[:, :, contig_map.hal_idx0, ...] = xyz_27[contig_map.ref_idx0,...]
+            xyz_mapped = get_init_xyz(xyz_mapped).squeeze()
+            # adjust the size of the input atom map
+            atom_mask_mapped = torch.full((L_mapped, 27), False)
+            atom_mask_mapped[contig_map.hal_idx0] = mask_27[contig_map.ref_idx0]
+        # adjust size of input seq, slice sequence into it, mask resulting tensor
+        seq_t = torch.full((1,L_mapped), 21).squeeze()
+        seq_t[contig_map.hal_idx0] = seq_orig[contig_map.ref_idx0]
+        seq_t[~self.mask_seq.squeeze()] = 21
+
+        # Diffuse the contig-mapped coordinates 
+        diffusion_mask = self.mask_str
+        if self.diffuser_conf.partial_T:
+            assert self.diffuser_conf.partial_T <= self.diffuser_conf.T
+            self.t_step_input = int(self.diffuser_conf.partial_T)
+        else:
+            self.t_step_input = int(self.diffuser_conf.T)
+        out = self.diffuser.diffuse_pose(
+            xyz_mapped,
+            torch.clone(seq_t),  # TODO: Check if copy is needed.
+            atom_mask_mapped.squeeze(),
+            diffusion_mask=diffusion_mask.squeeze(), t_list=[self.t_step_input])
+        fa_stack, _, _ = out
+        
+        xT = fa_stack[-1].squeeze()[:,:14,:]
+        xt = torch.clone(xT)
+
+        if self.symmetry is not None:
+            xt, seq_t = self.symmetry.apply_symmetry(xt, seq_t)
+        self._log.info(f'Sequence init: {seq2chars(seq_t.numpy().tolist())}')
+        return xt, seq_t
+    
+    def _preprocess(self, seq, xyz_t, t, repack=False):
+        
+        """
+        Function to prepare inputs to diffusion model
+        
+            seq (L) integer sequence 
+
+            msa_masked (1,1,L,48)
+
+            msa_full (1,1, L,25)
+        
+            xyz_t (L,14,3) template crds (diffused) 
+
+            t1d (1,L,28) this is the t1d before tacking on the chi angles:
+                - seq + unknown/mask (21)
+                - global timestep (1-t/T if not motif else 1) (1)
+                - contacting residues: for ppi. Target residues in contact with biner (1)
+                - chi_angle timestep (1)
+                - ss (H, E, L, MASK) (4)
+            
+            t2d (1, L, L, 45)
+                - last plane is block adjacency
+    """
+        
+        L = seq.shape[-1]
+        T = self.T
+        ppi_design = self.inf_conf.ppi_design
+        binderlen = self.ppi_conf.binderlen
+        target_res = self.ppi_conf.hotspot_res
+        
+        ### msa_masked ###
+        ##################
+        msa_masked = torch.zeros((1,1,L,48))
+        msa_masked[:,:,:,:22] = nn.one_hot(seq, num_classes=22)[None, None]
+        msa_masked[:,:,:,22:44] = nn.one_hot(seq, num_classes=22)[None, None]
+
+        ### msa_full ###
+        ################
+        msa_full = torch.zeros((1,1,L,25))
+        msa_full[:,:,:,:22] = nn.one_hot(seq, num_classes=22)[None, None]
+
+        ### t1d ###
+        ########### 
+        # NOTE: Not adjusting t1d last dim (confidence) from sequence mask
+        t1d = torch.zeros((1,1,L,21))
+        t1d[:,:,:,:21] = nn.one_hot(torch.where(seq == 21, 20, seq), num_classes=21)[None,None]
+        
+        if self.inf_conf.autoregressive_confidence:
+            # Set confidence to 1 where diffusion mask is True, else 1-t/T
+            conf = torch.zeros_like(seq).float()
+            conf[self.mask_str.squeeze()] = 1.
+            conf[~self.mask_str.squeeze()] = 1. - t/self.T
+            conf = conf[None,None,...,None]
+        else:
+            #NOTE: DJ - I don't know what this does or why it's here
+            conf = torch.where(self.mask_str.squeeze(), 1., 0.)[None,None,...,None]
+        
+
+        t1d = torch.cat((t1d, conf), dim=-1)
+        t1d = t1d.float()
+
+        
+        ### xyz_t ###
+        #############
+        xyz_t[torch.where(seq == 21, True, False),3:,:] = float('nan')
+        #xyz_t[:,3:,:] = float('nan')
+
+        xyz_t=xyz_t[None, None]
+        xyz_t = torch.cat((xyz_t, torch.full((1,1,L,13,3), float('nan'))), dim=3)
+
+        ### t2d ###
+        ###########
+        t2d = xyz_to_t2d(xyz_t)
+        
+        ### idx ###
+        ###########
+        idx = torch.arange(L)[None]
+        if ppi_design:
+            idx[:,binderlen:] += 200
+
+        ### alpha_t ###
+        ###############
+        seq_tmp = t1d[...,:-1].argmax(dim=-1).reshape(-1,L)
+        alpha, _, alpha_mask, _ = util.get_torsions(xyz_t.reshape(-1,L,27,3), seq_tmp, TOR_INDICES, TOR_CAN_FLIP, REF_ANGLES)
+        alpha_mask = torch.logical_and(alpha_mask, ~torch.isnan(alpha[...,0]))
+        alpha[torch.isnan(alpha)] = 0.0
+        alpha = alpha.reshape(1,-1,L,10,2)
+        alpha_mask = alpha_mask.reshape(1,-1,L,10,1)
+        alpha_t = torch.cat((alpha, alpha_mask), dim=-1).reshape(1, -1, L, 30)
+
+        #put tensors on device
+        msa_masked = msa_masked.to(self.device)
+        msa_full = msa_full.to(self.device)
+        seq = seq.to(self.device)
+        xyz_t = xyz_t.to(self.device)
+        idx = idx.to(self.device)
+        t1d = t1d.to(self.device)
+        t2d = t2d.to(self.device)
+        alpha_t = alpha_t.to(self.device)
+        
+        ### added_features ###
+        ######################
+        
+        # t1d
+        if self.preprocess_conf.d_t1d == 23: # add hotspot residues
+            # NRB: Adding in dimension for target hotspot residues
+            target_residue_feat = torch.zeros_like(t1d[...,0])[...,None]
+            if ppi_design and not target_res is None:
+                absolute_idx = [resi+binderlen for resi in target_res]
+                target_residue_feat[...,absolute_idx,:] = 1
+            t1d = torch.cat((t1d, target_residue_feat), dim=-1)
+            t1d = t1d.float()
+            
+        return msa_masked, msa_full, seq[None], torch.squeeze(xyz_t, dim=0), idx, t1d, t2d, xyz_t, alpha_t
+        
+    def sample_step(self, *, t, seq_t, x_t, seq_init):
+        '''Generate the next pose that the model should be supplied at timestep t-1.
+
+        Args:
+            t (int): The timestep that has just been predicted
+            seq_t (torch.tensor): (L) The sequence at the beginning of this timestep
+            x_t (torch.tensor): (L,14,3) The residue positions at the beginning of this timestep
+            seq_t (torch.tensor): (L) The initialized sequence used in updating the sequence.
+            
+        Returns:
+            px0: (L,14,3) The model's prediction of x0.
+            x_t_1: (L,14,3) The updated positions of the next step.
+            seq_t_1: (L) The updated sequence of the next step.
+            tors_t_1: (L, ?) The updated torsion angles of the next  step.
+            plddt: (L, 1) Predicted lDDT of x0.
+        '''
+        out = self._preprocess(seq_t, x_t, t)
+        msa_masked, msa_full, seq_in, xt_in, idx_pdb, t1d, t2d, xyz_t, alpha_t = self._preprocess(
+            seq_t, x_t, t)
+
+        N,L = msa_masked.shape[:2]
+
+        if self.symmetry is not None:
+            idx_pdb, self.chain_idx = self.symmetry.res_idx_procesing(res_idx=idx_pdb)
+
+        # decide whether to recycle information between timesteps or not
+        if self.inf_conf.recycle_between and t < self.diffuser_conf.aa_decode_steps:
+            msa_prev = self.msa_prev
+            pair_prev = self.pair_prev
+            state_prev = self.state_prev
+        else:
+            msa_prev = None
+            pair_prev = None
+            state_prev = None
+        with torch.no_grad():
+            for _ in range(self.recycle_schedule[t-1]):
+                msa_prev, pair_prev, px0, state_prev, alpha, logits, plddt = self.model(msa_masked,
+                                    msa_full,
+                                    seq_in,
+                                    xt_in,
+                                    idx_pdb,
+                                    t1d=t1d,
+                                    t2d=t2d,
+                                    xyz_t=xyz_t,
+                                    alpha_t=alpha_t,
+                                    msa_prev = msa_prev,
+                                    pair_prev = pair_prev,
+                                    state_prev = state_prev,
+                                    return_infer=True)
+
+        self.msa_prev=msa_prev
+        self.pair_prev=pair_prev
+        self.state_prev=state_prev
+        # prediction of X0 
+        _, px0  = self.allatom(seq_in, px0, alpha)
+        px0    = px0.squeeze()[:,:14]
+
+        #sampled_seq = torch.argmax(logits.squeeze(), dim=-1)
+        seq_probs   = torch.nn.Softmax(dim=-1)(logits.squeeze()/self.inf_conf.softmax_T)
+        sampled_seq = torch.multinomial(seq_probs, 1).squeeze() # sample a single value from each position 
+        
+        # grab only the query sequence prediction - adjustment for Seq2StrSampler
+        sampled_seq = sampled_seq.reshape(N,L,-1)[0,0]
+
+        # Process outputs.
+        mask_seq = self.mask_seq
+        sampled_seq[mask_seq.squeeze()] = seq_init[
+            mask_seq.squeeze()].to(self.device)
+
+        pseq_0 = torch.nn.functional.one_hot(
+            sampled_seq, num_classes=22).to(self.device)
+        self._log.info(
+            f'Timestep {t}, current sequence: { seq2chars(torch.argmax(pseq_0, dim=-1).tolist())}')
+        
+        if t > 1:
+            x_t_1, seq_t_1, tors_t_1, px0 = self.denoiser.get_next_pose(
+                xt=x_t,
+                px0=px0,
+                t=t,
+                diffusion_mask=self.mask_str.squeeze(),
+                seq_t=seq_t,
+                pseq0=pseq_0,
+                align_motif=self.inf_conf.align_motif,
+            )
+        else:
+            x_t_1 = torch.clone(px0).to(x_t.device)
+            seq_t_1 = torch.clone(sampled_seq)
+            # Dummy tors_t_1 prediction. Not used in final output.
+            tors_t_1 = torch.ones((self.mask_str.shape[-1], 10, 2))
+            px0 = px0.to(x_t.device)
+        if self.symmetry is not None:
+            x_t_1, seq_t_1 = self.symmetry.apply_symmetry(x_t_1, seq_t_1)
+        return px0, x_t_1, seq_t_1, tors_t_1, plddt
+
+
+class Seq2StrSampler(Sampler):
+    """
+    Model runner for RF_diffusion fixed sequence structure prediction with or w/o MSA
+    """
+    
+    def __init__(self, conf: DictConfig):
+        super().__init__(conf)
+        raise NotImplementedError("Seq2Str Sampler not implemented yet")
+        self.seq2str_conf = conf.seq2str
+
+        # parse MSA from config
+        msa, ins   = iu.parse_a3m(self.seq2str_conf.input_a3m) # msa - (N,L) integers  
+        self.msa   = torch.from_numpy(msa).long()
+        self.query = torch.from_numpy(msa[0]).long()
+        self.ins   = torch.from_numpy(ins).long()
+
+        self.mask_seq = torch.zeros_like(self.query).bool()
+        self.mask_str = self.mask_seq.clone()
+
+        self.L = msa.shape[-1]
+
+        # if complex modelling, get chain lengths 
+        # Assumes chains are in same order as sequence 
+        if self.seq2str_conf.chain_lengths:
+            self.chain_lengths = [int(a) for a in self.seq2str_conf.chain_lengths.split(',')] 
+        else:
+            self.chain_lengths = [self.L]
+        assert sum(self.chain_lengths) == self.L, 'input chain lengths did not sum to query sequence length'
+        
+        if self.diffuser_conf.partial_T:
+            assert self.diffuser_conf.partial_T <= self.diffuser_conf.T
+            self.t_step_input = int(self.diffuser_conf.partial_T)
+        else:
+            self.t_step_input = int(self.diffuser_conf.T)
+    
+    def sample_init(self): 
+        """
+        Create an initialized set of residues to go through the model
+        """
+        # initial structure is completely unknown
+        # Diffuser will take care of filling in the atoms when protein is diffused for the first time 
+        x_nan = torch.full((self.L, 27,3), np.nan)
+        x_nan = get_init_xyz(x_nan[None,None]).squeeze()
+        atom_mask = torch.full((self.L,27), False)
+        
+        seq_T = self.query # query sequence
+        self.diffusion_mask = torch.full((self.L,),False)
+
+        # Setup denoiser
+        self.denoiser = self.construct_denoiser(self.L)
+
+        fa_stack,_,_,_ = self.diffuser.diffuse_pose(
+            x_nan,
+            torch.clone(seq_T),  # TODO: Check if copy is needed.
+            atom_mask.squeeze(),
+            diffusion_mask=self.diffusion_mask, t_list=[self.diffuser_conf.T])
+        
+        # the most diffused set of atoms is the last one 
+        xT = torch.clone(fa_stack[-1].squeeze()[:,:14,:]) 
+        
+        # from the outside it's returned as seq_T
+        return xT, seq_T
+
+
+    def _preprocess(self, seq_t, xyz_t, t):
+
+        """
+        Function to prepare inputs to diffusion model - but now with MSA + MSA statistics etc 
+        
+            seq (L) integer sequence 
+        """
+        msa = self.msa 
+        ins = self.ins
+        N,L = msa.shape        
+
+        #### Build template features #### 
+
+        # rename just so we dont get confused - template is indeed at timestep t 
+        xyz_template = xyz_t
+
+        #### Build MSA features #### 
+        params = {
+        "MINTPLT" : 0,
+        "MAXTPLT" : 5,
+        "MINSEQ"  : 1,
+        "MAXSEQ"  : 1024,
+        "MAXLAT"  : 128,
+        "CROP"    : 256,
+        "BLOCKCUT": 5,
+        "ROWS"    : 1,
+        "SEQID"   : 95.0,
+        "MAXCYCLE": 1,
+        }
+        seq, msa_seed_orig, msa_seed, msa_extra, mask_msa = data_loader.MSAFeaturize(msa, ins, params)
+        msa_masked = msa_seed
+        msa_full   = msa_extra 
+
+        
+        ### t1d ### 
+        ########### 
+        # seq 21, conf 1,
+        t1d = torch.zeros((1,self.L, 22+9))
+
+        # seq query sequence one hot encoding
+        t1d[:,:,self.query] = 1  
+
+        # First template (the diffused) has zero confidence 
+        t1d[:1,:,21] = 0
+        
+        # SS 
+        # all SS features are set to masked (26th element, 1-hot)
+        t1d[:1,:,25] = 1 
+
+        # Add global timestep. 
+        t1d[:1,:,26] = 1-t/self.diffuser.T
+
+        # Add chi angle timestep, same as global timestep
+        t1d[:1,:,27] = 1-t/self.diffuser.T 
+
+        # Add contacting residues.
+        t1d[:1,:,28] = torch.zeros(1,L)
+
+        # Add diffused or not (1 = not, 0 = diffused)
+        t1d[:1,:,29] = torch.zeros(1,L)
+
+        # Feature indicating whether this is a real homologous template 
+        # or just the diffused input 
+        # (1=template, 0=diffused)
+        t1d[:1,:,30] = torch.zeros(1,L)
+
+        t1d = t1d[None]
+
+
+        ### t2d ###
+        ###########
+        t2d = xyz_to_t2d(xyz_template[None,None])   # (B,T,L,L,3)
+        t2d = torch.cat((t2d, torch.zeros((1,1,L,L,3))), dim=-1) #three extra dimensions: adjacent, not adjacent, masked
+        t2d[...,-1] = 1 # set whole block adjacency to mask token
+        # t2d[...,0] = 1  # for the buggy model, set this feature to zero instead of 2 
+
+
+        ### idx ###
+        ###########
+        idx = torch.arange(L)[None]
+        # index jumps for chains 
+        cur_sum=0
+        for Lchain in self.chain_lengths:
+            idx[:,cur_sum+Lchain:] += 200
+            cur_sum += Lchain
+
+        ### alpha_t ###
+        ###############
+        # get the torsions 
+        xyz_template =xyz_template[None, None]
+        xyz_template = torch.cat((xyz_template, torch.full((1,1,L,13,3), float('nan'))), dim=3)
+        
+
+        alpha, _, alpha_mask, _ = util.get_torsions(xyz_template.reshape(-1,L,27,3), self.query[None], TOR_INDICES, TOR_CAN_FLIP, REF_ANGLES)
+        alpha_mask = torch.logical_and(alpha_mask, ~torch.isnan(alpha[...,0]))
+        alpha[torch.isnan(alpha)] = 0.0
+        alpha = alpha.reshape(1,-1,L,10,2)
+        alpha_mask = alpha_mask.reshape(1,-1,L,10,1)
+        alpha_t = torch.cat((alpha, alpha_mask), dim=-1).reshape(1, -1, L, 30)
+        
+        # device placement 
+        msa_masked = msa_masked.to(self.device)
+        msa_full = msa_full.to(self.device)
+        xyz_template = xyz_template.to(self.device)
+        idx = idx.to(self.device)
+        t1d = t1d.to(self.device)
+        t2d = t2d.to(self.device)
+        alpha_t = alpha_t.to(self.device)
+        
+        return msa_masked, msa_full, self.query[None].clone().to(self.device), torch.squeeze(xyz_template, dim=0), idx, t1d, t2d, xyz_template, alpha_t
+
+
+
+        
+

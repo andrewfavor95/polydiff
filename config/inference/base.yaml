@@ -1,0 +1,117 @@
+# Base inference Configuration.
+
+inference:
+  input_pdb: test_data/1qys.pdb
+  num_designs: 10
+  design_startnum: 0
+  #ckpt_path: /mnt/home/jwatson3/for/nate/diffusion_models/BFF_wcomplexes_3epochs_072522.pt
+  #ckpt_path: /mnt/home/davidcj/projects/BFF/rf_diffusion/checkpoints/train_session2022-08-12_1660310517.2802267/BFF_0.pt
+  #ckpt_path: /mnt/net/databases/diffusion/models/Diff_t1d_31_t2d_47_082222_epoch19.pt
+  #ckpt_path: /net/databases/diffusion/models/Diff_t1d_32_t2d_47_disp_fixed_finetuned_082622_epoch10.pt
+  ckpt_path: /net/databases/diffusion/models/Diff_rollback_epoch8.pt
+  ppi_design: False
+  autogenerate_contigs: False
+  symmetry: null
+  recenter: True
+  radius: 10.0
+  model_only_neighbors: False
+  num_recycles: 1
+  recycle_schedule: null
+  softmax_T: 1e-5
+  output_prefix: samples/design
+  scaffold_guided: False
+  model_runner: default
+  cautious: False
+  recycle_between: False
+  align_motif: True
+  autoregressive_confidence: True
+  no_confidence: True
+
+contigmap:
+  contigs: ['20', 'A3-23', '30']
+  inpaint_str: null
+  inpaint_seq: null
+  length: null
+
+model:
+  n_extra_block: 4
+  n_main_block: 32
+  n_ref_block: 4
+  d_msa: 256
+  d_msa_full: 64
+  d_pair: 128
+  d_templ: 64
+  n_head_msa: 8
+  n_head_pair: 4
+  n_head_templ: 4
+  d_hidden: 32
+  d_hidden_templ: 32
+  p_drop: 0.15
+  SE3_param_full:
+    num_layers: 1
+    num_channels: 32
+    num_degrees: 2
+    n_heads: 4
+    div: 4
+    l0_in_features: 8
+    l0_out_features: 8
+    l1_in_features: 3
+    l1_out_features: 2
+    num_edge_features: 32
+  SE3_param_topk:
+    num_layers: 1
+    num_channels: 32
+    num_degrees: 2
+    n_heads: 4
+    div: 4
+    l0_in_features: 64
+    l0_out_features: 64
+    l1_in_features: 3
+    l1_out_features: 2
+    num_edge_features: 64
+
+
+diffuser:
+  T: 200
+  b_0: 1e-2
+  b_T: 7e-2
+  schedule_type: linear
+  so3_type: igso3
+  aa_decode_steps: 40
+  chi_type: wrapped_normal
+  crd_scale: 0.0667
+  schedule_kwargs: {}
+  partial_T: null    
+  so3_schedule_type: linear
+  min_b: 1.5
+  max_b: 2.5
+  min_sigma: 0.02
+  max_sigma: 1.5
+
+
+denoiser:
+  noise_scale_ca: 1
+  noise_scale_frame: 0.5 # used to be noise_level
+  noise_scale_torsion: 1
+
+ppi:
+  hotspot_res: null
+  binderlen: null
+
+potentials:
+  guiding_potentials: null 
+  guide_scale: 10
+  guide_decay: constant
+
+contig_settings:
+  ref_idx: null
+  hal_idx: null
+  idx_rf: null
+  inpaint_seq_tensor: null
+  inpaint_str_tensor: null
+
+preprocess:
+  sidechain_input: False
+  sequence_decode: True
+  d_t1d: 22
+  d_t2d: 44

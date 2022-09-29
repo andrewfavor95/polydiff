@@ -1,9 +1,14 @@
 # script for diffusion protocols 
 import torch 
+import pickle
 import numpy as np
 import os
+import logging
+from typing import List
+
 from scipy.spatial.transform import Rotation as scipy_R
 from scipy.spatial.transform import Slerp 
+import rotation_conversions
 
 from util import rigid_from_3_points, get_torsions
 
@@ -20,7 +25,6 @@ import igso3
 import time 
 
 from icecream import ic  
-
 
 torch.set_printoptions(sci_mode=False)
 
@@ -40,6 +44,49 @@ def cosine_interp(T, eta_max, eta_min):
     out = eta_max + 0.5*(eta_min-eta_max)*(1+torch.cos((t/T)*np.pi))
     return out 
 
+def get_chi_betaT(max_timestep=100, beta_0=0.01, abar_T=1e-3, method='cosine'):
+    """
+    Function to precalculate beta_T for chi angles (decoded at different time steps, so T in beta_T varies).
+    Calculated empirically
+    """
+
+    name = f'./cached_schedules/T{max_timestep}_beta_0{beta_0}_abar_T{abar_T}_method_{method}.pkl'
+
+    if not os.path.exists(name):
+        print('Calculating chi_beta_T dictionary...')
+
+        if method not in ['cosine', 'linear']:
+            raise NotImplementedError("Only cosine and linear interpolations are implemented for chi angle beta schedule")
+        beta_Ts = {1:1.}
+        for timestep in range(2,101):
+            best=999.99
+            for i in torch.linspace(beta_0,0.999,5000): #sampling bT
+                if method == 'cosine':
+                    interp = cosine_interp(timestep, i, beta_0)
+                elif method == 'linear':
+                    interp = torch.linspace(beta_0, i, timestep)
+                temp = torch.cumprod(1-interp, dim=0)
+                if torch.abs(temp[-1] - abar_T) < best:
+                    best = temp[-1] - abar_T
+                    idx = i
+            beta_Ts[timestep] = idx.item()
+
+        # save cached schedule
+        if not os.path.isdir('./cached_schedules/'):
+            os.makedirs('./cached_schedules/')
+        with open(name, 'wb') as fp:
+            pickle.dump(beta_Ts, fp)
+
+        print('Done calculating chi_beta_T dictionaries. They are now cached.')
+
+    else:
+        print('Using cached chi_beta_T dictionary.')
+        with open(name, 'rb') as fp:
+            beta_Ts = pickle.load(fp)
+
+
+    print('Done calculating chi_beta_T, chi_alphas_T, and chi_abars_T dictionaries.')
+    return beta_Ts
 
 def get_beta_schedule(T, b0, bT, schedule_type, schedule_params={}, inference=False):
     """
@@ -64,9 +111,10 @@ def get_beta_schedule(T, b0, bT, schedule_type, schedule_params={}, inference=Fa
     alpha_schedule = 1-schedule
     alphabar_t_schedule  = torch.cumprod(alpha_schedule, dim=0)
     
-    print(f"With this beta schedule ({schedule_type} schedule, beta_0 = {b0}, beta_T = {bT}), alpha_bar_T = {alphabar_t_schedule[-1]}")
+    if inference:
+        print(f"With this beta schedule ({schedule_type} schedule, beta_0 = {b0}, beta_T = {bT}), alpha_bar_T = {alphabar_t_schedule[-1]}")
 
-    return schedule, alphabar_t_schedule 
+    return schedule, alpha_schedule, alphabar_t_schedule 
 
 
 class EuclideanDiffuser():
@@ -83,7 +131,7 @@ class EuclideanDiffuser():
         self.T = T 
         
         # make noise/beta schedule 
-        self.beta_schedule, self.alphabar_schedule  = get_beta_schedule(T, b_0, b_T, schedule_type, **schedule_kwargs)
+        self.beta_schedule, _, self.alphabar_schedule  = get_beta_schedule(T, b_0, b_T, schedule_type, **schedule_kwargs)
         self.alpha_schedule = 1-self.beta_schedule 
 
     
@@ -697,21 +745,21 @@ class Diffuser():
 
     def __init__(self,
                  T,
-                 b_0=1e-2,
-                 b_T=7e-2,
-                 min_sigma=0.02,
-                 max_sigma=1.5,
-                 min_b=1.5,
-                 max_b=2.5,
-                 schedule_type='linear',
-                 so3_schedule_type='linear',
+                 b_0,
+                 b_T,
+                 min_sigma,
+                 max_sigma,
+                 min_b,
+                 max_b,
+                 schedule_type,
+                 so3_schedule_type,
+                 so3_type,
+                 chi_type,
+                 crd_scale,
+                 aa_decode_steps,
                  schedule_kwargs={},
-                 so3_type='igso3',
-                 chi_type='interp',
                  chi_kwargs={},
-                 var_scale=1,
-                 crd_scale=1,
-                 aa_decode_steps=100,
+                 var_scale=1.0,
                  partial_T=None):
         """
         

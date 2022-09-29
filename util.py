@@ -8,6 +8,17 @@ import scipy.sparse
 from chemical import *
 from scoring import *
 
+def generate_Cbeta(N,Ca,C):
+    # recreate Cb given N,Ca,C
+    b = Ca - N 
+    c = C - Ca
+    a = torch.cross(b, c, dim=-1)
+    #Cb = -0.58273431*a + 0.56802827*b - 0.54067466*c + Ca
+    # fd: below matches sidechain generator (=Rosetta params)
+    Cb = -0.57910144*a + 0.5689693*b - 0.5441217*c + Ca
+
+    return Cb
+
 def th_ang_v(ab,bc,eps:float=1e-8):
     def th_norm(x,eps:float=1e-8):
         return x.square().sum(-1,keepdim=True).add(eps).sqrt()
@@ -217,7 +228,7 @@ def cross_product_matrix(u):
     return matrix
 
 # writepdb
-def writepdb(filename, atoms, seq, idx_pdb=None, bfacts=None):
+def writepdb(filename, atoms, seq, idx_pdb=None, bfacts=None, chain_idx=None):
     f = open(filename,"w")
     ctr = 1
     scpu = seq.cpu().squeeze()
@@ -229,20 +240,24 @@ def writepdb(filename, atoms, seq, idx_pdb=None, bfacts=None):
 
     Bfacts = torch.clamp( bfacts.cpu(), 0, 1)
     for i,s in enumerate(scpu):
+        if chain_idx is None:
+            chain = 'A'
+        else:
+            chain = chain_idx[i]
         if (len(atomscpu.shape)==2):
             f.write ("%-6s%5s %4s %3s %s%4d    %8.3f%8.3f%8.3f%6.2f%6.2f\n"%(
-                    "ATOM", ctr, " CA ", num2aa[s], 
-                    "A", idx_pdb[i], atomscpu[i,0], atomscpu[i,1], atomscpu[i,2],
+                    "ATOM", ctr, " CA ", num2aa[s],
+                    chain, idx_pdb[i], atomscpu[i,0], atomscpu[i,1], atomscpu[i,2],
                     1.0, Bfacts[i] ) )
             ctr += 1
         elif atomscpu.shape[1]==3:
             for j,atm_j in enumerate([" N  "," CA "," C  "]):
                 f.write ("%-6s%5s %4s %3s %s%4d    %8.3f%8.3f%8.3f%6.2f%6.2f\n"%(
-                        "ATOM", ctr, atm_j, num2aa[s], 
-                        "A", idx_pdb[i], atomscpu[i,j,0], atomscpu[i,j,1], atomscpu[i,j,2],
+                        "ATOM", ctr, atm_j, num2aa[s],
+                        chain, idx_pdb[i], atomscpu[i,j,0], atomscpu[i,j,1], atomscpu[i,j,2],
                         1.0, Bfacts[i] ) )
                 ctr += 1
-        else: 
+        else:
             natoms = atomscpu.shape[1]
             if (natoms!=14 and natoms!=27):
                 print ('bad size!', atoms.shape)
@@ -258,8 +273,8 @@ def writepdb(filename, atoms, seq, idx_pdb=None, bfacts=None):
             for j,atm_j in enumerate(atms):
                 if (j<natoms and atm_j is not None): # and not torch.isnan(atomscpu[i,j,:]).any()):
                     f.write ("%-6s%5s %4s %3s %s%4d    %8.3f%8.3f%8.3f%6.2f%6.2f\n"%(
-                        "ATOM", ctr, atm_j, num2aa[s], 
-                        "A", idx_pdb[i], atomscpu[i,j,0], atomscpu[i,j,1], atomscpu[i,j,2],
+                        "ATOM", ctr, atm_j, num2aa[s],
+                        chain, idx_pdb[i], atomscpu[i,j,0], atomscpu[i,j,1], atomscpu[i,j,2],
                         1.0, Bfacts[i] ) )
                     ctr += 1
 

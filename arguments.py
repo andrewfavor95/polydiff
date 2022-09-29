@@ -101,11 +101,21 @@ def get_args(in_args=None):
             help='Type of schedule for (Euclidean) diffusion.')
     diff_group.add_argument('-diff_so3_type', type=str, default='igso3',
             help='Which type of SO3 diffusion to use. Default igso3')
+    diff_group.add_argument('-diff_so3_schedule_type',type=str, default='linear',
+            help='Which schedule type do you want for the igso3')
+    diff_group.add_argument('-diff_min_b',type=float, default=1.5,
+            help='min_b paramater for igso3 diffusion')
+    diff_group.add_argument('-diff_max_b',type=float, default=2.5,
+            help='max_b paramater for igso3 diffusion')
+    diff_group.add_argument('-diff_min_sigma',type=float, default=0.02,
+            help='min_sigma paramater for igso3 diffusion')
+    diff_group.add_argument('-diff_max_sigma',type=float, default=1.5,
+            help='max_sigma paramater for igso3 diffusion')
     diff_group.add_argument('-diff_chi_type', type=str, default='interp',
             help='Which type of chi angle diffusion to use. Default linear interpolation.')
-    diff_group.add_argument('-diff_T', type=int, default=100, 
+    diff_group.add_argument('-diff_T', type=int, default=200, 
             help='Total number of diffusion steps for forward diffusion.')
-    diff_group.add_argument('-aa_decode_steps', type=int, default=100, 
+    diff_group.add_argument('-aa_decode_steps', type=int, default=40, 
             help='Total number of steps to decode amino acid identities and chi angles over.')
     diff_group.add_argument('-predict_previous', action='store_true',
             help='If True, model predictions x_t-1 instead of x0')
@@ -291,7 +301,12 @@ def get_args(in_args=None):
     'diff_bT',
     'diff_schedule_type',
     'diff_so3_type',
+    'diff_so3_schedule_type',
     'diff_chi_type',
+    'diff_min_b',
+    'diff_max_b',
+    'diff_min_sigma',
+    'diff_max_sigma',
     'diff_T',
     'aa_decode_steps',
     'predict_previous',

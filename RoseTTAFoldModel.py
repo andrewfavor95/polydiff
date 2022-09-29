@@ -14,13 +14,12 @@ class RoseTTAFoldModule(nn.Module):
                  d_hidden=32, d_hidden_templ=64,
                  p_drop=0.15,
                  d_t1d=21+1+1,
+                 d_t2d=44,
                  SE3_param_full={'l0_in_features':32, 'l0_out_features':16, 'num_edge_features':32},
                  SE3_param_topk={'l0_in_features':32, 'l0_out_features':16, 'num_edge_features':32},
                  input_seq_onehot=False # For continuous vs. discrete sequence - NRB
                  ):
         super(RoseTTAFoldModule, self).__init__()
-        print('t_1d input to RF')
-        ic(d_t1d)
         #
         # Input Embeddings
         d_state = SE3_param_topk['l0_out_features']
@@ -30,7 +29,7 @@ class RoseTTAFoldModule(nn.Module):
                 p_drop=p_drop, input_seq_onehot=input_seq_onehot) # Allowed to take onehotseq - NRB
         self.templ_emb = Templ_emb(d_pair=d_pair, d_templ=d_templ, d_state=d_state,
                                    n_head=n_head_templ,
-                                   d_hidden=d_hidden_templ, p_drop=0.25, d_t1d=d_t1d)
+                                   d_hidden=d_hidden_templ, p_drop=0.25, d_t1d=d_t1d, d_t2d=d_t2d)
         # Update inputs with outputs from previous round
         self.recycle = Recycling(d_msa=d_msa, d_pair=d_pair, d_state=d_state)
         #
@@ -86,18 +85,26 @@ class RoseTTAFoldModule(nn.Module):
         # predict masked amino acids
         logits_aa = self.aa_pred(msa)
         
+        # Predict LDDT
+        lddt = self.lddt_pred(state)
+
         if return_infer:
             # get last structure
             xyz = einsum('bnij,bnaj->bnai', R[-1], xyz[:,:,:3]-xyz[:,:,1].unsqueeze(-2)) + T[-1].unsqueeze(-2)
-            return msa[:,0], pair, xyz, state, alpha_s[-1], logits_aa.permute(0,2,1)
+            
+            # get scalar plddt
+            nbin = lddt.shape[1]
+            bin_step = 1.0 / nbin
+            lddt_bins = torch.linspace(bin_step, 1.0, nbin, dtype=lddt.dtype, device=lddt.device)
+            pred_lddt = nn.Softmax(dim=1)(lddt)
+            pred_lddt = torch.sum(lddt_bins[None,:,None]*pred_lddt, dim=1)
+
+            return msa[:,0], pair, xyz, state, alpha_s[-1], logits_aa.permute(0,2,1), pred_lddt
 
         #
         # predict distogram & orientograms
         logits = self.c6d_pred(pair)
         
-        # Predict LDDT
-        lddt = self.lddt_pred(state)
-
         # predict experimentally resolved or not
         logits_exp = self.exp_pred(msa[:,0], state)
         
