@@ -181,6 +181,7 @@ def get_args(in_args=None):
     trunk_group.add_argument('-freeze_track_motif', default=False, action='store_true',
             help='If True, manually freezes updates to the motif structure in track module')
 
+
     # Structure module properties
     str_group = parser.add_argument_group("structure module parameters")
     str_group.add_argument('-num_layers_full', type=int, default=1,
