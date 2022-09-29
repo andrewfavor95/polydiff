@@ -1530,12 +1530,20 @@ class DistilledDataset(data.Dataset):
         # Original d_t1d == 22 (20aa + missing + mask + template confidence)
         # But, extra features can be added
         # TODO I think this could be changed at a later date, to specify added features and stack them in a different order
+        """
+        # Masking this out, so now, if you're doing sequence diffusion, d_t1d == 23, and these last two features pertain to sequence diffusion, and if not, d_t1d=22
+        # This obviously needs to be made more flexible down the line
         if self.preprocess_param['d_t1d'] == 23: 
             #Concatenate on the contacts tensor onto t1d
             t1d = torch.cat((t1d, contacts[None,...,None]), dim=-1)
             if chosen_dataset != 'complex':
                 assert torch.sum(t1d[:,:,-1]) == 0 
-       
+        """
+        if seq_diffuser is None:
+            assert self.preprocess_param['d_t1d'] == 22
+        else:
+            assert self.preprocess_param['d_t1d'] == 23
+
         # End by checking dimensions are the intended dimensions
         assert t1d.shape[-1] == self.preprocess_param['d_t1d']
 
