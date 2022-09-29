@@ -101,7 +101,7 @@ class Sampler:
         
         # Get recycle schedule
         self.recycle_schedule = iu.recycle_schedule(self.T, self.inf_conf.recycle_schedule, self.inf_conf.num_recycles)
-         
+    
     @property
     def T(self):
         '''
@@ -155,8 +155,8 @@ class Sampler:
             for override in overrides:
                 if override.split(".")[0] in ['model','diffuser','seqdiffuser','preprocess']:
                     print(f'WARNING: You are changing {override.split("=")[0]} from the value this model was trained with. Are you sure you know what you are doing?') 
-                mytype = type(self._conf[override.split(".")[0]][override.split(".")[1].split("=")[0]])
-                self._conf[override.split(".")[0]][override.split(".")[1].split("=")[0]] = mytype(override.split("=")[1])
+                    mytype = type(self._conf[override.split(".")[0]][override.split(".")[1].split("=")[0]])
+                    self._conf[override.split(".")[0]][override.split(".")[1].split("=")[0]] = mytype(override.split("=")[1])
         else:
             print('WARNING: Model, Diffuser and Preprocess parameters are not saved in this checkpoint. Check carefully that the values specified in the config are correct for this checkpoint')     
 
