@@ -134,7 +134,7 @@ class Sampler:
             # First, check all flags in the checkpoint config dict are in the config file
             assert all([i in self._conf.model.keys() for i in self.ckpt['config_dict']['model'].keys()]), 'There are keys in the checkpoint config_dict "model" params not in the config file'
             assert all([i in self._conf.diffuser.keys() for i in self.ckpt['config_dict']['diffuser'].keys()]), 'There are keys in the checkpoint config_dict "diffuser" params not in the config file'
-            #assert all([i in self._conf.preprocess.keys() for i in self.ckpt['config_dict']['preprocess'].keys()]), 'There are keys in the checkpoint config_dict "preprocess" params not in the config file'
+            assert all([i in self._conf.preprocess.keys() for i in self.ckpt['config_dict']['preprocess'].keys()]), 'There are keys in the checkpoint config_dict "preprocess" params not in the config file'
 
             for key in self._conf.model:
                 try:
