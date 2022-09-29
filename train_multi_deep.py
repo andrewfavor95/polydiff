@@ -951,7 +951,29 @@ class Trainer():
         counter = 0
         
         print('About to enter train loader loop')
-        for seq, msa, msa_masked, msa_full, mask_msa, true_crds, mask_crds, idx_pdb, xyz_t, t1d, t2d, alpha_t, xyz_prev, same_chain, unclamp, negative, masks_1d, chosen_task, chosen_dataset, little_t in train_loader:
+        for loader_out in train_loader:
+
+            seq,\
+            msa,\
+            msa_masked,\
+            msa_full,\
+            mask_msa,\
+            true_crds,\
+            mask_crds,\
+            idx_pdb,\
+            xyz_t,\
+            t1d,\
+            t2d,\
+            alpha_t,\
+            xyz_prev,\
+            same_chain,\
+            unclamp,\
+            negative,\
+            masks_1d,\
+            chosen_task,\
+            chosen_dataset,\
+            little_t = loader_out
+
             '''
                 Current Dimensions:
                 
@@ -985,6 +1007,7 @@ class Trainer():
 
                 little_t (torch.tensor)   : [n] The timesteps t+1 and t
             '''
+            assert all([i > 0 for i in little_t])
 
             # Checking whether this example was of poor quality and the dataloader just returned None - NRB
             if seq.shape[1] == 0:
@@ -1072,7 +1095,6 @@ class Trainer():
                     with ddp_model.no_sync():
                         with torch.cuda.amp.autocast(enabled=USE_AMP):
 
-                            i_cycle = 0
 
                             # Select timestep t = t+1
                             use_msa_masked = msa_masked[:,0]
@@ -1085,11 +1107,12 @@ class Trainer():
                             use_alpha_t    = alpha_t[:,0]
 
                             msa_prev, pair_prev, xyz_prev, state_prev, alpha = ddp_model(
-                                                                       use_msa_masked[:,i_cycle],
-                                                                       use_msa_full[:,i_cycle],
-                                                                       use_seq[:,i_cycle],
+                                                                       use_msa_masked[:,0],
+                                                                       use_msa_full[:,0],
+                                                                       use_seq[:,0],
                                                                        xyz_prev,
                                                                        idx_pdb,
+                                                                       t=little_t[0],
                                                                        t1d=use_t1d,
                                                                        t2d=use_t2d,
                                                                        xyz_t=use_xyz_t,
@@ -1097,7 +1120,8 @@ class Trainer():
                                                                        msa_prev=msa_prev,
                                                                        pair_prev=pair_prev,
                                                                        state_prev=None,
-                                                                       return_raw=True
+                                                                       return_raw=True,
+                                                                       motif_mask=diffusion_mask
                                                                        )
 
             # From here on out we will operate with t = t
@@ -1122,11 +1146,13 @@ class Trainer():
                 for i_cycle in range(N_cycle-1):
                     with ddp_model.no_sync():
                         with torch.cuda.amp.autocast(enabled=USE_AMP):
-                            msa_prev, pair_prev, xyz_prev, state_prev, alpha = ddp_model(msa_masked[:,0],
+                            msa_prev, pair_prev, xyz_prev, state_prev, alpha = ddp_model(
+                                                                      msa_masked[:,0],
                                                                       msa_full[:,0],
                                                                       seq[:,0],
                                                                       xyz_prev, 
                                                                       idx_pdb,
+                                                                      t=little_t,
                                                                       t1d=t1d,
                                                                       t2d=t2d,
                                                                       xyz_t=xyz_t,
@@ -1134,7 +1160,8 @@ class Trainer():
                                                                       msa_prev=msa_prev,
                                                                       pair_prev=pair_prev,
                                                                       state_prev=state_prev,
-                                                                      return_raw=True
+                                                                      return_raw=True,
+                                                                      motif_mask=diffusion_mask
                                                                       )
 
                             #_, xyz_prev = self.compute_allatom_coords(seq[:,i_cycle], xyz_prev, alpha)
@@ -1148,12 +1175,14 @@ class Trainer():
                                                                    msa_full[:,0],
                                                                    seq[:,0], xyz_prev,
                                                                    idx_pdb,
+                                                                   t=little_t,
                                                                    t1d=t1d, t2d=t2d,
                                                                    xyz_t=xyz_t, alpha_t=alpha_t,
                                                                    msa_prev=msa_prev,
                                                                    pair_prev=pair_prev,
                                                                    state_prev=state_prev,
-                                                                   use_checkpoint=True)
+                                                                   use_checkpoint=True,
+                                                                   motif_mask=diffusion_mask)
 
                         # find closest homo-oligomer pairs
                         true_crds, mask_crds = resolve_equiv_natives(pred_crds[-1], true_crds, mask_crds)
@@ -1179,7 +1208,6 @@ class Trainer():
                     loss = loss / self.ACCUM_STEP
 
                     if not torch.isnan(loss):
-
                         scaler.scale(loss).backward()
             else:
                 with torch.cuda.amp.autocast(enabled=USE_AMP):
@@ -1187,12 +1215,14 @@ class Trainer():
                                                                msa_full[:,0],
                                                                seq[:,0], xyz_prev,
                                                                idx_pdb,
+                                                               t=little_t,
                                                                t1d=t1d, t2d=t2d,
                                                                xyz_t=xyz_t, alpha_t=alpha_t,
                                                                msa_prev=msa_prev,
                                                                pair_prev=pair_prev,
                                                                state_prev=state_prev,
-                                                               use_checkpoint=True)
+                                                               use_checkpoint=True,
+                                                               motif_mask=diffusion_mask)
                         
                     # find closest homo-oligomer pairs
                     true_crds, mask_crds = resolve_equiv_natives(pred_crds[-1], true_crds, mask_crds)
@@ -1217,6 +1247,7 @@ class Trainer():
                 loss = loss / self.ACCUM_STEP
                 if not torch.isnan(loss):
                     scaler.scale(loss).backward()
+                    
                 # gradient clipping
                 scaler.unscale_(optimizer)
                 torch.nn.utils.clip_grad_norm_(ddp_model.parameters(), 0.2)
@@ -1239,24 +1270,24 @@ class Trainer():
             local_tot += loss.detach()*self.ACCUM_STEP
             if local_loss == None:
                 local_loss = torch.zeros_like(loss_s.detach())
-                local_acc = torch.zeros_like(acc_s.detach())
-            local_loss += loss_s.detach()
-            local_acc += acc_s.detach()
+                local_acc  = torch.zeros_like(acc_s.detach())
+            local_loss  += loss_s.detach()
+            local_acc  += acc_s.detach()
             
             train_tot += loss.detach()*self.ACCUM_STEP
             if train_loss == None:
                 train_loss = torch.zeros_like(loss_s.detach())
-                train_acc = torch.zeros_like(acc_s.detach())
+                train_acc  = torch.zeros_like(acc_s.detach())
             train_loss += loss_s.detach()
-            train_acc += acc_s.detach()
+            train_acc  += acc_s.detach()
             
             if counter % N_PRINT_TRAIN == 0:
                 if rank == 0:
                     max_mem = torch.cuda.max_memory_allocated()/1e9
-                    train_time = time.time() - start_time
-                    local_tot /= float(N_PRINT_TRAIN)
+                    train_time  = time.time() - start_time
+                    local_tot  /= float(N_PRINT_TRAIN)
                     local_loss /= float(N_PRINT_TRAIN)
-                    local_acc /= float(N_PRINT_TRAIN)
+                    local_acc  /= float(N_PRINT_TRAIN)
                     
                     local_tot = local_tot.cpu().detach()
                     local_loss = local_loss.cpu().detach().numpy()
@@ -1267,10 +1298,6 @@ class Trainer():
                     else:
                         task_str = chosen_task[0]
                     
-                    #sys.stdout.write("Local %s | %s: [%04d/%04d] Batch: [%05d/%05d] Time: %16.1f | total_loss: %8.4f | %s | %.4f %.4f %.4f | Max mem %.4f\n"%(\
-                    #        task_str, chosen_dataset[0], epoch, self.n_epoch, counter*self.batch_size*world_size, self.n_train, train_time, local_tot, \
-                    #        " ".join(["%8.4f"%l for l in local_loss]),\
-                    #        local_acc[0], local_acc[1], local_acc[2], max_mem))
 
                     outstr = f"Local {task_str} | {chosen_dataset[0]}: [{epoch}/{self.n_epoch}] Batch: [{counter*self.batch_size*world_size}/{self.n_train}] Time: {train_time} Loss dict: "
 
@@ -1300,17 +1327,17 @@ class Trainer():
 
             # Also changed to allow for one-hot sequence input
             seq_original = torch.argmax(seq_original[:,:,:,:,:20], dim=-1)
-            seq_masked = torch.argmax(seq_masked[:,:,:,:20], dim=-1)
+            seq_masked = torch.argmax(seq_masked[:,:,:,:,:20], dim=-1)
 
             clamped = top1_sequence
 
             if chosen_task[0] != 'seq2str' and np.random.randint(0,100) == 0:
                 if not os.path.isdir(f'./{self.outdir}/training_pdbs/'):
                     os.makedirs(f'./{self.outdir}/training_pdbs')
-                writepdb(f'{self.outdir}/training_pdbs/test_epoch_{epoch}_{counter}_{chosen_task[0]}_{chosen_dataset[0]}_t_{little_t}pred.pdb',pred_crds[-1,0,:,:3,:],top1_sequence[0,:])
-                writepdb(f'{self.outdir}/training_pdbs/test_epoch_{epoch}_{counter}_{chosen_task[0]}_{chosen_dataset[0]}_t_{little_t}true.pdb',true_crds[0,:,:3,:],torch.clamp(seq_original[0,0,:],0,19))
-                writepdb(f'{self.outdir}/training_pdbs/test_epoch_{epoch}_{counter}_{chosen_task[0]}_{chosen_dataset[0]}_t_{little_t}input.pdb',xyz_t[0,:,:,:3,:],torch.clamp(seq_masked[0,0,:],0,19))
-                with open(f'{self.outdir}/training_pdbs/test_epoch_{epoch}_{counter}_{chosen_task[0]}_{chosen_dataset[0]}_t_{little_t}pred_input.txt','w') as f:
+                writepdb(f'{self.outdir}/training_pdbs/test_epoch_{epoch}_{counter}_{chosen_task[0]}_{chosen_dataset[0]}_t_{int( little_t )}pred.pdb',pred_crds[-1,0,:,:3,:],top1_sequence[0,:])
+                writepdb(f'{self.outdir}/training_pdbs/test_epoch_{epoch}_{counter}_{chosen_task[0]}_{chosen_dataset[0]}_t_{int( little_t )}true.pdb',true_crds[0,:,:3,:],torch.clamp(seq_original[0,0,:],0,19))
+                writepdb(f'{self.outdir}/training_pdbs/test_epoch_{epoch}_{counter}_{chosen_task[0]}_{chosen_dataset[0]}_t_{int( little_t )}input.pdb',xyz_t[0,:,:,:3,:],torch.clamp(seq_masked[0,0,:],0,19))
+                with open(f'{self.outdir}/training_pdbs/test_epoch_{epoch}_{counter}_{chosen_task[0]}_{chosen_dataset[0]}_t_{int( little_t )}pred_input.txt','w') as f:
                     f.write(str(masks_1d['input_str_mask'][0].cpu().detach().numpy())+'\n')
                     f.write(str(masks_1d['input_seq_mask'][0].cpu().detach().numpy())+'\n') 
                     f.write(str(t1d[:,:,:,-1].cpu().detach().numpy()))

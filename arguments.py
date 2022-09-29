@@ -5,7 +5,8 @@ import metrics
 
 TRUNK_PARAMS = ['n_extra_block', 'n_main_block', 'n_ref_block',\
                 'd_msa', 'd_msa_full', 'd_pair', 'd_templ',\
-                'n_head_msa', 'n_head_pair', 'n_head_templ', 'd_hidden', 'd_hidden_templ', 'p_drop', 'd_t1d']
+                'n_head_msa', 'n_head_pair', 'n_head_templ', 'd_hidden', 'd_hidden_templ', 'p_drop', 'd_t1d',\
+                'd_time_emb', 'd_time_emb_proj', 'freeze_track_motif']
 
 SE3_PARAMS = ['num_layers_full', 'num_layers_topk', 'num_channels', 'num_degrees', 'n_heads', 'div', 
               'l0_in_features_full', 'l0_in_features_topk', 'l0_out_features_full', 'l0_out_features_topk',
@@ -171,6 +172,14 @@ def get_args(in_args=None):
             help="Number of hidden features for templates [32]")
     trunk_group.add_argument("-p_drop", type=float, default=0.15,
             help="Dropout ratio [0.15]")
+    trunk_group.add_argument('-d_time_emb', type=int, default=0, 
+            help='Dimension of timestep embeddings before projections [0]. If zero, doesn\'t use any timestep embeddings.')
+    trunk_group.add_argument('-d_time_emb_proj', type=int, default=10, 
+            help='Dimension of the projected timestep features going onto t1d [10]')
+    trunk_group.add_argument('-no_motif_timestep', default=False, action='store_true',
+            help='If True, do NOT use a separate timestep encoding for the motif [False]')
+    trunk_group.add_argument('-freeze_track_motif', default=False, action='store_true',
+            help='If True, manually freezes updates to the motif structure in track module')
 
     # Structure module properties
     str_group = parser.add_argument_group("structure module parameters")
@@ -299,40 +308,41 @@ def get_args(in_args=None):
     # set up diffusion params
     diffusion_params = {}
     for param in ['diff_mask_low',
-    'diff_mask_high',
-    'diff_b0',
-    'diff_bT',
-    'diff_schedule_type',
-    'diff_so3_type',
-    'diff_so3_schedule_type',
-    'diff_chi_type',
-    'diff_min_b',
-    'diff_max_b',
-    'diff_min_sigma',
-    'diff_max_sigma',
-    'diff_T',
-    'aa_decode_steps',
-    'predict_previous',
-    'prob_self_cond',
-    'seqdiff_b0',
-    'seqdiff_bT',
-    'seqdiff_schedule_type',
-    'seqdiff',
-    'seqdiff_lambda',
-    'decode_mask_frac',
-    'decode_corrupt_blosum',
-    'decode_corrupt_uniform',
-    'diff_crd_scale']:
+                  'diff_mask_high',
+                  'diff_b0',
+                  'diff_bT',
+                  'diff_schedule_type',
+                  'diff_so3_type',
+                  'diff_chi_type',
+                  'diff_T',
+                  'aa_decode_steps',
+                  'predict_previous',
+                  'prob_self_cond',
+                  'seqdiff_b0',
+                  'seqdiff_bT',
+                  'seqdiff_schedule_type',
+                  'seqdiff',
+                  'seqdiff_lambda',
+                  'decode_mask_frac',
+                  'decode_corrupt_blosum',
+                  'decode_corrupt_uniform',
+                  'diff_crd_scale',
+                  'diff_min_b',
+                  'diff_max_b',
+                  'diff_min_sigma',
+                  'diff_max_sigma']:
         diffusion_params[param] = getattr(args, param)
     
 
     # Setup dataloader parameters:
     loader_param = data_loader.set_data_loader_params(args)
 
-    # make dictionary for each parameters
+    ### TRUNK PARAMS 
     trunk_param = {}
     for param in TRUNK_PARAMS:
         trunk_param[param] = getattr(args, param)
+    trunk_param['use_motif_timestep'] = not args.no_motif_timestep 
+    # 
     SE3_param_full = {}
     SE3_param_topk = {}
     for param in SE3_PARAMS:
@@ -346,8 +356,29 @@ def get_args(in_args=None):
                 SE3_param_topk[param] = getattr(args, param)
     trunk_param['SE3_param_full'] = SE3_param_full
     trunk_param['SE3_param_topk'] = SE3_param_topk
+    
+    # Set loss params 
     loss_param = {}
-    for param in ['w_frame_dist', 'w_ax_ang', 'w_dist', 'w_str', 'w_all', 'w_aa', 'w_lddt', 'w_blen', 'w_bang', 'w_lj', 'w_hb', 'lj_lin', 'use_H', 'w_disp', 'w_motif_disp', 'backprop_non_displacement_on_given', 'use_tschedule', 'scheduled_losses', 'scheduled_types', 'scheduled_params']:
+    for param in ['w_frame_dist',\
+                'w_ax_ang',\
+                'w_dist',\
+                'w_str',\
+                'w_all',\
+                'w_aa',\
+                'w_lddt',\
+                'w_blen',\
+                'w_bang',\
+                'w_lj',\
+                'w_hb',\
+                'lj_lin',\
+                'use_H',\
+                'w_disp',\
+                'w_motif_disp',\
+                'backprop_non_displacement_on_given',\
+                'use_tschedule',\
+                'scheduled_losses',\
+                'scheduled_types',\
+                'scheduled_params']:
         loss_param[param] = getattr(args, param)
     
     # Collect preprocess_params

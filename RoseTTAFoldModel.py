@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-from Embeddings import MSA_emb, Extra_emb, Templ_emb, Recycling
+from Embeddings import MSA_emb, Extra_emb, Templ_emb, Recycling, Timestep_emb
 from Track_module import IterativeSimulator
 from AuxiliaryPredictor import DistanceNetwork, MaskedTokenNetwork, ExpResolvedNetwork, LDDTNetwork
 from util import INIT_CRDS
@@ -8,19 +8,35 @@ from opt_einsum import contract as einsum
 from icecream import ic 
 
 class RoseTTAFoldModule(nn.Module):
-    def __init__(self, n_extra_block=4, n_main_block=8, n_ref_block=4,\
-                 d_msa=256, d_msa_full=64, d_pair=128, d_templ=64,
-                 n_head_msa=8, n_head_pair=4, n_head_templ=4,
-                 d_hidden=32, d_hidden_templ=64,
+    def __init__(self, 
+                 n_extra_block=4, 
+                 n_main_block=8, 
+                 n_ref_block=4,
+                 d_msa=256,
+                 d_msa_full=64,
+                 d_pair=128,
+                 d_templ=64,
+                 n_head_msa=8,
+                 n_head_pair=4,
+                 n_head_templ=4,
+                 d_hidden=32,
+                 d_hidden_templ=64,
                  p_drop=0.15,
                  d_t1d=21+1+1,
                  d_t2d=44,
                  SE3_param_full={'l0_in_features':32, 'l0_out_features':16, 'num_edge_features':32},
                  SE3_param_topk={'l0_in_features':32, 'l0_out_features':16, 'num_edge_features':32},
-                 input_seq_onehot=False # For continuous vs. discrete sequence - NRB
+                 input_seq_onehot=False,     # For continuous vs. discrete sequence - NRB,
+                 d_time_emb=64,              # total dims for input timestep emb
+                 d_time_emb_proj=10,         # size of projected timestep emb 
+                 T=200,                      # total timesteps (used in timestep emb)
+                 use_motif_timestep=True,    # Whether to have a distinct emb for motif 
+                 freeze_track_motif=False,   # Whether to freeze updates to motif in track
                  ):
+
         super(RoseTTAFoldModule, self).__init__()
-        #
+        self.freeze_track_motif = freeze_track_motif
+
         # Input Embeddings
         d_state = SE3_param_topk['l0_out_features']
         self.latent_emb = MSA_emb(d_msa=d_msa, d_pair=d_pair, d_state=d_state,
@@ -30,6 +46,17 @@ class RoseTTAFoldModule(nn.Module):
         self.templ_emb = Templ_emb(d_pair=d_pair, d_templ=d_templ, d_state=d_state,
                                    n_head=n_head_templ,
                                    d_hidden=d_hidden_templ, p_drop=0.25, d_t1d=d_t1d, d_t2d=d_t2d)
+
+        # timestep embedder 
+        if d_time_emb > 0:
+            print('NOTE: Using sinusoidal timestep embeddings of dim ',d_time_emb, ' projected to dim ',d_time_emb_proj)
+            assert d_t1d >= 22 + d_time_emb_proj, 'timestep projection size doesn\'t fit into RF t1d projection layers'
+            self.timestep_embedder = Timestep_emb(input_size=d_time_emb, 
+                                                  output_size=d_time_emb_proj,
+                                                  T=T,
+                                                  use_motif_timestep=use_motif_timestep)
+
+
         # Update inputs with outputs from previous round
         self.recycle = Recycling(d_msa=d_msa, d_pair=d_pair, d_state=d_state)
         #
@@ -50,16 +77,17 @@ class RoseTTAFoldModule(nn.Module):
        
         self.exp_pred = ExpResolvedNetwork(d_msa, d_state)
 
-    def forward(self, msa_latent, msa_full, seq, xyz, idx,
+    def forward(self, msa_latent, msa_full, seq, xyz, idx, t,
                 t1d=None, t2d=None, xyz_t=None, alpha_t=None,
                 msa_prev=None, pair_prev=None, state_prev=None,
                 return_raw=False, return_full=False, return_infer=False,
-                use_checkpoint=False):
+                use_checkpoint=False, motif_mask=None):
+
         B, N, L = msa_latent.shape[:3]
         # Get embeddings
         msa_latent, pair, state = self.latent_emb(msa_latent, seq, idx)
         msa_full = self.full_emb(msa_full, seq, idx)
-        #
+
         # Do recycling
         if msa_prev == None:
             msa_prev = torch.zeros_like(msa_latent[:,0])
@@ -69,13 +97,22 @@ class RoseTTAFoldModule(nn.Module):
         msa_latent[:,0] = msa_latent[:,0] + msa_recycle.reshape(B,L,-1)
         pair = pair + pair_recycle
         state = state + state_recycle
-        #
+
+
+        # Get timestep embedding (if using)
+        if hasattr(self, 'timestep_embedder'):
+            assert not (t is None)
+            time_emb = self.timestep_embedder(L,t,motif_mask)
+            t1d = torch.cat([t1d, time_emb[None,None,...]], dim=-1)
+
         # add template embedding
         pair, state = self.templ_emb(t1d, t2d, alpha_t, xyz_t, pair, state, use_checkpoint=use_checkpoint)
         
         # Predict coordinates from given inputs
+        sim_motif_mask = motif_mask if self.freeze_track_motif else torch.zeros_like(motif_mask).bool()
         msa, pair, R, T, alpha_s, state = self.simulator(seq, msa_latent, msa_full, pair, xyz[:,:,:3],
-                                                         state, idx, use_checkpoint=use_checkpoint)
+                                                         state, idx, use_checkpoint=use_checkpoint,
+                                                         motif_mask=sim_motif_mask)
         
         if return_raw:
             # get last structure
