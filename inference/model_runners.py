@@ -49,10 +49,11 @@ class Sampler:
         
         # Assemble config from the checkpoint
         self.assemble_config_from_chk() 
+        print(' ')
         print('-'*100)
         print(' ')
         print("WARNING: The following options are not currently implemented at inference. Decide if this matters.")
-        print("Delete these in inference/model_runners once they are implements/once you decide they are not required for inference -- JW")
+        print("Delete these in inference/model_runners.py once they are implemented/once you decide they are not required for inference -- JW")
         print(" -predict_previous")
         print(" -prob_self_cond")
         print(" -seqdiff_b0")
@@ -61,6 +62,7 @@ class Sampler:
         print(" -seqdiff")
         print(" ")
         print("-"*100)
+        print(" ")
         # Initialize helper objects
         self.inf_conf = self._conf.inference
         self.contig_conf = self._conf.contigmap

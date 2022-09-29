@@ -1,4 +1,4 @@
-#! /home/jwatson3/.conda/envs/SE3nv/bin/python
+#! /home/dimaio/.conda/envs/SE3nv/bin/python
 """
 Inference script.
 
