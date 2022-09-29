@@ -85,7 +85,10 @@ def get_args(in_args=None):
             help = 'Minimum fraction to be masked in str2seq_full task. Default=0.9')
     data_group.add_argument('-str2seq_full_high',type=float, default=1.0,
             help = 'Maximum fraction to be masked in str2seq_full task. Default=1.0')
-
+    data_group.add_argument('-dataset',type=str, required=True,
+            help = 'Select dataset(s) to use. No default so make up your mind. Options are ["cn","pdb","fb","complex"]. Specify in a list: e.g. -dataset cn,pdb,fb')
+    data_group.add_argument('-dataset_prob',type=str, default=None,
+            help = 'Select proportion of examples from each dataset. Default behaviour is uniform. Specify like 0.2,0.4,0.4. Must sum to 1')
 
     # Diffusion args 
     diff_group = parser.add_argument_group("diffusion parameters")
@@ -249,7 +252,7 @@ def get_args(in_args=None):
             help='True, apply all losses, not just the displacement loss on the given region')
 
     # other parameters
-    parser.add_argument('-task_names', default='seq2str',
+    parser.add_argument('-task_names', default='diff',
             help='Comma separated list of tasks to train')
     parser.add_argument('-task_p', default='1.0',type=str,
             help='Comma separated list of probabilities for each task')

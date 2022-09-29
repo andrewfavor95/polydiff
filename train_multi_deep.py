@@ -801,8 +801,10 @@ class Trainer():
             p_seq2str = 0
 
         train_sampler = DistributedWeightedSampler(train_set, pdb_weights, compl_weights, neg_weights, fb_weights, cn_weights, p_seq2str,
+                                                   dataset_options=self.loader_param['DATASETS'],
+                                                   dataset_prob=self.loader_param['DATASET_PROB'],
                                                    num_example_per_epoch=N_EXAMPLE_PER_EPOCH,
-                                                   num_replicas=world_size, rank=rank, fraction_fb=0.5, fraction_compl=0.25, replacement=True)
+                                                   num_replicas=world_size, rank=rank, replacement=True)
 
         valid_pdb_sampler = data.distributed.DistributedSampler(valid_pdb_set, num_replicas=world_size, rank=rank)
         valid_homo_sampler = data.distributed.DistributedSampler(valid_homo_set, num_replicas=world_size, rank=rank)

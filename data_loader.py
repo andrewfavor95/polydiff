@@ -15,6 +15,7 @@ import pickle
 import random
 from apply_masks import mask_inputs
 import util
+import math
 
 base_dir = "/projects/ml/TrRosetta/PDB-2021AUG02"
 compl_dir = "/projects/ml/RoseTTAComplex"
@@ -76,7 +77,8 @@ def set_data_loader_params(args):
         "TASK_P" : [1.0],
         "DIFF_MASK_LOW":args.diff_mask_low,
         "DIFF_MASK_HIGH":args.diff_mask_high,
-
+        "DATASETS":args.dataset,
+        "DATASET_PROB":args.dataset_prob
     }
     for param in PARAMS:
         if hasattr(args, param.lower()):
@@ -414,20 +416,20 @@ def get_train_valid_set(params, OFFSET=1000000):
         #         homo[r[0]] = [r[1:]]
 
         # read & clean list.csv
-        """
+        
         with open(params['PDB_LIST'], 'r') as f:
             reader = csv.reader(f)
             next(reader)
             rows = [[r[0],r[3],int(r[4]), int(r[-1].strip())] for r in reader
                     if float(r[2])<=params['RESCUT'] and
                     parser.parse(r[1])<=parser.parse(params['DATCUT']) and len(r[-2]) <= params['MAX_LENGTH'] and len(r[-2]) >= 60] #added length max so only have full chains, and minimum length of 60aa
-        """
+        
         # compile training and validation sets
         val_hash = list()
         train_pdb = {}
         valid_pdb = {}
         valid_homo = {}
-        """
+    
         for r in rows:
             if r[2] in val_pdb_ids:
                 val_hash.append(r[1])
@@ -446,9 +448,9 @@ def get_train_valid_set(params, OFFSET=1000000):
                     train_pdb[r[2]].append((r[:2], r[-1]))
                 else:
                     train_pdb[r[2]] = [(r[:2], r[-1])]
-        """
+        
         val_hash = set(val_hash)
-        """
+        
         # compile facebook model sets
         with open(params['FB_LIST'], 'r') as f:
             reader = csv.reader(f)
@@ -456,17 +458,17 @@ def get_train_valid_set(params, OFFSET=1000000):
             rows = [[r[0],r[2],int(r[3]),len(r[-1].strip())] for r in reader
                      if float(r[1]) > 80.0 and
                      len(r[-1].strip()) > 100 and len(r[-1].strip()) <= params['MAX_LENGTH']] #added max length to allow only full chains. Also reduced minimum length to 100aa
-        """
+       
         fb = {}
-        """
+        
         for r in rows:
             if r[2] in fb.keys():
                 fb[r[2]].append((r[:2], r[-1]))
             else:
                 fb[r[2]] = [(r[:2], r[-1])]
-        """
+        
         #compile complex sets
-        """
+        
         with open(params['COMPL_LIST'], 'r') as f:
             reader = csv.reader(f)
             next(reader)
@@ -474,10 +476,10 @@ def get_train_valid_set(params, OFFSET=1000000):
             rows = [[r[0], r[3], int(r[4]), [int(plen) for plen in r[5].split(':')], r[6] , [int(r[7]), int(r[8]), int(r[9]), int(r[10])]] for r in reader
                      if float(r[2]) <= params['RESCUT'] and
                      parser.parse(r[1]) <= parser.parse(params['DATCUT']) and min([int(i) for i in r[5].split(":")]) < params['MAX_COMPLEX_CHAIN'] and min([int(i) for i in r[5].split(":")]) > 50] #require one chain of the hetero complexes to be smaller than a certain value so it can be kept complete. This chain must also be > 50aa long.
-        """
+        
         train_compl = {}
         valid_compl = {}
-        """
+        
         for r in rows:
             if r[2] in val_compl_ids:
                 if r[2] in valid_compl.keys():
@@ -506,10 +508,10 @@ def get_train_valid_set(params, OFFSET=1000000):
         #             if float(r[2])<=params['RESCUT'] and
         #             parser.parse(r[1])<=parser.parse(params['DATCUT'])]
 
-        """
+        
         train_neg = {}
         valid_neg = {}
-        """
+        
         # for r in rows:
         #     if r[2] in val_neg_ids:
         #         if r[2] in valid_neg.keys():
@@ -526,7 +528,7 @@ def get_train_valid_set(params, OFFSET=1000000):
         #             train_neg[r[2]].append((r[:2], r[-2], r[-1], []))
         #         else:
         #             train_neg[r[2]] = [(r[:2], r[-2], r[-1], [])]
-        """
+        
 
         train_cn = {}
         valid_cn = {}
@@ -1639,8 +1641,8 @@ class DistilledDataset(data.Dataset):
         return seq, msa, msa_masked, msa_full, mask_msa, true_crds, atom_mask, idx_pdb, xyz_t, t1d, t2d, alpha_t, xyz_prev, same_chain, unclamp, negative, masks_1d, task, chosen_dataset, little_t
 
 class DistributedWeightedSampler(data.Sampler):
-    def __init__(self, dataset, pdb_weights, compl_weights, neg_weights, fb_weights, cn_weights, p_seq2str, num_example_per_epoch=25600, \
-                 fraction_fb=0.5, fraction_compl=0.25, num_replicas=None, rank=None, replacement=False):
+    def __init__(self, dataset, pdb_weights, compl_weights, neg_weights, fb_weights, cn_weights, p_seq2str, dataset_options, dataset_prob, num_example_per_epoch=25600, \
+                 num_replicas=None, rank=None, replacement=False):
         if num_replicas is None:
             if not dist.is_available():
                 raise RuntimeError("Requires distributed package to be available")
@@ -1655,11 +1657,27 @@ class DistributedWeightedSampler(data.Sampler):
         self.dataset = dataset
         self.num_replicas = num_replicas
         
-        self.num_cn_per_epoch = int(num_example_per_epoch)
-        self.num_compl_per_epoch = 0 # int(round(num_example_per_epoch*(1.0-fraction_fb)*fraction_compl))
-        self.num_neg_per_epoch = 0 #= int(round(num_example_per_epoch*(1.0-fraction_fb)*fraction_compl*p_seq2str))
-        self.num_fb_per_epoch = 0 # int(round(num_example_per_epoch*(fraction_fb)))
-        self.num_pdb_per_epoch = 0 # num_example_per_epoch - self.num_compl_per_epoch - self.num_neg_per_epoch - self.num_fb_per_epoch - self.num_cn_per_epoch
+        # Parse dataset_options and dataset_prop
+        dataset_dict = {'cn':0,'pdb':0,'fb':0,'complex':0}
+        num_datasets = len(dataset_options.split(","))
+        if dataset_prob is None:
+            dataset_prob = [1.0/num_datasets]*num_datasets
+        else:
+            dataset_prob = [float(i) for i in dataset_prob.split(",")]
+            assert math.isclose(sum(dataset_prob), 1.0)
+            assert len(dataset_prob) == len(dataset_options.split(","))
+        for idx,dset in enumerate(dataset_options.split(",")):
+            dataset_dict[dset] = dataset_prob[idx]*num_example_per_epoch
+        
+        # Temporary until implemented
+        if dataset_dict['complex'] > 0:
+            print("WARNING: In this branch, the hotspot reside feature has been removed, and you're training on complexes. Be warned")
+
+        self.num_cn_per_epoch = int(dataset_dict['cn'])
+        self.num_compl_per_epoch = int(dataset_dict['complex'])
+        self.num_neg_per_epoch = 0 # No negative set during diffusion training
+        self.num_fb_per_epoch = int(dataset_dict['fb'])
+        self.num_pdb_per_epoch = int(dataset_dict['pdb'])
         print (self.num_compl_per_epoch, self.num_neg_per_epoch, self.num_fb_per_epoch, self.num_pdb_per_epoch, self.num_cn_per_epoch)
         self.total_size = num_example_per_epoch
         self.num_samples = self.total_size // self.num_replicas
