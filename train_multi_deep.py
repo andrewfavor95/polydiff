@@ -1,5 +1,5 @@
 # set to true if you dont want to use weights and biases 
-DEBUG = True
+DEBUG = False
 
 WANDB = True if not DEBUG else False 
 
