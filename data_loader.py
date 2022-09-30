@@ -1356,6 +1356,7 @@ class DistilledDataset(data.Dataset):
                  ang_ref,
                  diffusion_param,
                  preprocess_param,
+                 model_param,
                  p_homo_cut=0.5):
         #
         self.pdb_IDs     = pdb_IDs
@@ -1424,6 +1425,7 @@ class DistilledDataset(data.Dataset):
 
         self.diffusion_param = diffusion_param
         self.preprocess_param = preprocess_param
+        self.model_param = model_param
 
     def __len__(self):
         return len(self.fb_inds) + len(self.pdb_inds) + len(self.compl_inds) + len(self.neg_inds) + len(self.cn_inds)
@@ -1532,7 +1534,6 @@ class DistilledDataset(data.Dataset):
         # Original d_t1d == 22 (20aa + missing + mask + template confidence)
         # But, extra features can be added
         # TODO I think this could be changed at a later date, to specify added features and stack them in a different order
-<<<<<<< HEAD
         """
         # Masking this out, so now, if you're doing sequence diffusion, d_t1d == 23, and these last two features pertain to sequence diffusion, and if not, d_t1d=22
         # This obviously needs to be made more flexible down the line
@@ -1562,7 +1563,12 @@ class DistilledDataset(data.Dataset):
                  # Also -- already checked the math works out in assertions above 
 
         # End by checking dimensions are the intended dimensions
-        assert t1d.shape[-1] == self.preprocess_param['d_t1d']
+        if self.model_param['d_time_emb'] == 0:
+            assert t1d.shape[-1] == self.preprocess_param['d_t1d']
+        else:
+            pass # DJ - no check in this case because concat onto t1d happens in RF fwd pass 
+                 # Model will crash anyways if the dims mismatch
+                 # Also -- already checked the math works out in assertions above 
 
         masks_1d = generate_masks(msa, task, self.params, chosen_dataset, complete_chain)
         

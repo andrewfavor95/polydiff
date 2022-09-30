@@ -1,5 +1,5 @@
 # set to true if you dont want to use weights and biases 
-DEBUG = False
+DEBUG = False 
 
 WANDB = True if not DEBUG else False 
 
@@ -779,7 +779,8 @@ class Trainer():
                                      neg_IDs, loader_complex, neg_dict,
                                      fb_IDs, loader_fb, loader_fb_fixbb, fb_dict,
                                      cn_IDs, None, loader_cn_fixbb, cn_dict, # None is a placeholder as we don't currently have a loader_cn
-                                     homo, self.loader_param, self.diffuser, self.seq_diffuser, self.ti_dev, self.ti_flip, self.ang_ref, self.diffusion_param, self.preprocess_param)
+                                     homo, self.loader_param, self.diffuser, self.seq_diffuser, self.ti_dev, self.ti_flip, self.ang_ref, 
+                                     self.diffusion_param, self.preprocess_param, self.model_param)
 
         valid_pdb_set = Dataset(list(valid_pdb.keys())[:self.n_valid_pdb],
                                 loader_pdb, valid_pdb,

@@ -313,6 +313,7 @@ def get_args(in_args=None):
                   'diff_b0',
                   'diff_bT',
                   'diff_schedule_type',
+                  'diff_so3_schedule_type',
                   'diff_so3_type',
                   'diff_chi_type',
                   'diff_T',
