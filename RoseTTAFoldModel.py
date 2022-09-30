@@ -9,29 +9,29 @@ from icecream import ic
 
 class RoseTTAFoldModule(nn.Module):
     def __init__(self, 
-                 n_extra_block=4, 
-                 n_main_block=8, 
-                 n_ref_block=4,
-                 d_msa=256,
-                 d_msa_full=64,
-                 d_pair=128,
-                 d_templ=64,
-                 n_head_msa=8,
-                 n_head_pair=4,
-                 n_head_templ=4,
-                 d_hidden=32,
-                 d_hidden_templ=64,
-                 p_drop=0.15,
-                 d_t1d=21+1+1,
-                 d_t2d=44,
+                 n_extra_block, 
+                 n_main_block, 
+                 n_ref_block,
+                 d_msa,
+                 d_msa_full,
+                 d_pair,
+                 d_templ,
+                 n_head_msa,
+                 n_head_pair,
+                 n_head_templ,
+                 d_hidden,
+                 d_hidden_templ,
+                 p_drop,
+                 d_t1d,
+                 d_t2d,
+                 d_time_emb, # total dims for input timestep emb
+                 d_time_emb_proj, # size of projected timestep emb
+                 T, # total timesteps (used in timestep emb
+                 use_motif_timestep, # Whether to have a distinct emb for motif
+                 freeze_track_motif, # Whether to freeze updates to motif in track
                  SE3_param_full={'l0_in_features':32, 'l0_out_features':16, 'num_edge_features':32},
                  SE3_param_topk={'l0_in_features':32, 'l0_out_features':16, 'num_edge_features':32},
                  input_seq_onehot=False,     # For continuous vs. discrete sequence - NRB,
-                 d_time_emb=64,              # total dims for input timestep emb
-                 d_time_emb_proj=10,         # size of projected timestep emb 
-                 T=200,                      # total timesteps (used in timestep emb)
-                 use_motif_timestep=True,    # Whether to have a distinct emb for motif 
-                 freeze_track_motif=False,   # Whether to freeze updates to motif in track
                  ):
 
         super(RoseTTAFoldModule, self).__init__()

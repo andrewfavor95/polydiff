@@ -5,7 +5,7 @@ import metrics
 
 TRUNK_PARAMS = ['n_extra_block', 'n_main_block', 'n_ref_block',\
                 'd_msa', 'd_msa_full', 'd_pair', 'd_templ',\
-                'n_head_msa', 'n_head_pair', 'n_head_templ', 'd_hidden', 'd_hidden_templ', 'p_drop', 'd_t1d',\
+                'n_head_msa', 'n_head_pair', 'n_head_templ', 'd_hidden', 'd_hidden_templ', 'p_drop',\
                 'd_time_emb', 'd_time_emb_proj', 'freeze_track_motif']
 
 SE3_PARAMS = ['num_layers_full', 'num_layers_topk', 'num_channels', 'num_degrees', 'n_heads', 'div', 

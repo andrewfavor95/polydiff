@@ -1,5 +1,5 @@
 # set to true if you dont want to use weights and biases 
-DEBUG = False 
+DEBUG = True 
 
 WANDB = True if not DEBUG else False 
 
@@ -843,7 +843,7 @@ class Trainer():
         
         # define model
         print('Making model...')
-        model = EMA(RoseTTAFoldModule(**self.model_param).to(gpu), 0.999)
+        model = EMA(RoseTTAFoldModule(**self.model_param, d_t1d=self.preprocess_param['d_t1d'], d_t2d=self.preprocess_param['d_t2d'], T=self.diffusion_param['diff_T']).to(gpu), 0.999)
 
         print('Instantiating DDP')
         ddp_model = DDP(model, device_ids=[gpu], find_unused_parameters=False)

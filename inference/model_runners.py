@@ -145,7 +145,7 @@ class Sampler:
 
             # First, check all flags in the checkpoint config dict are in the config file
             for cat in ['model','diffuser','seqdiffuser','preprocess']:
-                assert all([i in self._conf[cat].keys() for i in self.ckpt['config_dict'][cat].keys()]), f"There are keys in the checkpoint config_dict {cat} params not in the config file"
+                #assert all([i in self._conf[cat].keys() for i in self.ckpt['config_dict'][cat].keys()]), f"There are keys in the checkpoint config_dict {cat} params not in the config file"
                 for key in self._conf[cat]:
                     try:
                         self._conf[cat][key] = self.ckpt['config_dict'][cat][key]
@@ -159,6 +159,7 @@ class Sampler:
                     self._conf[override.split(".")[0]][override.split(".")[1].split("=")[0]] = mytype(override.split("=")[1])
         else:
             print('WARNING: Model, Diffuser and Preprocess parameters are not saved in this checkpoint. Check carefully that the values specified in the config are correct for this checkpoint')     
+        ic(self._conf)
 
     def load_model(self):
         """Create RosettaFold model from preloaded checkpoint."""
@@ -167,7 +168,7 @@ class Sampler:
         self.d_t1d=self._conf.preprocess.d_t1d
         self.d_t2d=self._conf.preprocess.d_t2d
 
-        model = RoseTTAFoldModule(**self._conf.model, d_t1d=self.preprocess_conf.d_t1d, d_t2d=self.preprocess_conf.d_t2d).to(self.device)
+        model = RoseTTAFoldModule(**self._conf.model, d_t1d=self.preprocess_conf.d_t1d, d_t2d=self.preprocess_conf.d_t2d, T=self.diffuser_conf.T).to(self.device)
         model = model.eval()
         self._log.info(f'Loading checkpoint.')
         model.load_state_dict(self.ckpt['model_state_dict'], strict=True)
@@ -425,6 +426,7 @@ class Sampler:
                                     msa_prev = msa_prev,
                                     pair_prev = pair_prev,
                                     state_prev = state_prev,
+                                    t=t,
                                     return_infer=True)
 
         self.msa_prev=msa_prev
