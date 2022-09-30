@@ -1659,16 +1659,19 @@ class DistributedWeightedSampler(data.Sampler):
         
         # Parse dataset_options and dataset_prop
         dataset_dict = {'cn':0,'pdb':0,'fb':0,'complex':0}
-        num_datasets = len(dataset_options.split(","))
+        dataset_options = dataset_options.split(",")
+        num_datasets = len(dataset_options)
         if dataset_prob is None:
             dataset_prob = [1.0/num_datasets]*num_datasets
         else:
             dataset_prob = [float(i) for i in dataset_prob.split(",")]
             assert math.isclose(sum(dataset_prob), 1.0)
-            assert len(dataset_prob) == len(dataset_options.split(","))
-        for idx,dset in enumerate(dataset_options.split(",")):
-            dataset_dict[dset] = dataset_prob[idx]*num_example_per_epoch
-        
+            assert len(dataset_prob) == len(dataset_options)
+        for idx,dset in enumerate(dataset_options):
+            if not idx == num_datasets-1:
+                dataset_dict[dset] = int(dataset_prob[idx]*num_example_per_epoch)
+            else:
+                dataset_dict[dset] = num_example_per_epoch - sum([val for k, val in dataset_dict.items()])
         # Temporary until implemented
         if dataset_dict['complex'] > 0:
             print("WARNING: In this branch, the hotspot reside feature has been removed, and you're training on complexes. Be warned")
