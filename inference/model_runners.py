@@ -144,41 +144,13 @@ class Sampler:
             print("Assembling -model, -diffuser and -preprocess configs from checkpoint")
 
             # First, check all flags in the checkpoint config dict are in the config file
-            assert all([i in self._conf.model.keys() for i in self.ckpt['config_dict']['model'].keys()]), 'There are keys in the checkpoint config_dict "model" params not in the config file'
-            assert all([i in self._conf.diffuser.keys() for i in self.ckpt['config_dict']['diffuser'].keys()]), 'There are keys in the checkpoint config_dict "diffuser" params not in the config file'
-            assert all([i in self._conf.seqdiffuser.keys() for i in self.ckpt['config_dict']['seqdiffuser'].keys()]), 'There are keys in the checkpoint config_dict "seqdiffuser" params not in the config file'
-            assert all([i in self._conf.preprocess.keys() for i in self.ckpt['config_dict']['preprocess'].keys()]), 'There are keys in the checkpoint config_dict "preprocess" params not in the config file'
             for cat in ['model','diffuser','seqdiffuser','preprocess']:
+                assert all([i in self._conf[cat].keys() for i in self.ckpt['config_dict'][cat].keys()]), f"There are keys in the checkpoint config_dict {cat} params not in the config file"
                 for key in self._conf[cat]:
                     try:
                         self._conf[cat][key] = self.ckpt['config_dict'][cat][key]
                     except:
                         print(f'WARNING: config {cat}.{key} is not saved in the checkpoint. Check that conf.{cat}.{key} = {self._conf[cat][key]} is correct')
-            """
-            for key in self._conf.model:
-                try:
-                    self._conf.model[key] = self.ckpt['config_dict']['model'][key]
-                except:
-                    print(f'WARNING: config model.{key} is not saved in the checkpoint. Check that conf.model.{key} = {self._conf.model[key]} is correct')
-            
-            for key in self._conf.diffuser:
-                try:
-                    self._conf.diffuser[key] = self.ckpt['config_dict']['diffuser'][key]
-                except:
-                    print(f'WARNING: config diffuser.{key} is not saved in the checkpoint. Check that conf.diffuser.{key} = {self._conf.diffuser[key]} is correct')
-            
-            for key in self._conf.diffuser:
-                try:
-                    self._conf.diffuser[key] = self.ckpt['config_dict']['diffuser'][key]
-                except:
-                    print(f'WARNING: config diffuser.{key} is not saved in the checkpoint. Check that conf.diffuser.{key} = {self._conf.diffuser[key]} is correct')    
-
-            for key in self._conf.preprocess:
-                try:
-                    self._conf.preprocess[key] = self.ckpt['config_dict']['preprocess'][key]
-                except:
-                    print(f'WARNING: config preprocess.{key} is not saved in the checkpoint. Check that conf.preprocess.{key} = {self._conf.preprocess[key]} is correct')
-            """
             # add back in overrides again
             for override in overrides:
                 if override.split(".")[0] in ['model','diffuser','seqdiffuser','preprocess']:
@@ -191,7 +163,7 @@ class Sampler:
     def load_model(self):
         """Create RosettaFold model from preloaded checkpoint."""
         
-        # Now read input dimensions from checkpoint. TODO save these automatically during training
+        # Now read input dimensions from checkpoint.
         self.d_t1d=self._conf.preprocess.d_t1d
         self.d_t2d=self._conf.preprocess.d_t2d
 
@@ -350,7 +322,10 @@ class Sampler:
         
         ### xyz_t ###
         #############
-        xyz_t[torch.where(seq == 21, True, False),3:,:] = float('nan')
+        if self.preprocess_conf.sidechain_input:
+            xyz_t[torch.where(seq == 21, True, False),3:,:] = float('nan')
+        else:
+            xyz_t[~self.mask_str.squeeze(),3:,:] = float('nan')
         #xyz_t[:,3:,:] = float('nan')
 
         xyz_t=xyz_t[None, None]
@@ -388,7 +363,8 @@ class Sampler:
         
         ### added_features ###
         ######################
-        
+        # NB the hotspot input has been removed in this branch. 
+        """
         # t1d
         if self.preprocess_conf.d_t1d == 23: # add hotspot residues
             # NRB: Adding in dimension for target hotspot residues
@@ -398,7 +374,7 @@ class Sampler:
                 target_residue_feat[...,absolute_idx,:] = 1
             t1d = torch.cat((t1d, target_residue_feat), dim=-1)
             t1d = t1d.float()
-            
+        """ 
         return msa_masked, msa_full, seq[None], torch.squeeze(xyz_t, dim=0), idx, t1d, t2d, xyz_t, alpha_t
         
     def sample_step(self, *, t, seq_t, x_t, seq_init):

@@ -202,15 +202,16 @@ def mask_inputs(seq,
             # Therefore, network must learn which residues to change, and which to keep fixed.
             # This should also make aa_cce more comparable between runs, if we vary decode_mask_frac
             
-            # First, make the 'scoring' mask, which score twice the proportion of residues as 'decode_mask_frac'
-            scoring_mask = torch.rand(decoded_non_motif.shape) < (1-2*diffusion_param['decode_mask_frac']) # [n,L]
+            # First, make the 'is_scored' mask, which scores twice the proportion of residues as 'decode_mask_frac'. True=scored
+            p_score = 2*diffusion_param['decode_mask_frac'] 
+            is_scored = torch.rand(decoded_non_motif.shape) < p_score # [n,L]
 
             # Now, make tmp mask, which is 50:50 corrupt vs not (so total proportion to be corrupted == 'decode_mask_frac'
             # This yields a mask where True == unchanged, False == Corrupted residue
-            tmp_mask = torch.logical_and(~scoring_mask, torch.rand(decoded_non_motif.shape) < 0.5)
+            tmp_mask = torch.logical_and(is_scored, torch.rand(decoded_non_motif.shape) < 0.5)
             
             decoded_non_motif[0,tmp_mask[0]] = False 
-            decoded_non_motif[1,tmp_mask[1]] = False 
+            decoded_non_motif[1,tmp_mask[0]] = False #use same mask for both, which seems sensible for now.
 
             # Anything left as True, replace with blosum sample
             # These may be different lengths so cannot convert to a Tensor - NRB
@@ -226,9 +227,9 @@ def mask_inputs(seq,
             mask_msa[0,:,:,seq_mask[0]] = False
             mask_msa[1,:,:,seq_mask[1]] = False
             # 2.) Now, bring back any residues to score (both those corrupted by blosum, and the equivalent proportion of non-corrupted)
-            scoring_mask[:,input_seq_mask.squeeze()] = True
-            mask_msa[0,:,:,~scoring_mask[0]] = True
-            mask_msa[1,:,:,~scoring_mask[1]] = True
+            is_scored[:,input_seq_mask.squeeze()] = False
+            mask_msa[0,:,:,is_scored[0]] = True
+            mask_msa[1,:,:,is_scored[1]] = True
             ### End DJ new
        
         xyz_t       = diffused_fullatoms[:2].unsqueeze(1) # [n,T,L,27,3]
