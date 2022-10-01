@@ -263,7 +263,7 @@ class Trainer():
         self.diff_kwargs = diff_kwargs
         self.seqdiff_kwargs = seqdiff_kwargs
         self.assemble_config()
-    
+        ic(self.config_dict) 
     def assemble_config(self) -> None:
         config_dict = {}
         config_dict['model'] = self.model_param
@@ -837,9 +837,10 @@ class Trainer():
 
         
         #self.diffuser.get_allatom = self.compute_allatom_coords 
-
-        ic(f'Using onehot sequence input for model')
-        self.model_param['input_seq_onehot'] = True
+        
+        ## JW I have changed this so we always just put Lx22 sequence into the embedding
+        #print(f'Using onehot sequence (Lx22) input for model')
+        #self.model_param['input_seq_onehot'] = True
         
         # define model
         print('Making model...')

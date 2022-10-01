@@ -48,6 +48,7 @@ def mask_inputs(seq,
                 atom_mask,
                 preprocess_param,
                 diffusion_param,
+                model_param,
                 input_seq_mask=None, 
                 input_str_mask=None, 
                 input_floating_mask=None, 
@@ -107,7 +108,6 @@ def mask_inputs(seq,
         For the t1d, this has 20aa, 1x unkown, and 1x template conf. Here, we set the masked region to 21 (unknown).
         This, we think, makes sense, as the template in normal RF training does not perfectly correspond to the MSA.
     """
-
     # print('Made it into mask inputs')
     ### Perform diffusion, pick a random t and then let that be the input template and xyz_prev
     if (not diffuser is None) :
@@ -239,10 +239,19 @@ def mask_inputs(seq,
             true_seq  = diffused_seq[-1][None]
 
         # Scale str confidence wrt t 
-        # multiplicitavely applied to a default conf mask of 1.0 everywhwere 
+        # multiplicitavely applied to a default conf mask of 1.0 everywhwere
+        # TODO NRB make this work for sinusoidal embedding + sequence diffusion
         input_t1d_str_conf_mask = torch.stack([input_t1d_str_conf_mask,input_t1d_str_conf_mask], dim=0) # [n,L]
-        input_t1d_str_conf_mask[0,~input_str_mask.squeeze()] = 1 - t_list[0]/diffuser.T
-        input_t1d_str_conf_mask[1,~input_str_mask.squeeze()] = 1 - t_list[1]/diffuser.T
+        
+        if not model_param['d_time_emb'] > 0: 
+            # linear timestep
+            input_t1d_str_conf_mask[0,~input_str_mask.squeeze()] = 1 - t_list[0]/diffuser.T
+            input_t1d_str_conf_mask[1,~input_str_mask.squeeze()] = 1 - t_list[1]/diffuser.T
+        else:
+            if not seq_diffuser is None: 
+                raise NotImplementedError("Sinuisoidal timestep embedding isn't implemented for sequence diffusion yet, because sequence diffusion has both sequence & structure timestep")
+            # sinusoidal embedding
+            input_t1d_str_conf_mask[:,~input_str_mask.squeeze()] = 0
 
         # Scale seq confidence wrt t
         input_t1d_seq_conf_mask = torch.stack([input_t1d_seq_conf_mask,input_t1d_seq_conf_mask], dim=0) # [n,L]
@@ -255,7 +264,6 @@ def mask_inputs(seq,
     ###########
 
     #seq_mask = input_seq_mask[0] # DJ - old, commenting out bc using seq mask from diffuser 
-
     seq = torch.stack([seq,seq], dim=0) # [n,I,L]
     if not seq_diffuser is None:
 
@@ -274,7 +282,7 @@ def mask_inputs(seq,
 
         seq[0,:,decoded_non_motif[0],:20] = onehot_blosum_rep[0]
         seq[1,:,decoded_non_motif[1],:20] = onehot_blosum_rep[1] 
-
+    
     ### msa_masked ###
     ################## 
     msa_masked = torch.stack([msa_masked,msa_masked], dim=0) # [n,I,N_short,L,48]
@@ -326,7 +334,7 @@ def mask_inputs(seq,
     ### msa_full ### 
     ################
     msa_full = torch.stack([msa_full,msa_full], dim=0) # [n,I,N_long,L,25]
-
+    
     if not seq_diffuser is None:
         # These sequences will only go up to 20
         msa_full[...,:20]   = diffused_seq_bits[:,None,None,:,:]

@@ -60,6 +60,8 @@ class Sampler:
         print(" -seqdiff_bT")
         print(" -seqdiff_schedule_type")
         print(" -seqdiff")
+        print(" -freeze_track_motif")
+        print(" -use_motif_timestep")
         print(" ")
         print("-"*100)
         print(" ")
@@ -239,6 +241,8 @@ class Sampler:
 
         # Diffuse the contig-mapped coordinates 
         diffusion_mask = self.mask_str
+        self.diffusion_mask = diffusion_mask
+        ic(self.diffusion_mask.device)
         if self.diffuser_conf.partial_T:
             assert self.diffuser_conf.partial_T <= self.diffuser_conf.T
             self.t_step_input = int(self.diffuser_conf.partial_T)
@@ -352,6 +356,12 @@ class Sampler:
         alpha_mask = alpha_mask.reshape(1,-1,L,10,1)
         alpha_t = torch.cat((alpha, alpha_mask), dim=-1).reshape(1, -1, L, 30)
 
+        ### seq ###
+        ###########
+        #seq is now one-hot encoded
+        #TODO implement handling of Blosum and seq diffusion - NRB/DJ
+        seq = torch.nn.functional.one_hot(seq, num_classes=22).float() # [n,I,L,22] 
+
         #put tensors on device
         msa_masked = msa_masked.to(self.device)
         msa_full = msa_full.to(self.device)
@@ -426,14 +436,15 @@ class Sampler:
                                     msa_prev = msa_prev,
                                     pair_prev = pair_prev,
                                     state_prev = state_prev,
-                                    t=t,
-                                    return_infer=True)
+                                    t=torch.tensor(t),
+                                    return_infer=True,
+                                    motif_mask=self.diffusion_mask.squeeze().to(self.device))
 
         self.msa_prev=msa_prev
         self.pair_prev=pair_prev
         self.state_prev=state_prev
         # prediction of X0 
-        _, px0  = self.allatom(seq_in, px0, alpha)
+        _, px0  = self.allatom(torch.argmax(seq_in, dim=-1), px0, alpha)
         px0    = px0.squeeze()[:,:14]
 
         #sampled_seq = torch.argmax(logits.squeeze(), dim=-1)

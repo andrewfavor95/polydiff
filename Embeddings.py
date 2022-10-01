@@ -146,15 +146,28 @@ class MSA_emb(nn.Module):
         
         # msa embedding
         msa = self.emb(msa) # (B, N, L, d_model) # MSA embedding
+        
+        # Sergey's one hot trick
+        tmp = (seq @ self.emb_q.weight).unsqueeze(1) # (B, 1, L, d_model) -- query embedding
+
+        """
+        #TODO delete this once NRB agrees
         if self.input_seq_onehot:
             # Sergey's one hot trick
             tmp = (seq @ self.emb_q.weight).unsqueeze(1) # (B, 1, L, d_model) -- query embedding
         else:
             tmp = self.emb_q(seq).unsqueeze(1) # (B, 1, L, d_model) -- query embedding
+        """
         msa = msa + tmp.expand(-1, N, -1, -1) # adding query embedding to MSA
         msa = self.drop(msa)
 
         # pair embedding 
+        # Sergey's one hot trick
+        left  = (seq @ self.emb_left.weight)[:,None] # (B, 1, L, d_pair)
+        right = (seq @ self.emb_right.weight)[:,:,None] # (B, L, 1, d_pair)
+
+        """
+        #NRB can you check this is definitely functionally identical using the one-hot sequence vs the integer input
         if self.input_seq_onehot:
             # Sergey's one hot trick
             left  = (seq @ self.emb_left.weight)[:,None] # (B, 1, L, d_pair)
@@ -162,16 +175,21 @@ class MSA_emb(nn.Module):
         else:
             left = self.emb_left(seq)[:,None] # (B, 1, L, d_pair)
             right = self.emb_right(seq)[:,:,None] # (B, L, 1, d_pair)
+        """
         pair = left + right # (B, L, L, d_pair)
         pair = self.pos(pair, idx) # add relative position
 
         # state embedding
+        # Sergey's one hot trick
+        state = self.drop(seq @ self.emb_state.weight)
+        """
+        #TODO delete once verified.
         if self.input_seq_onehot:
             # Sergey's one hot trick
             state = self.drop(seq @ self.emb_state.weight)
         else:
             state = self.drop(self.emb_state(seq))
-
+        """
         return msa, pair, state
 
 class Extra_emb(nn.Module):
@@ -199,11 +217,17 @@ class Extra_emb(nn.Module):
         #   - msa: Initial MSA embedding (B, N, L, d_msa)
         N = msa.shape[1] # number of sequenes in MSA
         msa = self.emb(msa) # (B, N, L, d_model) # MSA embedding
+        
+        # Sergey's one hot trick
+        seq = (seq @ self.emb_q.weight).unsqueeze(1) # (B, 1, L, d_model) -- query embedding
+        """
+        #TODO delete this once verified
         if self.input_seq_onehot:
             # Sergey's one hot trick
             seq = (seq @ self.emb_q.weight).unsqueeze(1) # (B, 1, L, d_model) -- query embedding
         else:
             seq = self.emb_q(seq).unsqueeze(1) # (B, 1, L, d_model) -- query embedding
+        """
         msa = msa + seq.expand(-1, N, -1, -1) # adding query embedding to MSA
         return self.drop(msa)
 

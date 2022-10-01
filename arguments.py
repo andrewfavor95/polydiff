@@ -2,6 +2,7 @@ import argparse
 import data_loader
 import os
 import metrics
+from icecream import ic
 
 TRUNK_PARAMS = ['n_extra_block', 'n_main_block', 'n_ref_block',\
                 'd_msa', 'd_msa_full', 'd_pair', 'd_templ',\
@@ -287,11 +288,11 @@ def get_args(in_args=None):
 
     # parse arguments
     args = parser.parse_args(in_args)
-    
+    ic(args.sequence_decode)
     # parse boolean arguments
     args.sidechain_input = args.sidechain_input == 'True'
     args.sequence_decode = args.sequence_decode == 'True'
-
+    ic(args.sequence_decode)
     # parse the task lists
     task_names = args.task_names.split(',')
     task_p = args.task_p.split(',')
@@ -391,5 +392,7 @@ def get_args(in_args=None):
     for param in ['sidechain_input','sequence_decode', 'd_t1d', 'd_t2d']:
 >>>>>>> f9ee002 (Added:)
         preprocess_param[param] = getattr(args, param)
+    if not preprocess_param['sequence_decode']:
+        raise NotImplementedError("switching off sequence decoding still needs to be implemented")
 
     return args, trunk_param, loader_param, loss_param, diffusion_params, preprocess_param

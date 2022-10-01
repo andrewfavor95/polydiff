@@ -1594,6 +1594,7 @@ class DistilledDataset(data.Dataset):
                                                                                     true_crds_in=true_crds,
                                                                                     preprocess_param=self.preprocess_param,
                                                                                     diffusion_param=self.diffusion_param,
+                                                                                    model_param=self.model_param,
                                                                                     **{k:v for k,v in masks_1d.items()})
         '''
             Current Dimensions:
