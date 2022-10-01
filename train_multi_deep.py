@@ -646,8 +646,8 @@ class Trainer():
                     checkpoint['model_state_dict'][param].shape,
                      model.module.model.state_dict()[param].shape )
 
-        model.module.model.load_state_dict(new_chk, strict=True)
-        model.module.shadow.load_state_dict(new_chk, strict=True)
+        model.module.model.load_state_dict(new_chk, strict=False)
+        model.module.shadow.load_state_dict(new_chk, strict=False)
 
         if resume_train and (not rename_model):
             print (' ... loading optimization params')
