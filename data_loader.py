@@ -78,7 +78,11 @@ def set_data_loader_params(args):
         "DIFF_MASK_LOW":args.diff_mask_low,
         "DIFF_MASK_HIGH":args.diff_mask_high,
         "DATASETS":args.dataset,
-        "DATASET_PROB":args.dataset_prob
+        "DATASET_PROB":args.dataset_prob,
+        "P_UNCOND":args.p_uncond,
+        "MASK_MIN_PROPORTION":args.mask_min_proportion,
+        "MASK_MAX_PROPORTION":args.mask_max_proportion,
+        "MASK_BROKEN_PROPORTION":args.mask_broken_proportion
     }
     for param in PARAMS:
         if hasattr(args, param.lower()):

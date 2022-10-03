@@ -91,6 +91,14 @@ def get_args(in_args=None):
             help = 'Select dataset(s) to use. No default so make up your mind. Options are ["cn","pdb","fb","complex"]. Specify in a list: e.g. -dataset cn,pdb,fb')
     data_group.add_argument('-dataset_prob',type=str, default=None,
             help = 'Select proportion of examples from each dataset. Default behaviour is uniform. Specify like 0.2,0.4,0.4. Must sum to 1')
+    data_group.add_argument('p_uncond',type=float, default=0.2,
+            help = 'What proportion of examples do you want to be unconditional (i.e. no motif)? Default is 20%')
+    data_group.add_argument('mask_min_proportion',type=float,default=0.2,
+            help = 'When doing motif scaffolding in training, what is the minimum proportion of the protein you want to mask? Default is 0.2.')
+    data_group.add_argument('mask_max_proportion',type=float,default=1.0,
+            help = 'When doing motif scaffodling in training, what is the maximum proportion of the protein you want to mask? Default is 1.0')   
+    data_group.add_argument('mask_broken_proportion',type=float,default=0.5,
+            help = 'When doing motif scaffolding, what proportion of the time do you want the motif to be "broken" into two (mask in the middle), vs the mask being split over the termini. Default = 0.5')
 
     # Diffusion args 
     diff_group = parser.add_argument_group("diffusion parameters")
@@ -224,8 +232,8 @@ def get_args(in_args=None):
             help='Weight on squared L2 loss on axis-angle deviation error [0.0]')
     loss_group.add_argument('-w_frame_dist', type=float, default=0.0,
             help='Weight on squared L2 "frame distance" error') 
-    loss_group.add_argument('-w_exp', type=float, default=0.1,
-            help="Weight on experimental resolved in loss function [0.1]")
+    loss_group.add_argument('-w_exp', type=float, default=0.0,
+            help="Weight on experimental resolved in loss function [0.0]")
     loss_group.add_argument('-w_str', type=float, default=10.0,
             help="Weight on strd in loss function [10.0]")
     loss_group.add_argument('-w_lddt', type=float, default=0.1,

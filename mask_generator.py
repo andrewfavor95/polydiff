@@ -145,7 +145,7 @@ def generate_masks(msa, task, loader_params, chosen_dataset, full_chain=None): #
         #input_seq_mask     = torch.clone(input_str_mask)
         
         #MADE A NEW FUNCTION
-        diffusion_mask = get_diffusion_mask(L, full_prop=0.1, low_prop=0.2, high_prop=1.0, broken_prop=0.5) 
+        diffusion_mask = get_diffusion_mask(L, full_prop=loader_params['P_UNCOND'], low_prop=loader_params['MASK_MIN_PROPORTION'], high_prop=loader_params['MASK_MAX_PROPORTION'], broken_prop=loader_params['MASK_BROKEN_PROPORTION']) 
         input_str_mask = diffusion_mask
         input_seq_mask = diffusion_mask
         # t1dconf scaling will be taken care of by diffuser, so just leave those at 1 here 

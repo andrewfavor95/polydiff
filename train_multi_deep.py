@@ -611,7 +611,7 @@ class Trainer():
     def load_model(self, model, optimizer, scheduler, scaler, model_name, rank, suffix='last', resume_train=False):
 
         #chk_fn = "models/%s_%s.pt"%(model_name, suffix)
-        assert not (self.ckpt_load_path is None )
+        #assert not (self.ckpt_load_path is None )
         chk_fn = self.ckpt_load_path
 
         if DEBUG:

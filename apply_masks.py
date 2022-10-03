@@ -16,16 +16,20 @@ def sample_blosum_mutations(seq, p_blosum, p_uni, p_mask):
 
     # uniform prob
     U = torch.full((L,20), .05)
-    U = torch.cat((U,torch.zeros(L,1)), dim=-1)
+    U = torch.cat((U,torch.zeros(L,2)), dim=-1)
     U = U*p_uni
 
     # mask prob
-    M = torch.full((L,21),0)
+    M = torch.full((L,22),0)
     M[:,-1] = 1
     M = M*p_mask
 
     # blosum probs
-    B = torch.from_numpy( P_JGI[seq] ) # slice out the transition probabilities from blossom
+    blosum_padded = torch.full((22,22),0.)
+    # handle missing token
+    blosum_padded[20,20] = 1.
+    blosum_padded[:20,:20] = P_JGI
+    B = torch.from_numpy( blosum_padded[seq] ) # slice out the transition probabilities from blossom
     B = torch.cat((B,torch.zeros(L,1)), dim=-1)
     B = B*p_blosum
 
@@ -184,7 +188,6 @@ def mask_inputs(seq,
             #sampled_blosum = torch.stack([sample_blosum_mutations(seq.squeeze(0), p_blosum=diffusion_param['decode_corrupt_blosum'], p_uni=diffusion_param['decode_corrupt_uniform'], p_mask=0),\
             #                              sample_blosum_mutations(seq.squeeze(0), p_blosum=diffusion_param['decode_corrupt_blosum'], p_uni=diffusion_param['decode_corrupt_uniform'], p_mask=0)], dim=0) # [n,L]
             sampled_blosum = sample_blosum_mutations(seq.squeeze(0), p_blosum=diffusion_param['decode_corrupt_blosum'], p_uni=diffusion_param['decode_corrupt_uniform'], p_mask=0)[None].repeat(2,1) # [n, L]
-
             # find decoded residues and select them with 21% probability 
             decoded_non_motif = torch.ones_like(sampled_blosum).to(dtype=bool) # [n,L]
 
@@ -220,7 +223,7 @@ def mask_inputs(seq,
             blosum_replacement.append(sampled_blosum[0,decoded_non_motif[0]])
             blosum_replacement.append(sampled_blosum[1,decoded_non_motif[1]])
 
-            onehot_blosum_rep = [torch.nn.functional.one_hot(i, num_classes=20).float() for i in blosum_replacement] # [n,dim_replace,20]
+            onehot_blosum_rep = [torch.nn.functional.one_hot(i, num_classes=22).float() for i in blosum_replacement] # [n,dim_replace,22]
             
             # JW Move mask_msa masking here, and apply new masks (see above)
             # 1.) make all decoded residues False (so not scored scored)
@@ -280,8 +283,8 @@ def mask_inputs(seq,
         seq[0,:,~seq_mask[0],21] = 1 # mask token categorical value
         seq[1,:,~seq_mask[1],21] = 1 # mask token categorical value
 
-        seq[0,:,decoded_non_motif[0],:20] = onehot_blosum_rep[0]
-        seq[1,:,decoded_non_motif[1],:20] = onehot_blosum_rep[1] 
+        seq[0,:,decoded_non_motif[0],:22] = onehot_blosum_rep[0]
+        seq[1,:,decoded_non_motif[1],:22] = onehot_blosum_rep[1] 
     
     ### msa_masked ###
     ################## 
