@@ -3,6 +3,7 @@ import math
 from icecream import ic
 import random
 from blosum62 import p_j_given_i as P_JGI
+import numpy as np
 
 ic.configureOutput(includeContext=True)
 
@@ -25,14 +26,12 @@ def sample_blosum_mutations(seq, p_blosum, p_uni, p_mask):
     M = M*p_mask
 
     # blosum probs
-    blosum_padded = torch.full((22,22),0.)
+    blosum_padded = np.full((22,22),0.)
     # handle missing token
     blosum_padded[20,20] = 1.
     blosum_padded[:20,:20] = P_JGI
     B = torch.from_numpy( blosum_padded[seq] ) # slice out the transition probabilities from blossom
-    B = torch.cat((B,torch.zeros(L,1)), dim=-1)
     B = B*p_blosum
-
     # build transition probabilities for each residue
     P = U+M+B
 

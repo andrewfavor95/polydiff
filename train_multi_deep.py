@@ -688,6 +688,7 @@ class Trainer():
         else:
             print ("Launched from interactive")
             world_size = torch.cuda.device_count()
+            ic(world_size)
             if world_size == 1:
                 self.train_model(0, 1)
             else:

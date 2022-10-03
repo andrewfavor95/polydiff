@@ -28,6 +28,7 @@ if not os.path.exists(base_dir):
     compl_dir = "/data/databases/RoseTTAComplex"
     cn_dir = "/home/jwatson3/databases/cn_ideal"
 def set_data_loader_params(args):
+    ic(args)
     PARAMS = {
         "COMPL_LIST" : "%s/list.hetero.csv"%compl_dir,
         "HOMO_LIST" : "%s/list.homo.csv"%compl_dir,
@@ -1664,7 +1665,7 @@ class DistilledDataset(data.Dataset):
         return seq, msa, msa_masked, msa_full, mask_msa, true_crds, atom_mask, idx_pdb, xyz_t, t1d, t2d, alpha_t, xyz_prev, same_chain, unclamp, negative, masks_1d, task, chosen_dataset, little_t
 
 class DistributedWeightedSampler(data.Sampler):
-    def __init__(self, dataset, pdb_weights, compl_weights, neg_weights, fb_weights, cn_weights, p_seq2str, dataset_options, dataset_prob, num_example_per_epoch=25600, \
+    def __init__(self, dataset, pdb_weights, compl_weights, neg_weights, fb_weights, cn_weights, p_seq2str, dataset_options, dataset_prob, num_example_per_epoch, \
                  num_replicas=None, rank=None, replacement=False):
         if num_replicas is None:
             if not dist.is_available():
@@ -1674,7 +1675,15 @@ class DistributedWeightedSampler(data.Sampler):
             if not dist.is_available():
                 raise RuntimeError("Requires distributed package to be available")
             rank = dist.get_rank()
-        
+        modulo_zero = False
+        ic('here')
+        while modulo_zero is False:
+            if num_example_per_epoch % num_replicas == 0:
+                modulo_zero = True
+            else:
+                ic('subtracting')
+                num_example_per_epoch -= 1
+
         assert num_example_per_epoch % num_replicas == 0
 
         self.dataset = dataset
