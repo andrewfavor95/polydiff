@@ -570,10 +570,10 @@ class SLERP():
 
         self.T = T 
 
-    def diffuse_frames(self, xyz, diffusion_mask=None):
-        return self.slerp(xyz, diffusion_mask)
+    def diffuse_frames(self, xyz, t_list, diffusion_mask=None):
+        return self.slerp(xyz, t_list, diffusion_mask)
     
-    def slerp(self, xyz, diffusion_mask=None):
+    def slerp(self, xyz, t_list, diffusion_mask=None):
         """
         Perform spherical linear interpolation from the True coordinate frame for each 
         residue to a randomly sampled coordinate frame 
@@ -643,7 +643,11 @@ class SLERP():
         
         # apply the slerped frames to the coordinates
         slerped_crds   = np.einsum('lrij,laj->lrai', all_interps, xyz[:,:3,:] - Ca.squeeze()[:,None,...].numpy()) + Ca.squeeze()[:,None,None,...].numpy()
-        
+        if t_list != None:
+            t_idx = [t-1 for t in t_list]
+            slerped_crds   = slerped_crds[:,t_idx]
+            slerped_frames = slerped_frames[:,t_idx]
+
         # (T,L,3,3) set of backbone coordinates and frames 
         return slerped_crds, slerped_frames
 
@@ -855,6 +859,7 @@ class Diffuser():
 
         # 2 get  frames
         tick = time.time()
+        ic(t_list)
         diffused_frame_crds, diffused_frames = self.so3_diffuser.diffuse_frames(xyz[:,:3,:].clone(), diffusion_mask=diffusion_mask.numpy(), t_list=None)
         diffused_frame_crds /= self.crd_scale 
         #print('Time to diffuse frames: ',time.time()-tick)
