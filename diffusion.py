@@ -685,7 +685,10 @@ class INTERP():
         L = len(xyz14)
 
         # calculate random decoding order - linear w.r.t. time 
-        decode_times, decode_order, idx2steps, aa_masks = get_aa_schedule(self.T, L, n_steps)
+        if n_steps != 0:
+            decode_times, decode_order, idx2steps, aa_masks = get_aa_schedule(self.T, L, n_steps)
+        else:
+            decode_times, decode_order, idx2steps, aa_masks = get_aa_schedule(self.T, L, 10) # 10 is dummy number. No decoding is happening. TODO clean this up
         idx2steps = torch.from_numpy(idx2steps)
 
         xyz = torch.full((L,27,3),np.nan).float()

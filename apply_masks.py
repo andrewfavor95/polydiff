@@ -175,6 +175,11 @@ def mask_inputs(seq,
             # JW - moved mask_msa masking here
             mask_msa[:,:,:,~input_seq_mask.squeeze()] = False # don't score non-diffused positions
         else:
+
+            if diffusion_param['aa_decode_steps'] == 0:
+                print("Amino acids are not being decoded in this run")
+                aa_masks[:,:] = False
+
             # mark False where aa_mask_raw is False -- assumes everybody is potentially diffused
             seq_mask[0,~aa_masks[0]] = False
             seq_mask[1,~aa_masks[1]] = False
