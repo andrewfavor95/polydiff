@@ -1123,17 +1123,36 @@ class Trainer():
             mask_msa   = mask_msa[:,1]
             seq        = seq[:,1]
             t1d        = t1d[:,1]
-            t2d        = t2d[:,1]
-            xyz_t      = xyz_t[:,1]
             alpha_t    = alpha_t[:,1]
             little_t   = little_t[1]
+            xyz_prev   = xyz_prev[:,1]
 
             # Only provide previous xyz - NRB
             msa_prev   = None
             pair_prev  = None
             state_prev = None
 
-            if not unroll_performed: xyz_prev = xyz_prev[:,1] # grad entry at t
+            if not unroll_performed and self.diffusion_param['prob_self_cond']>0:
+                # When doing self conditioning training, the model only receives px0_xyz information through template features
+                xyz_t = torch.zeros_like(xyz_t[:,1])
+                t2d   = torch.zeros_like(t2d[:,1])
+
+            elif unroll_performed:
+                # Turn model's prediction of x0 structure into xyz_t and t2d
+                B,L = px0_xyz.shape[:2]
+                
+                zeros = torch.zeros(B,1,L,11,3).float().to(px0_xyz.device)
+                xyz_t = torch.cat((px0_xyz.unsqueeze(1),zeros), dim=-2) # [B,T,L,27,3]
+                t2d   = xyz_to_t2d(xyz_t) # [B,T,L,L,44]
+
+            elif self.diffusion_param['prob_self_cond']==0:
+                # Default behavior, no self conditioning
+                xyz_t = xyz_t[:,1]
+                t2d   = t2d[:,1]
+
+            else:
+                ic('This code should be unreachable')
+                raise NotImplementedError()
 
             with torch.no_grad():
                 for i_cycle in range(N_cycle-1):
