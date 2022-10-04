@@ -103,7 +103,7 @@ class Sampler:
         
         # Get recycle schedule
         self.recycle_schedule = iu.recycle_schedule(self.T, self.inf_conf.recycle_schedule, self.inf_conf.num_recycles)
-    
+
     @property
     def T(self):
         '''

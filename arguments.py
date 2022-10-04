@@ -400,11 +400,7 @@ def get_args(in_args=None):
     
     # Collect preprocess_params
     preprocess_param = {}
-<<<<<<< HEAD
     for param in ['sidechain_input','sequence_decode', 'd_t1d', 'd_t2d', 'predict_previous', 'prob_self_cond']:
-=======
-    for param in ['sidechain_input','sequence_decode', 'd_t1d', 'd_t2d']:
->>>>>>> f9ee002 (Added:)
         preprocess_param[param] = getattr(args, param)
     if not preprocess_param['sequence_decode']:
         raise NotImplementedError("switching off sequence decoding still needs to be implemented")

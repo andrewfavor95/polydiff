@@ -1557,7 +1557,7 @@ class DistilledDataset(data.Dataset):
             t1d=torch.cat((t1d, torch.zeros_like(t1d[...,:1])), dim=-1)
             assert self.preprocess_param['d_t1d'] == 23
         else:
-            raise NotImplementedError('DJ - havent thought about being here yet. shouldnt be too hard.')     
+            raise NotImplementedError('DJ - havent thought about being here yet. shouldnt be too hard.')  
 
         # End by checking dimensions are the intended dimensions
         if self.model_param['d_time_emb'] == 0:
@@ -1566,6 +1566,7 @@ class DistilledDataset(data.Dataset):
             pass # DJ - no check in this case because concat onto t1d happens in RF fwd pass 
                  # Model will crash anyways if the dims mismatch
                  # Also -- already checked the math works out in assertions above 
+
 
         # End by checking dimensions are the intended dimensions
         if self.model_param['d_time_emb'] == 0:
@@ -1691,19 +1692,23 @@ class DistributedWeightedSampler(data.Sampler):
         
         # Parse dataset_options and dataset_prop
         dataset_dict = {'cn':0,'pdb':0,'fb':0,'complex':0}
+
         dataset_options = dataset_options.split(",")
         num_datasets = len(dataset_options)
+
         if dataset_prob is None:
             dataset_prob = [1.0/num_datasets]*num_datasets
         else:
             dataset_prob = [float(i) for i in dataset_prob.split(",")]
             assert math.isclose(sum(dataset_prob), 1.0)
+
             assert len(dataset_prob) == len(dataset_options)
         for idx,dset in enumerate(dataset_options):
             if not idx == num_datasets-1:
                 dataset_dict[dset] = int(dataset_prob[idx]*num_example_per_epoch)
             else:
                 dataset_dict[dset] = num_example_per_epoch - sum([val for k, val in dataset_dict.items()])
+
         # Temporary until implemented
         if dataset_dict['complex'] > 0:
             print("WARNING: In this branch, the hotspot reside feature has been removed, and you're training on complexes. Be warned")
