@@ -40,7 +40,7 @@ def set_data_loader_params(args):
         #"VAL_PDB"   : "/gscratch2/PDB_val/xaa",
         "VAL_COMPL"  : "%s/val_lists/xaa"%compl_dir,
         "VAL_NEG"    : "%s/val_lists/xaa.neg"%compl_dir,
-        "DATAPKL"    : "./dataset.pkl", # cache for faster loading
+        "DATAPKL"    : args.data_pkl, # cache for faster loading
         "PDB_DIR"    : base_dir,
         "FB_DIR"     : fb_dir,
         "CN_DIR"     : cn_dir,

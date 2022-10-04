@@ -1,11 +1,3 @@
-# set to true if you dont want to use weights and biases 
-DEBUG = True 
-
-WANDB = True if not DEBUG else False 
-
-if WANDB:
-    import wandb
-
 import sys, os
 import time
 import pickle 
@@ -60,16 +52,8 @@ N_PRINT_TRAIN = 1
 
 # num structs per epoch
 # must be divisible by #GPUs
-N_EXAMPLE_PER_EPOCH = 25600
 #N_EXAMPLE_PER_EPOCH = 25600*2
 
-
-LOAD_PARAM = {'shuffle': False,
-              'num_workers': 8 if not DEBUG else 0,
-              'pin_memory': True}
-LOAD_PARAM2 = {'shuffle': False,
-              'num_workers': 8 if not DEBUG else 0,
-              'pin_memory': True}
 
 def add_weight_decay(model, l2_coeff):
     decay, no_decay = [], []
@@ -1297,7 +1281,7 @@ class Trainer():
                     local_acc = local_acc.cpu().detach().numpy()
 
                     if 'diff' in chosen_task[0]:
-                        task_str = f'diff_t{little_t}'
+                        task_str = f'diff_t{int(little_t)}'
                     else:
                         task_str = chosen_task[0]
                     
@@ -1832,6 +1816,32 @@ class Trainer():
 if __name__ == "__main__":
     from arguments import get_args
     args, model_param, loader_param, loss_param, diffusion_param, preprocess_param = get_args()
+    
+    # set epoch size 
+    global N_EXAMPLE_PER_EPOCH
+    N_EXAMPLE_PER_EPOCH = args.epoch_size 
+
+    # set global debug and wandb params 
+    global DEBUG 
+    global WANDB
+    if args.debug:
+        DEBUG = True 
+        WANDB = False 
+    else:
+        DEBUG = False 
+        WANDB = True 
+        import wandb
+    
+    # set load params based on debug
+    global LOAD_PARAM
+    global LOAD_PARAM2
+    LOAD_PARAM = {'shuffle': False,
+              'num_workers': 8 if not DEBUG else 0,
+              'pin_memory': True}
+    LOAD_PARAM2 = {'shuffle': False,
+              'num_workers': 8 if not DEBUG else 0,
+              'pin_memory': True}
+
 
     # set random seed
     torch.manual_seed(args.seed)

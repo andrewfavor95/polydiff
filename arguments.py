@@ -40,6 +40,10 @@ def get_args(in_args=None):
             help="Use interactive node")
     train_group.add_argument("-zero_weights", action="store_true", default=False,
             help="Train with all weights in the model set to zero")
+    train_group.add_argument('-debug', default=False, action='store_true', 
+            help="If true, will set script to debug mode")
+    train_group.add_argument('-epoch_size', default=25600, action='store', type=int,
+            help='Number of examples per epoch (and thus between saving epochs')
 
     # data-loading parameters
     data_group = parser.add_argument_group("data loading parameters")
@@ -99,6 +103,8 @@ def get_args(in_args=None):
             help = 'When doing motif scaffodling in training, what is the maximum proportion of the protein you want to mask? Default is 1.0')   
     data_group.add_argument('-mask_broken_proportion',type=float,default=0.5,
             help = 'When doing motif scaffolding, what proportion of the time do you want the motif to be "broken" into two (mask in the middle), vs the mask being split over the termini. Default = 0.5')
+    data_group.add_argument('-data_pkl', type=str, default='./dataset.pkl', 
+            help='Path to pickled dataset to load for training on. If path doesn\'t exist, will write new pickle with that name.')
 
     # Diffusion args 
     diff_group = parser.add_argument_group("diffusion parameters")
