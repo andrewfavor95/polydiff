@@ -57,7 +57,7 @@ def main():
                 i_space = arg_val_str.index(' ') 
                 arg = arg_val_str[:i_space] # 1st space-delimited token is name of argument
                 vals = arg_val_str[i_space+1:] # rest of string contains argument values delimited by :
-                args_vals.append([f'--{arg} {val}' for val in vals.split(':')])
+                args_vals.append([f'--{arg} {val}' for val in vals.split('|')])
             else: # flag with no values
                 args_vals.append([f'--{arg_val_str}'])
 

@@ -12,13 +12,19 @@ def main():
     parser.add_argument('--out', type=str, default='out/out',help='Path prefix for output files')
     parser.add_argument('--start_step', type=str, default='sweep', choices=['sweep','mpnn','score'],
         help='Step of pipeline to start at')
+    parser.add_argument('--inpaint', action='store_true', default=False, 
+        help="Use sweep_hyperparam_inpaint.py, i.e. command-line arguments are in argparse format")
     args, unknown = parser.parse_known_args()
 
     outdir = os.path.dirname(args.out)
 
     if args.start_step == 'sweep':
         arg_str = ' '.join(['"'+x+'"' if (' ' in x or '|' in x or x=='') else x for x in sys.argv[1:]])
-        jobid_sweep = run_pipeline_step(f'{script_dir}sweep_hyperparam.py {arg_str}')
+        if args.inpaint:
+            script = f'{script_dir}sweep_hyperparam_inpaint.py'
+        else:
+            script = f'{script_dir}sweep_hyperparam.py'
+        jobid_sweep = run_pipeline_step(f'{script} {arg_str}')
 
         print('Waiting for design jobs to finish...')
         wait_for_jobs(jobid_sweep)
