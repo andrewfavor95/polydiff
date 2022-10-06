@@ -21,7 +21,7 @@ import numpy as np
 import pandas as pd
 from collections import OrderedDict
 
-sys.path.append('/software/mlfold/') # common path on digs
+sys.path.insert(0,'/software/mlfold/') # common path on digs
 from alphafold.common import protein
 from alphafold.data import pipeline
 from alphafold.data import templates
