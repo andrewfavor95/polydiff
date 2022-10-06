@@ -242,7 +242,6 @@ class Sampler:
         # Diffuse the contig-mapped coordinates 
         diffusion_mask = self.mask_str
         self.diffusion_mask = diffusion_mask
-        ic(self.diffusion_mask.device)
         if self.diffuser_conf.partial_T:
             assert self.diffuser_conf.partial_T <= self.diffuser_conf.T
             self.t_step_input = int(self.diffuser_conf.partial_T)

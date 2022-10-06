@@ -119,13 +119,24 @@ def mask_inputs(seq,
         # NOTE: assert that xyz_t is the TRUE coordinates! Should come from fixbb loader 
         #       also assumes all 4 of seq are identical 
 
-        # pick t uniformly 
+        # pick t uniformly
         t = random.randint(1,diffuser.T)
-        if t == diffuser.T: t_list = [t,t]
-        else: t_list = [t+1,t]
+        #t_list, t_dict, t_dict2list = get_t_list(n_cond_steps=diffusion_param['n_self_cond_steps'],
+        #                                         predict_previous=diffusion_param['predict_previous'],
+        #                                         T=diffuser.T)
+
+        # Now get 
+
+        if t == diffuser.T: 
+            t_list = [t,t]
+        else: 
+            t_list = [t+1,t]
+
+
         if predict_previous:
             # grab previous t. if t is 0 force a prediction of x_t=0
-            tprev = t-1 if t > 0 else t
+            assert t > 0
+            tprev = t-1 
             t_list.append(tprev)
         
         # Ensures that all I dimensions are size 1 - NRB
@@ -140,11 +151,11 @@ def mask_inputs(seq,
                   'seq'             :seq.squeeze(0),
                   'atom_mask'       :atom_mask.squeeze(),
                   'diffusion_mask'  :input_str_mask.squeeze(),
-                  't_list':t_list}
+                  't_list'          :t_list}
         
         diffused_fullatoms, aa_masks, true_crds = diffuser.diffuse_pose(**kwargs)
 
-        if not seq_diffuser is None:
+        if seq_diffuser is not None:
             seq_args = {
                         'seq'            : seq.squeeze(0),
                         'diffusion_mask' : input_seq_mask.squeeze(),
@@ -159,9 +170,11 @@ def mask_inputs(seq,
                 if predict_previous: raise NotImplementedError() # This involves changing the shape of true crds - NRB
             else:
                 diffused_seq_bits = torch.nn.functional.one_hot(diffused_seq, num_classes=20).float()
-
-        if predict_previous: assert(diffused_fullatoms.shape[0] == 3)
-        else: assert(diffused_fullatoms.shape[0] == 2)
+         
+        if predict_previous: 
+            assert(diffused_fullatoms.shape[0] == 3)
+        else: 
+            assert(diffused_fullatoms.shape[0] == 2)
 
         # seq_mask - True-->revealed, False-->masked 
         seq_mask = torch.ones(2,L).to(dtype=bool) # all revealed [t,L]
@@ -249,16 +262,17 @@ def mask_inputs(seq,
         # multiplicitavely applied to a default conf mask of 1.0 everywhwere
         # TODO NRB make this work for sinusoidal embedding + sequence diffusion
         input_t1d_str_conf_mask = torch.stack([input_t1d_str_conf_mask,input_t1d_str_conf_mask], dim=0) # [n,L]
-        
-        if not model_param['d_time_emb'] > 0: 
-            # linear timestep
-            input_t1d_str_conf_mask[0,~input_str_mask.squeeze()] = 1 - t_list[0]/diffuser.T
-            input_t1d_str_conf_mask[1,~input_str_mask.squeeze()] = 1 - t_list[1]/diffuser.T
-        else:
-            if not seq_diffuser is None: 
+
+        if model_param['d_time_emb'] > 0:
+            if not (seq_diffuser is None):
                 raise NotImplementedError("Sinuisoidal timestep embedding isn't implemented for sequence diffusion yet, because sequence diffusion has both sequence & structure timestep")
             # sinusoidal embedding
             input_t1d_str_conf_mask[:,~input_str_mask.squeeze()] = 0
+        else:
+            # linear timestep
+            input_t1d_str_conf_mask[0,~input_str_mask.squeeze()] = 1 - t_list[0]/diffuser.T
+            input_t1d_str_conf_mask[1,~input_str_mask.squeeze()] = 1 - t_list[1]/diffuser.T
+        
 
         # Scale seq confidence wrt t
         input_t1d_seq_conf_mask = torch.stack([input_t1d_seq_conf_mask,input_t1d_seq_conf_mask], dim=0) # [n,L]

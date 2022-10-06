@@ -102,7 +102,7 @@ class RoseTTAFoldModule(nn.Module):
 
         # Get timestep embedding (if using)
         if hasattr(self, 'timestep_embedder'):
-            assert not (t is None)
+            assert t is not None
             time_emb = self.timestep_embedder(L,t,motif_mask)
             t1d = torch.cat([t1d, time_emb[None,None,...]], dim=-1)
 
@@ -110,10 +110,10 @@ class RoseTTAFoldModule(nn.Module):
         pair, state = self.templ_emb(t1d, t2d, alpha_t, xyz_t, pair, state, use_checkpoint=use_checkpoint)
         
         # Predict coordinates from given inputs
-        sim_motif_mask = motif_mask if self.freeze_track_motif else torch.zeros_like(motif_mask).bool()
+        is_frozen_residue = motif_mask if self.freeze_track_motif else torch.zeros_like(motif_mask).bool()
         msa, pair, R, T, alpha_s, state = self.simulator(seq, msa_latent, msa_full, pair, xyz[:,:,:3],
                                                          state, idx, use_checkpoint=use_checkpoint,
-                                                         motif_mask=sim_motif_mask)
+                                                         motif_mask=is_frozen_residue)
         
         if return_raw:
             # get last structure

@@ -1676,15 +1676,9 @@ class DistributedWeightedSampler(data.Sampler):
             if not dist.is_available():
                 raise RuntimeError("Requires distributed package to be available")
             rank = dist.get_rank()
-        modulo_zero = False
-        ic('here')
-        while modulo_zero is False:
-            if num_example_per_epoch % num_replicas == 0:
-                modulo_zero = True
-            else:
-                ic('subtracting')
-                num_example_per_epoch -= 1
-
+        
+        # make dataset divisible among devices 
+        num_example_per_epoch -= num_example_per_epoch % num_replicas 
         assert num_example_per_epoch % num_replicas == 0
 
         self.dataset = dataset
