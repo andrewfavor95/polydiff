@@ -104,6 +104,11 @@ class Sampler:
         # Get recycle schedule
         self.recycle_schedule = iu.recycle_schedule(self.T, self.inf_conf.recycle_schedule, self.inf_conf.num_recycles)
 
+    def process_target(self, pdb_path):
+        assert not (self.inf_conf.ppi_design and self.inf_conf.autogenerate_contigs), "target reprocessing not implemented yet for these configuration arguments"
+        self.target_feats = iu.process_target(self.inf_conf.input_pdb)
+        self.chain_idx = None
+
     @property
     def T(self):
         '''
@@ -141,7 +146,11 @@ class Sampler:
         """
         
         # get overrides to re-apply after building the config from the checkpoint
-        overrides = HydraConfig.get().overrides.task
+        overrides = []
+        try:
+            overrides = HydraConfig.get().overrides.task
+        except Exception as e:
+            print('WARNING: failed to parse command-line overrides')
         if 'config_dict' in self.ckpt.keys():
             print("Assembling -model, -diffuser and -preprocess configs from checkpoint")
 
@@ -150,6 +159,7 @@ class Sampler:
                 #assert all([i in self._conf[cat].keys() for i in self.ckpt['config_dict'][cat].keys()]), f"There are keys in the checkpoint config_dict {cat} params not in the config file"
                 for key in self._conf[cat]:
                     try:
+                        print(f"USING MODEL CONFIG: self._conf[{cat}][{key}] = {self.ckpt['config_dict'][cat][key]}")
                         self._conf[cat][key] = self.ckpt['config_dict'][cat][key]
                     except:
                         print(f'WARNING: config {cat}.{key} is not saved in the checkpoint. Check that conf.{cat}.{key} = {self._conf[cat][key]} is correct')
@@ -196,7 +206,7 @@ class Sampler:
         })
         return iu.Denoise(**denoise_kwargs)
 
-    def sample_init(self):
+    def sample_init(self, return_forward_trajectory=False):
         """Initial features to start the sampling process.
         
         Modify signature and function body for different initialization
@@ -247,12 +257,13 @@ class Sampler:
             self.t_step_input = int(self.diffuser_conf.partial_T)
         else:
             self.t_step_input = int(self.diffuser_conf.T)
+        t_list = np.arange(self.t_step_input+1)
         out = self.diffuser.diffuse_pose(
             xyz_mapped,
             torch.clone(seq_t),  # TODO: Check if copy is needed.
             atom_mask_mapped.squeeze(),
-            diffusion_mask=diffusion_mask.squeeze(), t_list=[self.t_step_input])
-        fa_stack, _, _ = out
+            diffusion_mask=diffusion_mask.squeeze(), t_list=t_list)
+        fa_stack, aa_masks, xyz_true = out
         
         xT = fa_stack[-1].squeeze()[:,:14,:]
         xt = torch.clone(xT)
@@ -260,6 +271,11 @@ class Sampler:
         if self.symmetry is not None:
             xt, seq_t = self.symmetry.apply_symmetry(xt, seq_t)
         self._log.info(f'Sequence init: {seq2chars(seq_t.numpy().tolist())}')
+        
+        if return_forward_trajectory:
+            forward_traj = torch.cat([xyz_true[None], fa_stack[:,:,:]])
+            return xt, seq_t, forward_traj, aa_masks
+
         return xt, seq_t
     
     def _preprocess(self, seq, xyz_t, t, repack=False):
@@ -421,6 +437,10 @@ class Sampler:
             msa_prev = None
             pair_prev = None
             state_prev = None
+        # ic(x_t.shape, xyz_t.shape)
+        # ic(torch.allclose(x_t.cpu(), xyz_t[0,0,:,:14].cpu()))
+        # for i, x in enumerate([x_t, xyz_t[0,0,:,:14]]):
+        #     ic(i, x[:2, 3:, 0])
         with torch.no_grad():
             for _ in range(self.recycle_schedule[t-1]):
                 msa_prev, pair_prev, px0, state_prev, alpha, logits, plddt = self.model(msa_masked,
