@@ -5,10 +5,11 @@
 #
 
 import sys, os, argparse, itertools, json, shutil
-import slurm_tools
 import numpy as np
 
 script_dir = os.path.dirname(os.path.realpath(__file__))+'/'
+sys.path.append(script_dir+'util/')
+import slurm_tools
 
 def main():
 
