@@ -288,6 +288,7 @@ def get_args(in_args=None):
     parser.add_argument('-wandb_prefix', type=str, required=True,
             help='Prefix for name of session on wandb. This MUST be specified - make it clear what general parameters were used')
     parser.add_argument('-metric', type=lambda m: getattr(metrics, m), action='append')
+    parser.add_argument('-log_inputs', action='store_true', default=False)
     
     # Preprocessing parameters
     preprocess_group = parser.add_argument_group("preprocess parameters")

@@ -251,4 +251,72 @@ def cartesian_product_transpose(*arrays):
         start, end = end, end + rows
     return out.reshape(cols, rows).T
 
+def reverse_simple(sampler):
+    x_init, seq_init, forward_traj, aa_masks = sampler.sample_init(return_forward_trajectory=True)
+    #x_init, seq_init = sampler.sample_init()
+    
+    denoised_xyz_stack = []
+    px0_xyz_stack = []
+    seq_stack = []
+    chi1_stack = []
+    plddt_stack = []
+    # pseq_stack = []
 
+    x_t = torch.clone(x_init)
+    seq_t = torch.clone(seq_init)
+
+
+    # Loop over number of reverse diffusion time steps.
+    for t in tqdm.tqdm(range(sampler.t_step_input, 0, -1)):
+        px0, x_t, seq_t, tors_t, plddt = sampler.sample_step(
+            t=t, seq_t=seq_t, x_t=x_t, seq_init=seq_init)
+        
+        
+        px0_xyz_stack.append(px0)
+        denoised_xyz_stack.append(x_t)
+        seq_stack.append(seq_t.clone().cpu())
+        chi1_stack.append(tors_t[:,:])
+        plddt_stack.append(plddt[0]) # remove singleton leading 
+
+    denoised_xyz_stack = torch.stack(denoised_xyz_stack).cpu()
+    denoised_xyz_stack = torch.flip(denoised_xyz_stack, [0,])
+    px0_xyz_stack = torch.stack(px0_xyz_stack).cpu()
+    px0_xyz_stack = torch.flip(px0_xyz_stack, [0,])
+    seq_stack = torch.stack(seq_stack).cpu()
+    seq_stack = torch.flip(seq_stack, [0,])
+    #return denoised_xyz_stack, px0_xyz_stack, forward_traj, seq_stack
+    return Trajectory(denoised_xyz_stack, px0_xyz_stack, forward_traj.cpu(), seq_stack), {'x_init': x_init}
+
+
+def sc(sampler):
+    #x_init, seq_init = sampler.sample_init()
+    x_init, seq_init, forward_traj, aa_masks = sampler.sample_init(return_forward_trajectory=True)
+
+    denoised_xyz_stack = []
+    px0_xyz_stack = []
+    seq_stack = []
+    chi1_stack = []
+    plddt_stack = []
+
+    x_t = torch.clone(x_init)
+    seq_t = torch.clone(seq_init)
+
+    # Loop over number of reverse diffusion time steps.
+    for t in range(int(sampler.t_step_input), 0, -1):
+        print('t:', t)
+        #ic(seq_t.shape, x_t.shape, seq_init.shape)
+        px0, x_t, seq_t, tors_t, plddt = sampler.sample_step(
+            t=t, seq_t=seq_t, x_t=x_t, seq_init=seq_init)
+        px0_xyz_stack.append(px0)
+        denoised_xyz_stack.append(x_t)
+        seq_stack.append(seq_t)
+        chi1_stack.append(tors_t[:,:])
+        plddt_stack.append(plddt[0]) # remove singleton leading dimension
+
+    # Flip order for better visualization in pymol
+    denoised_xyz_stack = torch.stack(denoised_xyz_stack)
+    denoised_xyz_stack = torch.flip(denoised_xyz_stack, [0,])
+    px0_xyz_stack = torch.stack(px0_xyz_stack)
+    px0_xyz_stack = torch.flip(px0_xyz_stack, [0,])
+
+    return Trajectory(denoised_xyz_stack, px0_xyz_stack, None, None), {'x_init': x_init}

@@ -28,6 +28,7 @@ import rotation_conversions as rot_conv
 from icecream import ic
 from apply_masks import mask_inputs
 import random
+from model_input_logger import pickle_function_call
 
 # added for diffusion training 
 from diffusion import Diffuser
@@ -122,7 +123,7 @@ class Trainer():
                  n_epoch=100, lr=1.0e-4, l2_coeff=1.0e-2, port=None, interactive=False,
                  model_param={}, loader_param={}, loss_param={}, batch_size=1, accum_step=1, 
                  maxcycle=4, diffusion_param={}, preprocess_param={}, outdir=f'./train_session{get_datetime()}', wandb_prefix='',
-                 metrics=None, zero_weights=False):
+                 metrics=None, zero_weights=False, log_inputs=False):
 
         self.model_name = model_name #"BFF"
         self.ckpt_load_path = ckpt_load_path
@@ -134,6 +135,7 @@ class Trainer():
         self.outdir = outdir
         self.zero_weights=zero_weights
         self.metrics=metrics or []
+        self.log_inputs=log_inputs
 
         if not os.path.isdir(self.outdir):
             os.makedirs(self.outdir, exist_ok=True)
@@ -830,7 +832,9 @@ class Trainer():
         # define model
         print('Making model...')
         model = EMA(RoseTTAFoldModule(**self.model_param, d_t1d=self.preprocess_param['d_t1d'], d_t2d=self.preprocess_param['d_t2d'], T=self.diffusion_param['diff_T']).to(gpu), 0.999)
-
+	if self.log_inputs:
+            pickle_dir = pickle_function_call(model, 'forward', 'training')
+            print(f'pickle_dir: {pickle_dir}')
         print('Instantiating DDP')
         ddp_model = DDP(model, device_ids=[gpu], find_unused_parameters=False)
         if rank == 0:
@@ -1195,6 +1199,7 @@ class Trainer():
                     loss = loss / self.ACCUM_STEP
 
                     if not torch.isnan(loss):
+
                         scaler.scale(loss).backward()
             else:
                 with torch.cuda.amp.autocast(enabled=USE_AMP):
@@ -1861,5 +1866,6 @@ if __name__ == "__main__":
                     preprocess_param=preprocess_param,
                     wandb_prefix=args.wandb_prefix,
                     metrics=args.metric,
-                    zero_weights=args.zero_weights)
+                    zero_weights=args.zero_weights,
+                    log_inputs=args.log_inputs)
     train.run_model_training(torch.cuda.device_count())

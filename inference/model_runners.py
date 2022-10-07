@@ -248,6 +248,7 @@ class Sampler:
         seq_t = torch.full((1,L_mapped), 21).squeeze()
         seq_t[contig_map.hal_idx0] = seq_orig[contig_map.ref_idx0]
         seq_t[~self.mask_seq.squeeze()] = 21
+        ic(seq_t[:6])
 
         # Diffuse the contig-mapped coordinates 
         diffusion_mask = self.mask_str
@@ -257,7 +258,8 @@ class Sampler:
             self.t_step_input = int(self.diffuser_conf.partial_T)
         else:
             self.t_step_input = int(self.diffuser_conf.T)
-        t_list = np.arange(self.t_step_input+1)
+        t_list = np.arange(1, self.t_step_input+1)
+        ic(t_list)
         out = self.diffuser.diffuse_pose(
             xyz_mapped,
             torch.clone(seq_t),  # TODO: Check if copy is needed.
@@ -266,6 +268,10 @@ class Sampler:
         fa_stack, aa_masks, xyz_true = out
         
         xT = fa_stack[-1].squeeze()[:,:14,:]
+        aa_mask = aa_masks[-1]
+        ic(aa_mask)
+        ic(seq_orig.shape, seq_t.shape, aa_mask.shape)
+        seq_t[aa_mask] = seq_orig[aa_mask]
         xt = torch.clone(xT)
 
         if self.symmetry is not None:
@@ -273,7 +279,8 @@ class Sampler:
         self._log.info(f'Sequence init: {seq2chars(seq_t.numpy().tolist())}')
         
         if return_forward_trajectory:
-            forward_traj = torch.cat([xyz_true[None], fa_stack[:,:,:]])
+            #forward_traj = torch.cat([xyz_true[None], fa_stack[:,:,:]])
+            forward_traj = fa_stack
             return xt, seq_t, forward_traj, aa_masks
 
         return xt, seq_t
@@ -501,7 +508,8 @@ class Sampler:
             px0 = px0.to(x_t.device)
         if self.symmetry is not None:
             x_t_1, seq_t_1 = self.symmetry.apply_symmetry(x_t_1, seq_t_1)
-        return px0, x_t_1, seq_t_1, tors_t_1, plddt
+        #return px0, x_t_1, seq_t_1, tors_t_1, plddt, logits, {'seq_in', seq_in}
+        return px0, x_t_1, seq_t_1, tors_t_1, plddt, logits
 
 
 class Seq2StrSampler(Sampler):
