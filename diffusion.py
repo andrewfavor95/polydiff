@@ -477,7 +477,7 @@ class IGSO3():
         return (perturbed_crds.transpose(1, 0, 2, 3),   # [L, T, 3, 3]
                 R_perturbed.transpose(1, 0, 2, 3))
 
-    def reverse_sample(self, r_t, r_0, t, noise_level=0.5, mask=None):
+    def reverse_sample(self, r_t, r_0, t, noise_level, mask=None):
         """reverse_sample uses an approximation to the IGSO3 score to sample
         a rotation at the previous time step.
         
@@ -517,7 +517,7 @@ class IGSO3():
         & Poole, B. (2020). Score-based generative modeling through stochastic
         differential equations. arXiv preprint arXiv:2011.13456.
         """
-        t_idx = t-1 # DJ
+        # NB this has been written for 1-indexed t, so no need for t_idx
 
         # compute rotation vector corresponding to prediction of how r_t goes to r_0
         r_0, r_t = torch.tensor(r_0), torch.tensor(r_t)
@@ -533,10 +533,10 @@ class IGSO3():
         # implicitly provides a roughly linear scaling in the size of the 
         # update of the  rotation with the distance of r_0 to 
         omega = torch.linalg.norm(r_0t_rotvec).numpy()
-        score_approx = r_0t_rotvec*self.score_norm(t_idx, omega)/omega  # DJ - t_idx here instead of t
+        score_approx = r_0t_rotvec*self.score_norm(t, omega)/omega  
 
         # Compute scaling for score and sampled noise (following Eq 6 of [2])
-        continuous_t = t_idx/self.T
+        continuous_t = t/self.T
         rot_g = self.g(continuous_t).to(score_approx.device)
 
         # Sample and scale noise to add to the rotation perturbation in the
