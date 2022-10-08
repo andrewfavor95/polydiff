@@ -4,8 +4,9 @@ import os
 from functools import cached_property
 import torch
 
+L_default = 2000
 
-def igso3_expansion(omega, sigma, L=1000):
+def igso3_expansion(omega, sigma, L=L_default):
     """Truncated sum of IGSO(3) distribution.
 
     This function approximates the power series in equation 5 of
@@ -29,7 +30,7 @@ def igso3_expansion(omega, sigma, L=1000):
         p += (2*l + 1) * np.exp(-l*(l+1)*sigma**2/2) * np.sin(omega*(l+1/2)) / np.sin(omega/2)
     return p
 
-def igso3_expansion_torch(omega, sigma, L=1000):
+def igso3_expansion_torch(omega, sigma, L=L_default):
     """Truncated sum of IGSO(3) distribution implemented in torch
 
     Args:
@@ -62,7 +63,7 @@ def density(expansion, omega, marginal=True):
         return expansion / 8 / np.pi**2
 
 
-def calc_score_norm(exp, omega, sigma, L=1000):  # score of density over SO(3)
+def calc_score_norm(exp, omega, sigma, L=L_default):  # score of density over SO(3)
     """score uses the quotient rule to compute the scaling factor for the score
     of the IGSO(3) density.
 
@@ -95,7 +96,7 @@ def calc_score_norm(exp, omega, sigma, L=1000):  # score of density over SO(3)
         dSigma += (2 * l + 1) * np.exp(-l * (l + 1) * sigma**2/2) * (lo * dhi - hi * dlo) / lo ** 2
     return dSigma / exp
 
-def calc_score_norm_torch(omega, sigma, L=1000):  # score of density over SO(3)
+def calc_score_norm_torch(omega, sigma, L=L_default):  # score of density over SO(3)
     """calc_score_norm_torch is a differentiable torch implementation of calc_score_norm
 
     Args:
@@ -120,7 +121,19 @@ def calc_score_norm_torch(omega, sigma, L=1000):  # score of density over SO(3)
         dSigma += (2 * l + 1) * torch.exp(-l * (l + 1) * sigma**2/2) * (lo * dhi - hi * dlo) / lo ** 2
     return dSigma / exp
 
-def calculate_igso3(*, num_timesteps, num_omega, min_sigma, max_sigma):
+def calculate_igso3(*, num_sigma, num_omega, min_sigma, max_sigma, L=L_default):
+    """calculate_igso3 pre-computes numerical approximations to the IGSO3 cdfs
+    and score norms and expected squared score norms.
+
+    Args:
+        num_sigma: number of different sigmas for which to compute igso3
+            quantities.
+        num_omega: number of point in the discretization in the angle of
+            rotation.
+        min_sigma, max_sigma: the upper and lower ranges for the angle of
+            rotation on which to consider the IGSO3 distribution.  This cannot
+            be too low or it will create numerical instability.
+    """
     # Discretize omegas for calculating CDFs. Skip omega=0.
     discrete_omega = np.linspace(0, np.pi, num_omega+1)[1:]
 
@@ -130,9 +143,9 @@ def calculate_igso3(*, num_timesteps, num_omega, min_sigma, max_sigma):
     discrete_sigma = 10 ** np.linspace(
         np.log10(min_sigma),
         np.log10(max_sigma),
-        num_timesteps + 1)[1:]
+        num_sigma + 1)[1:]
     exp_vals = np.asarray(
-        [igso3_expansion(discrete_omega, sigma) for sigma in discrete_sigma])
+        [igso3_expansion(discrete_omega, sigma, L=L) for sigma in discrete_sigma])
 
     # Compute the pdf and cdf values for the marginal distribution of the angle
     # of rotation (which is needed for sampling)
@@ -146,9 +159,7 @@ def calculate_igso3(*, num_timesteps, num_omega, min_sigma, max_sigma):
     score_norm = np.asarray(
         [calc_score_norm(exp_vals[i], discrete_omega, x) for i, x in enumerate(discrete_sigma)])
 
-    # TODO: Check Gabri's calculation
-    # BLT: shouldn't this be (pi/N) * sum(score_norms**2 * pdf_vals)?
-    # Also, what shapes are these?
+    # Compute the standard deviation of the score norm for each sigma
     exp_score_norms = np.sqrt(
         np.sum(
             score_norm**2 * pdf_vals, axis=1) / np.sum(
