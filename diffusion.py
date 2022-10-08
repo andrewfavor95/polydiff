@@ -835,10 +835,13 @@ class Diffuser():
                  chi_kwargs={},
                  var_scale=1.0,
                  cache_dir='.',
-                 partial_T=None):
+                 partial_T=None,
+                 truncation_level=2000
+                 ):
         """
         
         Parameters:
+            truncation_level: for the igso3 numerical approximation
             
         """
         #print('**********16')
@@ -862,7 +865,8 @@ class Diffuser():
                 schedule=so3_schedule_type,
                 min_b=min_b,
                 max_b=max_b,
-                cache_dir=self.cache_dir
+                cache_dir=self.cache_dir,
+                L=truncation_level, 
             )        
         else:
             raise NotImplementedError()
