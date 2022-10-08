@@ -244,13 +244,30 @@ class EuclideanDiffuser():
 #TODO:  This class uses scipy+numpy for the slerping/matrix generation 
 #       Probably could be much faster if everything was in torch
 
+def write_pkl(save_path: str, pkl_data):
+    """Serialize data into a pickle file."""
+    with open(save_path, 'wb') as handle:
+        pickle.dump(pkl_data, handle, protocol=pickle.HIGHEST_PROTOCOL)
+
+
+def read_pkl(read_path: str, verbose=False):
+    """Read data from a pickle file."""
+    with open(read_path, 'rb') as handle:
+        try:
+            return pickle.load(handle)
+        except Exception as e:
+            if verbose:
+                print(f'Failed to read {read_path}')
+            raise(e)
+
 class IGSO3():
     """
     Class for taking in a set of backbone crds and performing IGSO3 diffusion
     on all of them
     """
 
-    def __init__(self, *, T, min_sigma, max_sigma, min_b, max_b, num_omega=1000, schedule="linear"):
+    def __init__(self, *, T, min_sigma, max_sigma, min_b, max_b,
+            cache_dir, num_omega=1000, schedule="linear", L=2000):
         """
 
         Args:
@@ -262,30 +279,73 @@ class IGSO3():
             num_omega: discretization level in the angles across [0, pi]
             schedule: currently only linear and exponential are supported.  The exponential schedule may be noising too slowly.
             ]
+            L: truncation level
         """
+        self._log = logging.getLogger(__name__)
+
 
         self.T = T
 
+
         self.schedule = schedule
+        self.cache_dir = cache_dir
         self.min_sigma = min_sigma
         self.max_sigma = max_sigma
 
         if self.schedule == 'linear':
             self.min_b = min_b
             self.max_b = max_b
+            self.max_sigma = self.sigma(1.)
         self.num_omega = num_omega
+        self.num_sigma = 500
         # Calculate igso3 values.
-        self.igso3_vals = self._calc_igso3_vals()
+        self.L = L # truncation level
+        self.igso3_vals = self._calc_igso3_vals(L=L)
         self.step_size = 1 / self.T
 
-    def _calc_igso3_vals(self):
-        replace_period = lambda x: str(x).replace('.', '_')
+    def _calc_igso3_vals(self, L=2000):
+        """_calc_igso3_vals computes numerical approximations to the
+        relevant analytically intractable functionals of the igso3
+        distribution.
 
-        igso3_vals = igso3.calculate_igso3(
-                num_timesteps=self.T,
+        The calculated values are cached, or loaded from cache if they already
+        exist.
+
+        Args:
+            L: truncation level for power series expansion of the pdf.
+        """
+        replace_period = lambda x: str(x).replace('.', '_')
+        if self.schedule == 'linear':
+            cache_fname = os.path.join(
+                self.cache_dir, f'T_{self.T}_omega_{self.num_omega}_min_sigma_{replace_period(self.min_sigma)}'+
+                f'_min_b_{replace_period(self.min_b)}_max_b_{replace_period(self.max_b)}_schedule_{self.schedule}.pkl'
+            )
+        elif self.schedule == 'exponential':
+            cache_fname = os.path.join(
+                self.cache_dir, f'T_{self.T}_omega_{self.num_omega}_min_sigma_{replace_period(self.min_sigma)}'
+                f'_max_sigma_{replace_period(self.max_sigma)}_schedule_{self.schedule}'
+            )
+        else:
+            raise ValueError(f'Unrecognize schedule {self.schedule}')
+
+
+
+        if not os.path.isdir(self.cache_dir):
+            os.makedirs(self.cache_dir)
+
+        if os.path.exists(cache_fname):
+            self._log.info('Using cached IGSO3.')
+            igso3_vals = read_pkl(cache_fname)
+        else:
+            self._log.info('Calculating IGSO3.')
+            igso3_vals = igso3.calculate_igso3(
+                num_sigma=self.num_sigma,
                 min_sigma=self.min_sigma,
                 max_sigma=self.max_sigma,
-                num_omega=self.num_omega)
+                num_omega=self.num_omega,
+                L=L)
+            write_pkl(cache_fname, igso3_vals)
+
         return igso3_vals
 
     @property
@@ -353,9 +413,10 @@ class IGSO3():
         Returns:
         sampled angles of rotation. [len(ts), N]
         """
+        assert sum(ts==0) == 0, "assumes one-indexed, not zero indexed"
         all_samples = []
         for t in ts:
-            sigma_idx = self.t_to_idx(t)
+            sigma_idx = self.t_to_idx(t) 
             sample_i = np.interp(
                 np.random.rand(n_samples),
                 self.igso3_vals['cdf'][sigma_idx],
@@ -405,7 +466,7 @@ class IGSO3():
             t_idx = t-1 
             sigma_idx = self.t_to_idx(t)
             score_norm_t = np.interp(
-                omega[t_idx],
+                omega,
                 self.igso3_vals['discrete_omega'],
                 self.igso3_vals['score_norm'][sigma_idx]
             )[:, None]
@@ -522,7 +583,8 @@ class IGSO3():
         # compute rotation vector corresponding to prediction of how r_t goes to r_0
         r_0, r_t = torch.tensor(r_0), torch.tensor(r_t)
         r_0t = torch.einsum('ij,kj->ik', r_t, r_0)
-        r_0t_rotvec = rotation_conversions.matrix_to_axis_angle(r_0t)
+        r_0t_rotvec = torch.tensor(scipy_R.from_matrix(
+            r_0t.cpu().numpy()).as_rotvec()).to(r_0.device)
 
         # Approximate the score based on the prediction of R0.
         # This approximation would be exactly equal to the conditional score
@@ -772,6 +834,7 @@ class Diffuser():
                  schedule_kwargs={},
                  chi_kwargs={},
                  var_scale=1.0,
+                 cache_dir='.',
                  partial_T=None):
         """
         
@@ -799,6 +862,7 @@ class Diffuser():
                 schedule=so3_schedule_type,
                 min_b=min_b,
                 max_b=max_b,
+                cache_dir=self.cache_dir
             )        
         else:
             raise NotImplementedError()
