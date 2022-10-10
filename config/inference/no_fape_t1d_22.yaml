@@ -3,7 +3,7 @@ defaults:
   - base
 
 inference:
-  autoregressive_confidence: False
+  autoregressive_confidence: True
   no_confidence: False
   output_prefix: 'test_output/runnb'
   softmax_T: 0.1
