@@ -55,7 +55,6 @@ def main(conf: HydraConfig) -> None:
 
         # Loop over number of reverse diffusion time steps.
         for t in range(int(sampler.t_step_input), 0, -1):
-            ic(seq_t.shape, x_t.shape, seq_init.shape)
             px0, x_t, seq_t, tors_t, plddt = sampler.sample_step(
                 t=t, seq_t=seq_t, x_t=x_t, seq_init=seq_init)
             px0_xyz_stack.append(px0)

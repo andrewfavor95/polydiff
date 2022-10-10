@@ -153,10 +153,9 @@ class Sampler:
         
         # get overrides to re-apply after building the config from the checkpoint
         overrides = []
-        try:
+        if HydraConfig.initialized():
             overrides = HydraConfig.get().overrides.task
-        except Exception as e:
-            print('WARNING: failed to parse command-line overrides')
+            ic(overrides)
         if 'config_dict' in self.ckpt.keys():
             print("Assembling -model, -diffuser and -preprocess configs from checkpoint")
 
@@ -455,10 +454,6 @@ class Sampler:
             msa_prev = None
             pair_prev = None
             state_prev = None
-        # ic(x_t.shape, xyz_t.shape)
-        # ic(torch.allclose(x_t.cpu(), xyz_t[0,0,:,:14].cpu()))
-        # for i, x in enumerate([x_t, xyz_t[0,0,:,:14]]):
-        #     ic(i, x[:2, 3:, 0])
         with torch.no_grad():
             for _ in range(self.recycle_schedule[t-1]):
                 msa_prev, pair_prev, px0, state_prev, alpha, logits, plddt = self.model(msa_masked,
