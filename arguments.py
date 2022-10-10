@@ -138,8 +138,6 @@ def get_args(in_args=None):
             help='Total number of steps to decode amino acid identities and chi angles over.')
     diff_group.add_argument('-predict_previous', action='store_true',
             help='If True, model predictions x_t-1 instead of x0')
-    diff_group.add_argument('-prob_self_cond', type=float, default=0,
-            help='The probability the model will receive self conditioning information during training')
     diff_group.add_argument('-seqdiff_b0', type=float, default=0.001,
             help='b_0 parameter for Sequence diffuser.')
     diff_group.add_argument('-seqdiff_bT', type=float, default=0.1,
@@ -300,6 +298,12 @@ def get_args(in_args=None):
             help='dimension of t1d raw inputs')
     preprocess_group.add_argument('-d_t2d', type=int, default = 44,
             help = 'dimension of t2d raw inputs')
+    diff_group.add_argument('-prob_self_cond', type=float, default=0,
+            help='The probability the model will receive self conditioning information during training. Default=0')
+    diff_group.add_argument('-str_self_cond', action="store_true", default=False,
+            help='Whether to train the model with structure self conditioning information. Default=False')
+    diff_group.add_argument('-seq_self_cond', action="store_true", default=False,
+            help='Whether to train the model with sequence self conditioning information. Default=False')
 
     # parse arguments
     args = parser.parse_args(in_args)
@@ -401,7 +405,15 @@ def get_args(in_args=None):
     
     # Collect preprocess_params
     preprocess_param = {}
-    for param in ['sidechain_input','sequence_decode', 'd_t1d', 'd_t2d', 'predict_previous', 'prob_self_cond']:
+    for param in ['sidechain_input',
+                  'sequence_decode',
+                  'd_t1d',
+                  'd_t2d',
+                  'predict_previous',
+                  'prob_self_cond',
+                  'str_self_cond',
+                  'seq_self_cond'
+                  ]:
         preprocess_param[param] = getattr(args, param)
     if not preprocess_param['sequence_decode']:
         raise NotImplementedError("switching off sequence decoding still needs to be implemented")

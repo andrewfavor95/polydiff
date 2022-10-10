@@ -1065,17 +1065,17 @@ class Trainer():
 
             N_cycle = np.random.randint(1, self.maxcycle+1) # number of recycling
 
-            msa_prev = None
-            pair_prev = None
-            state_prev = None
             # get diffusion_mask for the displacement loss
             diffusion_mask     = masks_1d['input_str_mask'].squeeze()
             seq_diffusion_mask = masks_1d['input_seq_mask'].squeeze().to(gpu, non_blocking=True)
 
             unroll_performed = False
 
-            # Some percentage of the time, provide the model with the model's prediction of x_0 | x_t+1
+            assert(( self.preprocess_param['prob_self_cond'] == 0 ) ^ \
+                   ( self.preprocess_param['str_self_cond'] or self.preprocess_param['seq_self_cond'] )), \
+                  'prob_self_cond must be > 0 for str_self_cond or seq_self_cond to be active'
 
+            # Some percentage of the time, provide the model with the model's prediction of x_0 | x_t+1
             # When little_t[0] == little_t[1] we are at t == T so we should not unroll
             if not (little_t[0] == little_t[1]) and (torch.tensor(self.preprocess_param['prob_self_cond']) > torch.rand(1)):
 
@@ -1088,39 +1088,49 @@ class Trainer():
                     with ddp_model.no_sync():
                         with torch.cuda.amp.autocast(enabled=USE_AMP):
 
+                            if self.preprocess_param['seq_self_cond']:
+                                # When doing sequence self-conditioning we give the model the perturbed seq and the model's prediction of the seq
+                                # These are in two lines in the MSA and in this order: [model pred, perturbed true]
+                                # Since this is the step before self conditioning, we just make the model pred all zeros
+
+                                use_msa_masked = torch.stack((msa_masked[:,0,:,0],msa_masked[:,0,:,0]), dim=2) # [B,I,N_short,L,48]
+                                use_msa_masked[:,:,0] = 0
+
+                                use_msa_full = torch.stack((msa_full[:,0,:,0],msa_full[:,0,:,0]), dim=2) # [B,I,N_long,L,25]
+                                use_msa_full[:,:,0] = 0
+
+                            else:
+                                # When doing no sequence self-conditioning we an MSA with depth == 1 - NRB
+                                use_msa_masked = msa_masked[:,0]
+                                use_msa_full   = msa_full[:,0]
 
                             # Select timestep t = t+1
-                            use_msa_masked = msa_masked[:,0]
-                            use_msa_full   = msa_full[:,0]
                             use_seq        = seq[:,0]
-                            xyz_prev       = xyz_prev[:,0] # grab t entry, could also make this None when not self conditioning
+                            use_xyz_prev   = xyz_prev[:,0] # grab t entry, could also make this None when not self conditioning
                             use_t1d        = t1d[:,0]
-                            use_t2d        = t2d[:,0]
+                            use_t2d        = t2d[:,0] # May want to make this zero for self cond
                             use_xyz_t      = xyz_t[:,0]
                             use_alpha_t    = alpha_t[:,0]
 
-                            msa_prev, pair_prev, xyz_prev, state_prev, alpha = ddp_model(
+                            _, sequence_logits, _, px0_xyz, _, _ = ddp_model(
                                                                        use_msa_masked[:,0],
                                                                        use_msa_full[:,0],
                                                                        use_seq[:,0],
-                                                                       xyz_prev,
+                                                                       use_xyz_prev,
                                                                        idx_pdb,
                                                                        t=little_t[0],
                                                                        t1d=use_t1d,
                                                                        t2d=use_t2d,
                                                                        xyz_t=use_xyz_t,
                                                                        alpha_t=use_alpha_t,
-                                                                       msa_prev=msa_prev,
-                                                                       pair_prev=pair_prev,
+                                                                       msa_prev=None,
+                                                                       pair_prev=None,
                                                                        state_prev=None,
-                                                                       return_raw=True,
+                                                                       return_raw=False,
                                                                        motif_mask=diffusion_mask
                                                                        )
 
             # From here on out we will operate with t = t
-            msa_masked = msa_masked[:,1]
-            msa_full   = msa_full[:,1]
-            mask_msa   = mask_msa[:,1]
             seq        = seq[:,1]
             t1d        = t1d[:,1]
             alpha_t    = alpha_t[:,1]
@@ -1132,27 +1142,66 @@ class Trainer():
             pair_prev  = None
             state_prev = None
 
-            if not unroll_performed and self.diffusion_param['prob_self_cond']>0:
-                # When doing self conditioning training, the model only receives px0_xyz information through template features
-                xyz_t = torch.zeros_like(xyz_t[:,1])
-                t2d   = torch.zeros_like(t2d[:,1])
+            if self.preprocess_param['str_self_cond']:
+                if unroll_performed:
+                    # When doing self conditioning training, the model only receives px0_xyz information through template features
+                    # Turn model's prediction of x0 structure into xyz_t and t2d
+                    I,B,L = px0_xyz.shape[:3]
 
-            elif unroll_performed:
-                # Turn model's prediction of x0 structure into xyz_t and t2d
-                B,L = px0_xyz.shape[:2]
-                
-                zeros = torch.zeros(B,1,L,11,3).float().to(px0_xyz.device)
-                xyz_t = torch.cat((px0_xyz.unsqueeze(1),zeros), dim=-2) # [B,T,L,27,3]
-                t2d   = xyz_to_t2d(xyz_t) # [B,T,L,L,44]
+                    assert(px0_xyz.shape[-2] == 3) # No sidechains allowed
 
-            elif self.diffusion_param['prob_self_cond']==0:
-                # Default behavior, no self conditioning
+                    px0_xyz = px0_xyz[-1] # Only grab final prediction
+                    
+                    zeros = torch.zeros(B,1,L,24,3).float().to(px0_xyz.device)
+                    xyz_t = torch.cat((px0_xyz.unsqueeze(1),zeros), dim=-2) # [B,T,L,27,3]
+                    t2d   = xyz_to_t2d(xyz_t) # [B,T,L,L,44]
+                else:
+                    xyz_t = torch.zeros_like(xyz_t[:,1])
+                    t2d   = torch.zeros_like(t2d[:,1])
+            else:
+                # Default behavior, no str self conditioning
                 xyz_t = xyz_t[:,1]
                 t2d   = t2d[:,1]
 
+            if self.preprocess_param['seq_self_cond']:
+                if unroll_performed:
+                    # Removing prediction of mask character
+                    pred_seq = sequence_logits[0,:20,:].permute(1,0) # [L,20]
+                    pred_seq = pred_seq[:L] # Only take first L characters, not N*L
+
+                    ################
+                    ## msa_masked ##
+                    ################
+                    msa_masked = torch.stack((msa_masked[:,1,:,0],msa_masked[:,1,:,0]), dim=2) # [B,I,N_short,L,48]
+
+                    msa_masked[:,:,0]         = 0 # Zero this out before we reassign it - NRB
+                    msa_masked[:,:,0,:,:20]   = pred_seq
+                    msa_masked[:,:,0,:,22:42] = pred_seq
+
+                    ################
+                    ### msa_full ###
+                    ################
+                    msa_full = torch.stack((msa_full[:,1,:,0],msa_full[:,1,:,0]), dim=2) # [B,I,N_long,L,25]
+
+                    msa_full[:,:,0]       = 0 # Zero this out before we reassign it - NRB
+                    msa_full[:,:,0,:,:20] = pred_seq
+                     
+                else:
+                    msa_masked_zeros = torch.zeros_like(msa_masked[:,1,:,0]).to(msa_masked.device)
+                    msa_masked       = torch.stack((msa_masked_zeros, msa_masked[:,1,:,0]), dim=2) # [B,I,N_short,L,48]
+
+                    msa_full_zeros   = torch.zeros_like(msa_full[:,1,:,0]).to(msa_full.device)
+                    msa_full         = torch.stack((msa_full_zeros, msa_full[:,1,:,0]), dim=2) # [B,I,N_long,L,25]
+
+                # Always use mask_msa as the input version but stacked in a different dimension
+                # [B,n,N_short,L] to [B,N_short,L] since N_short of input is always size 1, now n becomes N_short
+                mask_msa = mask_msa.squeeze(2) # [B,2,L]
+
             else:
-                ic('This code should be unreachable')
-                raise NotImplementedError()
+                # Default behavior, no seq self conditioning
+                msa_masked = msa_masked[:,1]
+                msa_full   = msa_full[:,1]
+                mask_msa   = mask_msa[:,1]
 
             with torch.no_grad():
                 for i_cycle in range(N_cycle-1):
@@ -1214,7 +1263,11 @@ class Trainer():
 
                         prob = self.active_fn(logit_s[0]) # distogram
                         acc_s = self.calc_acc(prob, c6d[...,0], idx_pdb, mask_2d)
-                        
+
+                        if self.preprocess_param['seq_self_cond']:
+                            # logit_aa_s is [B,21,N*L] and we only want the first L
+                            logit_aa_s = logit_aa_s[:,:,:L] # [B,21,N*L]
+                    
                         loss, loss_s, loss_dict = self.calc_loss(logit_s, c6d,
                                 logit_aa_s, msa[:, i_cycle], mask_msa[:,i_cycle], logit_exp,
                                 pred_crds, alphas, true_crds, mask_crds,
@@ -1254,6 +1307,10 @@ class Trainer():
 
                     prob = self.active_fn(logit_s[0]) # distogram
                     acc_s = self.calc_acc(prob, c6d[...,0], idx_pdb, mask_2d)
+
+                    if self.preprocess_param['seq_self_cond']:
+                        # logit_aa_s is [B,21,N*L] and we only want the first L
+                        logit_aa_s = logit_aa_s[:,:,:L] # [B,21,L]
                     
                     loss, loss_s, loss_dict = self.calc_loss(logit_s, c6d,
                                 logit_aa_s, msa[:, i_cycle], mask_msa[:,i_cycle], logit_exp,
