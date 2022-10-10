@@ -853,6 +853,7 @@ class Diffuser():
         self.crd_scale = crd_scale
         self.var_scale = var_scale
         self.aa_decode_steps=aa_decode_steps
+        self.cache_dir = cache_dir
 
         # get backbone frame diffuser 
         if so3_type == 'slerp':
