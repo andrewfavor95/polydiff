@@ -47,6 +47,11 @@ class Sampler:
 
         # Load checkpoint, so that we can assemble the config
         self.load_checkpoint()
+        self.initialize_sampler(conf)
+
+    def initialize_sampler(self, conf: DictConfig):
+        # Assign config to Sampler
+        self._conf = conf
         
         # Assemble config from the checkpoint
         self.assemble_config_from_chk() 
@@ -234,8 +239,14 @@ class Sampler:
         mask_27 = target_feats['mask_27']
         seq_orig = target_feats['seq']
         L_mapped = len(self.contig_map.ref)
+
+        diffusion_mask = self.mask_str
+        self.diffusion_mask = diffusion_mask
+
         # adjust size of input xt according to residue map 
         if self.diffuser_conf.partial_T:
+            assert xyz_27.shape[0] == L_mapped, f"there must be a coordinate in the input PDB for each residue implied by the contig string for partial diffusion.  length of input PDB != length of contig string: {xyz_27.shape[0]} != {L_mapped}"
+            assert contig_map.hal_idx0 == contig_map.ref_idx0, 'for partial diffusion there can be no offset between the index of a residue in the input and the index of the residue in the output'
             # Partially diffusing from a known structure
             xyz_mapped=xyz_27
             atom_mask_mapped = mask_27
@@ -252,31 +263,27 @@ class Sampler:
         seq_t = torch.full((1,L_mapped), 21).squeeze()
         seq_t[contig_map.hal_idx0] = seq_orig[contig_map.ref_idx0]
         seq_t[~self.mask_seq.squeeze()] = 21
-        ic(seq_t[:6])
 
         # Diffuse the contig-mapped coordinates 
-        diffusion_mask = self.mask_str
-        self.diffusion_mask = diffusion_mask
         if self.diffuser_conf.partial_T:
             assert self.diffuser_conf.partial_T <= self.diffuser_conf.T
             self.t_step_input = int(self.diffuser_conf.partial_T)
         else:
             self.t_step_input = int(self.diffuser_conf.T)
         t_list = np.arange(1, self.t_step_input+1)
-        ic(t_list)
-        out = self.diffuser.diffuse_pose(
+        fa_stack, aa_masks, xyz_true = self.diffuser.diffuse_pose(
             xyz_mapped,
             torch.clone(seq_t),  # TODO: Check if copy is needed.
             atom_mask_mapped.squeeze(),
             diffusion_mask=diffusion_mask.squeeze(), t_list=t_list)
-        fa_stack, aa_masks, xyz_true = out
-        
         xT = fa_stack[-1].squeeze()[:,:14,:]
-        aa_mask = aa_masks[-1]
-        ic(aa_mask)
-        ic(seq_orig.shape, seq_t.shape, aa_mask.shape)
-        seq_t[aa_mask] = seq_orig[aa_mask]
         xt = torch.clone(xT)
+
+        if self.diffuser_conf.partial_T:
+            is_motif = self.mask_seq.squeeze()
+            is_shown_at_t = torch.tensor(aa_masks[-1])
+            seq_is_shown = is_motif | is_shown_at_t
+            seq_t[seq_is_shown] = seq_orig[seq_is_shown]
 
         if self.symmetry is not None:
             xt, seq_t = self.symmetry.apply_symmetry(xt, seq_t)
@@ -288,7 +295,7 @@ class Sampler:
             return xt, seq_t, forward_traj, aa_masks
 
         return xt, seq_t
-    
+
     def _preprocess(self, seq, xyz_t, t, repack=False):
         
         """

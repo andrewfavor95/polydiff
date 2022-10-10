@@ -32,6 +32,9 @@ preprocess:
 denoiser:
   noise_scale_frame: 1
 
+contigmap:
+  contigs: ['58']
+
 likelihood:
   T: null
   output_dir: ''
