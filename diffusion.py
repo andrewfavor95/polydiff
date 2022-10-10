@@ -462,11 +462,12 @@ class IGSO3():
         """
         omega = np.linalg.norm(vec, axis=-1)
         all_score_norm = []
-        for t in ts:
+        for i, t in enumerate(ts):
+            omega_t = omega[i]
             t_idx = t-1 
             sigma_idx = self.t_to_idx(t)
             score_norm_t = np.interp(
-                omega,
+                omega_t,
                 self.igso3_vals['discrete_omega'],
                 self.igso3_vals['score_norm'][sigma_idx]
             )[:, None]
