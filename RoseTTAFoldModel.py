@@ -49,7 +49,7 @@ class RoseTTAFoldModule(nn.Module):
                                    d_hidden=d_hidden_templ, p_drop=0.25, d_t1d=d_t1d, d_t2d=d_t2d)
 
         # timestep embedder 
-        if d_time_emb > 0:
+        if d_time_emb:
             print('NOTE: Using sinusoidal timestep embeddings of dim ',d_time_emb, ' projected to dim ',d_time_emb_proj)
             assert d_t1d >= 22 + d_time_emb_proj, 'timestep projection size doesn\'t fit into RF t1d projection layers'
             self.timestep_embedder = Timestep_emb(input_size=d_time_emb, 
@@ -82,7 +82,7 @@ class RoseTTAFoldModule(nn.Module):
                 t1d=None, t2d=None, xyz_t=None, alpha_t=None,
                 msa_prev=None, pair_prev=None, state_prev=None,
                 return_raw=False, return_full=False, return_infer=False,
-                use_checkpoint=False, motif_mask=None):
+                use_checkpoint=False, motif_mask=None, i_cycle=None, n_cycle=None):
 
         B, N, L = msa_latent.shape[:3]
         # Get embeddings

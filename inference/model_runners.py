@@ -20,6 +20,7 @@ from hydra.core.hydra_config import HydraConfig
 import sys
 sys.path.append('../') # to access RF structure prediction stuff 
 import data_loader 
+from model_input_logger import pickle_function_call
 
 TOR_INDICES = util.torsion_indices
 TOR_CAN_FLIP = util.torsion_can_flip
@@ -181,6 +182,9 @@ class Sampler:
         self.d_t2d=self._conf.preprocess.d_t2d
 
         model = RoseTTAFoldModule(**self._conf.model, d_t1d=self.preprocess_conf.d_t1d, d_t2d=self.preprocess_conf.d_t2d, T=self.diffuser_conf.T).to(self.device)
+        if self._conf.logging.inputs:
+            pickle_dir = pickle_function_call(model, 'forward', 'inference')
+            print(f'pickle_dir: {pickle_dir}')
         model = model.eval()
         self._log.info(f'Loading checkpoint.')
         model.load_state_dict(self.ckpt['model_state_dict'], strict=True)
@@ -508,8 +512,7 @@ class Sampler:
             px0 = px0.to(x_t.device)
         if self.symmetry is not None:
             x_t_1, seq_t_1 = self.symmetry.apply_symmetry(x_t_1, seq_t_1)
-        #return px0, x_t_1, seq_t_1, tors_t_1, plddt, logits, {'seq_in', seq_in}
-        return px0, x_t_1, seq_t_1, tors_t_1, plddt, logits
+        return px0, x_t_1, seq_t_1, tors_t_1, plddt
 
 
 class Seq2StrSampler(Sampler):

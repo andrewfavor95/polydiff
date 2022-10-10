@@ -299,7 +299,7 @@ class Trainer():
         str_tscale = self.loss_schedules.get('w_str',[1]*(t))[t_idx]
         w_all_tscale = self.loss_schedules.get('w_all',[1]*(t))[t_idx]
 
-	# Displacement prediction loss between xyz prev and xyz_true
+        # Displacement prediction loss between xyz prev and xyz_true
         if unclamp:
             disp_loss = calc_displacement_loss(pred_in, true, gamma=0.99, d_clamp=None)
         else:
@@ -831,10 +831,12 @@ class Trainer():
         
         # define model
         print('Making model...')
-        model = EMA(RoseTTAFoldModule(**self.model_param, d_t1d=self.preprocess_param['d_t1d'], d_t2d=self.preprocess_param['d_t2d'], T=self.diffusion_param['diff_T']).to(gpu), 0.999)
-	if self.log_inputs:
+        model = RoseTTAFoldModule(**self.model_param, d_t1d=self.preprocess_param['d_t1d'], d_t2d=self.preprocess_param['d_t2d'], T=self.diffusion_param['diff_T']).to(gpu)
+        if self.log_inputs:
             pickle_dir = pickle_function_call(model, 'forward', 'training')
             print(f'pickle_dir: {pickle_dir}')
+
+        model = EMA(model, 0.999)
         print('Instantiating DDP')
         ddp_model = DDP(model, device_ids=[gpu], find_unused_parameters=False)
         if rank == 0:
@@ -1152,7 +1154,9 @@ class Trainer():
                                                                       pair_prev=pair_prev,
                                                                       state_prev=state_prev,
                                                                       return_raw=True,
-                                                                      motif_mask=diffusion_mask
+                                                                      motif_mask=diffusion_mask,
+                                                                      i_cycle=i_cycle,
+                                                                      n_cycle=N_cycle,
                                                                       )
 
                             #_, xyz_prev = self.compute_allatom_coords(seq[:,i_cycle], xyz_prev, alpha)
@@ -1173,7 +1177,10 @@ class Trainer():
                                                                    pair_prev=pair_prev,
                                                                    state_prev=state_prev,
                                                                    use_checkpoint=True,
-                                                                   motif_mask=diffusion_mask)
+                                                                   motif_mask=diffusion_mask,
+                                                                   i_cycle=i_cycle,
+                                                                   n_cycle=N_cycle,
+                                                                   )
 
                         # find closest homo-oligomer pairs
                         true_crds, mask_crds = resolve_equiv_natives(pred_crds[-1], true_crds, mask_crds)

@@ -95,13 +95,14 @@ class DecodeSchedule():
             ca   = px0[:,1,:]
             dmap = torch.sqrt( (ca[None,:] - ca[:,None]).square().sum(dim=-1) + 1e-6 )
 
-            for i,_ in enumerate(range(N-1)):
+            for i in range(N):
                 if i == 0:
                     # sample a random residue which hasn't been decoded yet
                     first_idx = np.random.choice(torch.arange(L)[~self.visible])
                     decode_list.append(int(first_idx))
                     self.visible[first_idx] = True
                     self.T[first_idx] = t_idx + 1
+                    continue
 
                 # given already sampled indices, get another
                 decode_idx = self.get_next_idx(decode_list,dmap)
