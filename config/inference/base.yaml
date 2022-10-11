@@ -100,7 +100,7 @@ seqdiffuser:
 
 denoiser:
   noise_scale_ca: 1
-  noise_scale_frame: 0.5 # used to be noise_level
+  noise_scale_frame: 1
   noise_scale_torsion: 1
 
 ppi:

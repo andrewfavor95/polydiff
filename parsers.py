@@ -87,18 +87,23 @@ def parse_a3m(filename):
 
 # read and extract xyz coords of N,Ca,C atoms
 # from a PDB file
-def parse_pdb(filename):
+
+def parse_pdb(filename, xyz27=False,seq=False):
     lines = open(filename,'r').readlines()
-    return parse_pdb_lines(lines)
+    return parse_pdb_lines(lines, xyz27, seq)
 
 #'''
-def parse_pdb_lines(lines):
+def parse_pdb_lines(lines, xyz27, seq):
 
     # indices of residues observed in the structure
     idx_s = [int(l[22:26]) for l in lines if l[:4]=="ATOM" and l[12:16].strip()=="CA"]
-
+    res = [(l[22:26],l[17:20]) for l in lines if l[:4]=="ATOM" and l[12:16].strip()=="CA"]
+    seq = [util.aa2num[r[1]] if r[1] in util.aa2num.keys() else 20 for r in res]
     # 4 BB + up to 10 SC atoms
-    xyz = np.full((len(idx_s), 14, 3), np.nan, dtype=np.float32)
+    if xyz27:
+        xyz = np.full((len(idx_s), 27, 3), np.nan, dtype=np.float32)
+    else:
+        xyz = np.full((len(idx_s), 14, 3), np.nan, dtype=np.float32)
     for l in lines:
         if l[:4] != "ATOM":
             continue
@@ -111,9 +116,12 @@ def parse_pdb_lines(lines):
 
     # save atom mask
     mask = np.logical_not(np.isnan(xyz[...,0]))
-    xyz[np.isnan(xyz[...,0])] = 0.0
+    xyz[np.isnan(xyz[...,0])] = 0.0 
+    if not seq:
+        return xyz,mask,np.array(idx_s)
+    else:
+        return xyz,mask,np.array(idx_s),np.array(seq)
 
-    return xyz,mask,np.array(idx_s)
 #'''
 
 '''
