@@ -745,6 +745,8 @@ def sampler_selector(conf: DictConfig):
         sampler = model_runners.T1d28T2d45Sampler(conf)
     elif conf.inference.model_runner == 'seq2str':
         sampler = model_runners.Seq2StrSampler(conf)
+    elif conf.inference.model_runner == 'JWStyleSelfCond':
+        sampler = model_runners.JWStyleSelfCond(conf)
     else:
         raise ValueError(f'Unrecognized sampler {conf.model_runner}')
     return sampler

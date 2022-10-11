@@ -295,6 +295,10 @@ class Sampler:
             forward_traj = torch.cat([xyz_true[None], fa_stack[:,:,:]])
             #forward_traj = fa_stack
             return xt, seq_t, forward_traj, aa_masks
+        
+        self.msa_prev = None
+        self.pair_prev = None
+        self.state_prev = None
 
         return xt, seq_t
 
@@ -500,7 +504,7 @@ class Sampler:
             f'Timestep {t}, current sequence: { seq2chars(torch.argmax(pseq_0, dim=-1).tolist())}')
         
         if t > 1:
-            x_t_1, seq_t_1, tors_t_1, px0 = self.denoiser.get_next_pose(
+            x_t_1, seqSampler_t_1, tors_t_1, px0 = self.denoiser.get_next_pose(
                 xt=x_t,
                 px0=px0,
                 t=t,
@@ -700,4 +704,116 @@ class Seq2StrSampler(Sampler):
 
 
         
+class JWStyleSelfCond(Sampler):
+    """
+    Model Runner for self conditioning in the style attempted by JW in
+    frame_sql2_pdb_data_T200_sinusoidal_frozenmotif_lddt_distog_noseq_physics_selfcond_lowlr_train_session2022-10-06_1665075957.8513756
+    """
+    def sample_step(self, *, t, seq_t, x_t, seq_init):
+        '''
+        Generate the next pose that the model should be supplied at timestep t-1.
 
+        Args:
+            t (int): The timestep that has just been predicted
+            seq_t (torch.tensor): (L) The sequence at the beginning of this timestep
+            x_t (torch.tensor): (L,14,3) The residue positions at the beginning of this timestep
+            seq_t (torch.tensor): (L) The initialized sequence used in updating the sequence.
+            
+        Returns:
+            px0: (L,14,3) The model's prediction of x0.
+            x_t_1: (L,14,3) The updated positions of the next step.
+            seq_t_1: (L) The updated sequence of the next step.
+            tors_t_1: (L, ?) The updated torsion angles of the next  step.
+            plddt: (L, 1) Predicted lDDT of x0.
+        '''
+        out = self._preprocess(seq_t, x_t, t)
+        msa_masked, msa_full, seq_in, xt_in, idx_pdb, t1d, t2d, xyz_t, alpha_t = self._preprocess(
+            seq_t, x_t, t)
+        
+        # Save inputs for next timestep
+        self.t1d = t1d
+        self.t2d = t2d
+        self.alpha = alpha_t
+        N,L = msa_masked.shape[:2]
+
+        if self.symmetry is not None:
+            idx_pdb, self.chain_idx = self.symmetry.res_idx_procesing(res_idx=idx_pdb)
+
+        with torch.no_grad():
+            for _ in range(self.recycle_schedule[t-1]):
+                msa_prev, pair_prev, px0, state_prev, alpha, logits, plddt = self.model(msa_masked,
+                                    msa_full,
+                                    seq_in,
+                                    xt_in,
+                                    idx_pdb,
+                                    t1d=t1d,
+                                    t2d=t2d,
+                                    xyz_t=xyz_t,
+                                    alpha_t=alpha_t,
+                                    msa_prev = msa_prev,
+                                    pair_prev = pair_prev,
+                                    state_prev = state_prev,
+                                    t=torch.tensor(t),
+                                    return_infer=True,
+                                    motif_mask=self.diffusion_mask.squeeze().to(self.device))
+
+        self.msa_prev=msa_prev
+        self.pair_prev=pair_prev
+        self.state_prev=state_prev
+        self.prev_pred = torch.clone(px0)
+        # prediction of X0 
+        _, px0  = self.allatom(torch.argmax(seq_in, dim=-1), px0, alpha)
+        px0    = px0.squeeze()[:,:14]
+        #sampled_seq = torch.argmax(logits.squeeze(), dim=-1)
+        seq_probs   = torch.nn.Softmax(dim=-1)(logits.squeeze()/self.inf_conf.softmax_T)
+        sampled_seq = torch.multinomial(seq_probs, 1).squeeze() # sample a single value from each position 
+
+        # grab only the query sequence prediction - adjustment for Seq2StrSampler
+        sampled_seq = sampled_seq.reshape(N,L,-1)[0,0]
+
+        # Process outputs.
+        mask_seq = self.mask_seq
+        sampled_seq[mask_seq.squeeze()] = seq_init[
+            mask_seq.squeeze()].to(self.device)
+
+        pseq_0 = torch.nn.functional.one_hot(
+            sampled_seq, num_classes=22).to(self.device)
+        self._log.info(
+            f'Timestep {t}, current sequence: { seq2chars(torch.argmax(pseq_0, dim=-1).tolist())}')
+
+        if t > 1:
+            x_t_1, seqSampler_t_1, tors_t_1, px0 = self.denoiser.get_next_pose(
+                xt=x_t,
+                px0=px0,
+                t=t,
+                diffusion_mask=self.mask_str.squeeze(),
+                seq_t=seq_t,
+                pseq0=pseq_0,
+                align_motif=self.inf_conf.align_motif,
+            )
+        else:
+            x_t_1 = torch.clone(px0).to(x_t.device)
+            seq_t_1 = torch.clone(sampled_seq)
+            # Dummy tors_t_1 prediction. Not used in final output.
+            tors_t_1 = torch.ones((self.mask_str.shape[-1], 10, 2))
+            px0 = px0.to(x_t.device)
+        if self.symmetry is not None:
+            x_t_1, seq_t_1 = self.symmetry.apply_symmetry(x_t_1, seq_t_1)
+        return px0, x_t_1, seq_t_1, tors_t_1, plddt
+
+    def _preprocess(self, seq, xyz_t, t, repack=False):
+        msa_masked, msa_full, seq_in, xt_in, idx_pdb, t1d, t2d, xyz_t, alpha_t = super()._preprocess(self, seq, xyz_t, t, repack=False)
+        
+        if t != self.T:
+            # add last step
+            xyz_prev_padded = torch.full_like(xyz_t, float('nan'))
+            xyz_prev_padded[:,:,:,:3,:] = self.prev_pred[None] 
+            xyz_t = torch.cat((xyz_t, xyz_prev_padded), dim=1)
+            t1d = t1d.repeat(1,2,1,1)
+            t1d[:,1,:,21] = self.t1d[...,21]
+            t1d[:,1,:,22] = 1
+            t2d_temp = xyz_to_t2d(xyz_prev_padded).to(gpu, non_blocking=True)
+            t2d = torch.cat((t2d, t2d_temp), dim=1)
+            alpha_temp = torch.zeros_like(alpha_t).to(gpu, non_blocking=True)
+            alpha_t = torch.cat((alpha_t, alpha_temp), dim=1)
+        return msa_masked, msa_full, seq_in, xt_in, idx_pdb, t1d, t2d, xyz_t, alpha_t
