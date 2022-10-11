@@ -102,9 +102,10 @@ class RoseTTAFoldModule(nn.Module):
 
         # Get timestep embedding (if using)
         if hasattr(self, 'timestep_embedder'):
-            assert t is not None
+            assert not (t is None)
             time_emb = self.timestep_embedder(L,t,motif_mask)
-            t1d = torch.cat([t1d, time_emb[None,None,...]], dim=-1)
+            n_tmpl = t1d.shape[1]
+            t1d = torch.cat([t1d, time_emb[None,None,...].repeat(1,n_tmpl,1,1)], dim=-1)
 
         # add template embedding
         pair, state = self.templ_emb(t1d, t2d, alpha_t, xyz_t, pair, state, use_checkpoint=use_checkpoint)

@@ -16,6 +16,7 @@ import torch.nn.functional as nn
 import util
 import hydra
 from hydra.core.hydra_config import HydraConfig
+import os
 
 import sys
 sys.path.append('../') # to access RF structure prediction stuff 
@@ -325,7 +326,6 @@ class Sampler:
             t2d (1, L, L, 45)
                 - last plane is block adjacency
     """
-        
         L = seq.shape[-1]
         T = self.T
         ppi_design = self.inf_conf.ppi_design
@@ -709,6 +709,11 @@ class JWStyleSelfCond(Sampler):
     Model Runner for self conditioning in the style attempted by JW in
     frame_sql2_pdb_data_T200_sinusoidal_frozenmotif_lddt_distog_noseq_physics_selfcond_lowlr_train_session2022-10-06_1665075957.8513756
     """
+    def __init__(self, conf: DictConfig):
+        super().__init__(conf)
+        self.self_cond = self.inf_conf.use_jw_selfcond 
+        if not self.self_cond:
+            print(" ", "*" * 100, " ", "WARNING: You're using the JWStyleSelfCond sampler, but inference.use_jw_selfcond is set to False. Is this intentional?", " ", "*" * 100, " ", sep=os.linesep)
     def sample_step(self, *, t, seq_t, x_t, seq_init):
         '''
         Generate the next pose that the model should be supplied at timestep t-1.
@@ -731,14 +736,13 @@ class JWStyleSelfCond(Sampler):
             seq_t, x_t, t)
         
         # Save inputs for next timestep
-        self.t1d = t1d
-        self.t2d = t2d
+        self.t1d = t1d[:,:1]
+        self.t2d = t2d[:,:1]
         self.alpha = alpha_t
         N,L = msa_masked.shape[:2]
 
         if self.symmetry is not None:
             idx_pdb, self.chain_idx = self.symmetry.res_idx_procesing(res_idx=idx_pdb)
-
         with torch.no_grad():
             for _ in range(self.recycle_schedule[t-1]):
                 msa_prev, pair_prev, px0, state_prev, alpha, logits, plddt = self.model(msa_masked,
@@ -750,9 +754,9 @@ class JWStyleSelfCond(Sampler):
                                     t2d=t2d,
                                     xyz_t=xyz_t,
                                     alpha_t=alpha_t,
-                                    msa_prev = msa_prev,
-                                    pair_prev = pair_prev,
-                                    state_prev = state_prev,
+                                    msa_prev = self.msa_prev,
+                                    pair_prev = self.pair_prev,
+                                    state_prev = self.state_prev,
                                     t=torch.tensor(t),
                                     return_infer=True,
                                     motif_mask=self.diffusion_mask.squeeze().to(self.device))
@@ -782,7 +786,7 @@ class JWStyleSelfCond(Sampler):
             f'Timestep {t}, current sequence: { seq2chars(torch.argmax(pseq_0, dim=-1).tolist())}')
 
         if t > 1:
-            x_t_1, seqSampler_t_1, tors_t_1, px0 = self.denoiser.get_next_pose(
+            x_t_1, seq_t_1, tors_t_1, px0 = self.denoiser.get_next_pose(
                 xt=x_t,
                 px0=px0,
                 t=t,
@@ -801,10 +805,10 @@ class JWStyleSelfCond(Sampler):
             x_t_1, seq_t_1 = self.symmetry.apply_symmetry(x_t_1, seq_t_1)
         return px0, x_t_1, seq_t_1, tors_t_1, plddt
 
-    def _preprocess(self, seq, xyz_t, t, repack=False):
-        msa_masked, msa_full, seq_in, xt_in, idx_pdb, t1d, t2d, xyz_t, alpha_t = super()._preprocess(self, seq, xyz_t, t, repack=False)
-        
-        if t != self.T:
+    def _preprocess(self, seq, xyz_t, t):
+        msa_masked, msa_full, seq_in, xt_in, idx_pdb, t1d, t2d, xyz_t, alpha_t = super()._preprocess(seq, xyz_t, t)
+        t1d = torch.cat((t1d, torch.zeros_like(t1d[...,:1])), dim=-1)
+        if t != self.T and self.self_cond:
             # add last step
             xyz_prev_padded = torch.full_like(xyz_t, float('nan'))
             xyz_prev_padded[:,:,:,:3,:] = self.prev_pred[None] 
@@ -812,8 +816,8 @@ class JWStyleSelfCond(Sampler):
             t1d = t1d.repeat(1,2,1,1)
             t1d[:,1,:,21] = self.t1d[...,21]
             t1d[:,1,:,22] = 1
-            t2d_temp = xyz_to_t2d(xyz_prev_padded).to(gpu, non_blocking=True)
+            t2d_temp = xyz_to_t2d(xyz_prev_padded).to(self.device, non_blocking=True)
             t2d = torch.cat((t2d, t2d_temp), dim=1)
-            alpha_temp = torch.zeros_like(alpha_t).to(gpu, non_blocking=True)
+            alpha_temp = torch.zeros_like(alpha_t).to(self.device, non_blocking=True)
             alpha_t = torch.cat((alpha_t, alpha_temp), dim=1)
         return msa_masked, msa_full, seq_in, xt_in, idx_pdb, t1d, t2d, xyz_t, alpha_t
