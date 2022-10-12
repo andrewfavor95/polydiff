@@ -33,7 +33,7 @@ try:
             proc = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             out,err = proc.communicate()
 
-            m = re.search('TM\-score\= (0\.\d+).*average',str(out))
+            m = re.search('TM\-score\= ((0|1)\.\d+).*average',out.decode('ascii'))
             score = float(m.groups()[0])
 
             output = '%s %s %f' % (os.path.basename(fn1).replace('.pdb',''), \

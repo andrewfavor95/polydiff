@@ -20,6 +20,7 @@ def main():
     parser.add_argument('--subdivide',type=str,default='prefix', choices=['none','task','cond','task+cond','prefix'],
         help='Only compute pairwise TM scores against designs with the same benchmark task and/or hyperparameter conditions.')
     parser.add_argument('-p', type=str, default='cpu',help='-p argument for slurm (partition)')
+    parser.add_argument('-t', type=str, default='15:00',help='-t argument for slurm')
     parser.add_argument('-J', type=str, help='name of slurm job')
     parser.add_argument('--wait_for',type=str, nargs='+', help='Space-separated slurm job IDs to wait for before starting the scoring jobs')
     parser.add_argument('--no_submit', dest='submit', action="store_false", default=True, help='Do not submit slurm array job, only generate job list.')
@@ -76,7 +77,7 @@ def main():
             job_name = args.J 
         else:
             job_name = 'tmalign_'+os.path.basename(args.datadir.strip('/'))
-        slurm_job, proc = slurm_tools.array_submit(job_fn, p = args.p, gres="", log=args.keep_logs, J=job_name, wait_for=args.wait_for)
+        slurm_job, proc = slurm_tools.array_submit(job_fn, p = args.p, gres="", log=args.keep_logs, J=job_name, wait_for=args.wait_for, t=args.t)
         print(f'Submitted array job {slurm_job} for pairwise TM-align')
 
 if __name__ == "__main__":
