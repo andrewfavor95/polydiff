@@ -10,6 +10,7 @@
     "lip-3":  "inference.input_pdb=lip_6tp8.pdb  contigmap.contigs=[\\'0-40,A39-40,10-40,A105-106,10-40,A187-187,10-40,A224-224,0-40\\'] contigmap.length=80-200",
     "ra-2":   "inference.input_pdb=ra_5an7.pdb   contigmap.contigs=[\\'0-40,A1051-1051,10-40,A1083-1083,10-40,A1110-1110,10-40,A1180-1180,0-40\\'] contigmap.length=80-200",
     "unconditional": "inference.input_pdb=ra_5an7.pdb contigmap.contigs=[\\'160-200\\'] contigmap.length=160-200",
+    "unconditional_58": "inference.input_pdb=norn_58res.pdb contigmap.contigs=[\\'58\\']",
     "2kl8_scaffolding": "inference.input_pdb=2KL8.pdb contigmap.contigs=[\\'A1-20,59\\']",
     "overfit_1-1":"inference.input_pdb=rzpdvzlaaqdm.i.pdb contigmap.contigs=[\\'7,A8-16,54\\']"
 }

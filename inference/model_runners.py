@@ -202,15 +202,18 @@ class Sampler:
         self._log.info(f'Using contig: {self.contig_conf.contigs}')
         return ContigMap(target_feats, **self.contig_conf)
 
-    def construct_denoiser(self, L):
+    def construct_denoiser(self, L, visible):
         """Make length-specific denoiser."""
         # TODO: Denoiser seems redundant. Combine with diffuser.
         denoise_kwargs = OmegaConf.to_container(self.diffuser_conf)
         denoise_kwargs.update(OmegaConf.to_container(self.denoiser_conf))
+        aa_decode_steps = min(denoise_kwargs['aa_decode_steps'] or 999, denoise_kwargs['partial_T'] or 999)
         denoise_kwargs.update({
             'L': L,
             'diffuser': self.diffuser,
-            'potential_manager': self.potential_manager
+            'potential_manager': self.potential_manager,
+            'visible': visible,
+            'aa_decode_steps': aa_decode_steps,
         })
         return iu.Denoise(**denoise_kwargs)
 
@@ -227,7 +230,6 @@ class Sampler:
 
         # moved this here as should be updated each iteration of diffusion
         self.contig_map = self.construct_contig(self.target_feats)
-        self.denoiser = self.construct_denoiser(len(self.contig_map.ref))
         self.mask_seq = torch.from_numpy(self.contig_map.inpaint_seq)[None,:]
         self.mask_str = torch.from_numpy(self.contig_map.inpaint_str)[None,:]
          
@@ -278,19 +280,20 @@ class Sampler:
         xT = fa_stack[-1].squeeze()[:,:14,:]
         xt = torch.clone(xT)
 
+        is_motif = self.mask_seq.squeeze()
+        is_shown_at_t = torch.tensor(aa_masks[-1])
+        visible = is_motif | is_shown_at_t
         if self.diffuser_conf.partial_T:
-            is_motif = self.mask_seq.squeeze()
-            is_shown_at_t = torch.tensor(aa_masks[-1])
-            seq_is_shown = is_motif | is_shown_at_t
-            seq_t[seq_is_shown] = seq_orig[seq_is_shown]
+            seq_t[visible] = seq_orig[visible]
 
+        self.denoiser = self.construct_denoiser(len(self.contig_map.ref), visible=visible)
         if self.symmetry is not None:
             xt, seq_t = self.symmetry.apply_symmetry(xt, seq_t)
         self._log.info(f'Sequence init: {seq2chars(seq_t.numpy().tolist())}')
         
         if return_forward_trajectory:
-            #forward_traj = torch.cat([xyz_true[None], fa_stack[:,:,:]])
-            forward_traj = fa_stack
+            forward_traj = torch.cat([xyz_true[None], fa_stack[:,:,:]])
+            #forward_traj = fa_stack
             return xt, seq_t, forward_traj, aa_masks
 
         return xt, seq_t
@@ -420,7 +423,7 @@ class Sampler:
         """ 
         return msa_masked, msa_full, seq[None], torch.squeeze(xyz_t, dim=0), idx, t1d, t2d, xyz_t, alpha_t
         
-    def sample_step(self, *, t, seq_t, x_t, seq_init):
+    def sample_step(self, *, t, seq_t, x_t, seq_init, return_extra=False):
         '''Generate the next pose that the model should be supplied at timestep t-1.
 
         Args:
@@ -514,6 +517,8 @@ class Sampler:
             px0 = px0.to(x_t.device)
         if self.symmetry is not None:
             x_t_1, seq_t_1 = self.symmetry.apply_symmetry(x_t_1, seq_t_1)
+        if return_extra:
+            return px0, x_t_1, seq_t_1, tors_t_1, plddt, logits
         return px0, x_t_1, seq_t_1, tors_t_1, plddt
 
 

@@ -1,3 +1,6 @@
+import pandas as pd
+import numpy as np
+import functools
 import logging
 from omegaconf import DictConfig, OmegaConf
 import pickle
@@ -176,6 +179,7 @@ class Trajectory:
     px0: torch.FloatTensor
     forward: torch.FloatTensor
     seq: torch.FloatTensor
+    logits: torch.FloatTensor
 
 def run_partial_trajectory_sweep(sampler, xyz, seq, mask, T=None):
     stack_by_step = defaultdict(list)
@@ -228,12 +232,16 @@ def c_alpha_rmsd_traj(traj):
     return torch.sqrt(torch.mean(torch.sum(torch.square(traj[...,1:,:,1,:] - traj[...,:-1,:,1,:]), dim=-1), dim=-1))
 
 
-def df_from_tensor(arr, columns, val='val'):
+def df_from_tensor(arr, columns, val='val', values_by_column=None):
     assert arr.ndim == len(columns)
     
     df = pd.DataFrame(cartesian_product_transpose(*[np.arange(i) for i in arr.shape]),
                       columns=columns)
     df[val] = arr.ravel()
+    if values_by_column:
+        df.replace({col: dict(enumerate(vals)) for col, vals in values_by_column.items()}, inplace=True)
+        #for column, values in values_by_column.items():
+            #df.replace(colum
     return df
 
 def cartesian_product_transpose(*arrays):
@@ -260,6 +268,7 @@ def reverse_simple(sampler):
     seq_stack = []
     chi1_stack = []
     plddt_stack = []
+    logits_stack = []
     # pseq_stack = []
 
     x_t = torch.clone(x_init)
@@ -268,15 +277,15 @@ def reverse_simple(sampler):
 
     # Loop over number of reverse diffusion time steps.
     for t in tqdm.tqdm(range(sampler.t_step_input, 0, -1)):
-        px0, x_t, seq_t, tors_t, plddt = sampler.sample_step(
-            t=t, seq_t=seq_t, x_t=x_t, seq_init=seq_init)
-        
-        
+        px0, x_t, seq_t, tors_t, plddt, logits = sampler.sample_step(
+            t=t, seq_t=seq_t, x_t=x_t, seq_init=seq_init, return_extra=True)
+
         px0_xyz_stack.append(px0)
         denoised_xyz_stack.append(x_t)
         seq_stack.append(seq_t.clone().cpu())
         chi1_stack.append(tors_t[:,:])
         plddt_stack.append(plddt[0]) # remove singleton leading 
+        logits_stack.append(logits.squeeze().cpu())
 
     denoised_xyz_stack = torch.stack(denoised_xyz_stack).cpu()
     denoised_xyz_stack = torch.flip(denoised_xyz_stack, [0,])
@@ -284,6 +293,8 @@ def reverse_simple(sampler):
     px0_xyz_stack = torch.flip(px0_xyz_stack, [0,])
     seq_stack = torch.stack(seq_stack).cpu()
     seq_stack = torch.flip(seq_stack, [0,])
+    logits_stack = torch.stack(logits_stack)
+    logits_stack = torch.flip(logits_stack, [0,])
     #return denoised_xyz_stack, px0_xyz_stack, forward_traj, seq_stack
-    return Trajectory(denoised_xyz_stack, px0_xyz_stack, forward_traj.cpu(), seq_stack), {'x_init': x_init}
+    return Trajectory(denoised_xyz_stack, px0_xyz_stack, forward_traj.cpu(), seq_stack, logits_stack), {'x_init': x_init}
 

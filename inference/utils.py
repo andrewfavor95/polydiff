@@ -29,26 +29,25 @@ class DecodeSchedule():
     Class for managing AA decoding schedule stuff
     """
 
-    def __init__(self, L, aa_decode_steps=40, mode='distance_based'):
+    def __init__(self, L, visible, aa_decode_steps=40, mode='distance_based'):
 
         # only distance based for now
         assert mode in ['distance_based']# , 'uniform_linear', 'ar_fixbb']
         self.mode = mode
 
-        # start with all not visible
-        self.visible = torch.full((L,), False)
+        self.visible = visible
 
         # start as all high - only matters when a residue is being decoded
         # at which point we will know the true T
         self.T = torch.full((L,), 999)
 
         # number of residues being decoded on each step
-        if aa_decode_steps >0:
-            tmp = np.array(list(range(L)))
-            np.random.shuffle(tmp)
-            ndecode_per_step = np.array_split(tmp, aa_decode_steps)
-            np.random.shuffle(ndecode_per_step)
-            self.ndecode_per_step = [len(a) for a in ndecode_per_step]
+	if aa_decode_steps >0:
+		tmp = np.array(list(range((~self.visible).sum())))
+		np.random.shuffle(tmp)
+		ndecode_per_step = np.array_split(tmp, aa_decode_steps)
+		np.random.shuffle(ndecode_per_step)
+		self.ndecode_per_step = [len(a) for a in ndecode_per_step]
 
 
     def get_next_idx(self, cur_indices, dmap):
@@ -132,6 +131,7 @@ class Denoise():
                  T,
                  L,
                  diffuser,
+                 visible,
                  b_0=0.001,
                  b_T=0.1,
                  min_b=1.0,
@@ -190,7 +190,7 @@ class Denoise():
         # amino acid decoding schedule 
         #out = get_aa_schedule(T,L,nsteps=aa_decode_steps)
         #self.aa_decode_times, self.decode_order, self.idx2steps, self.aa_mask_stack = out
-        self.decode_scheduler = DecodeSchedule(L, aa_decode_steps=aa_decode_steps, mode='distance_based')
+        self.decode_scheduler = DecodeSchedule(L, visible, aa_decode_steps, mode='distance_based')
 
     @property
     def idx2steps(self):
