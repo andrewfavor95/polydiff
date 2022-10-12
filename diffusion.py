@@ -760,9 +760,11 @@ class INTERP():
         if n_steps != 0:
             decode_times, decode_order, idx2steps, aa_masks = get_aa_schedule(self.T, L, n_steps)
         else:
-            decode_times, decode_order, idx2steps, aa_masks = get_aa_schedule(self.T, L, 10) # 10 is dummy number. No decoding is happening. TODO clean this up
+            decode_times = np.array([])
+            decode_order = []
+            idx2steps = np.zeros(L)
+            aa_masks=torch.zeros(self.T, L).bool()
         idx2steps = torch.from_numpy(idx2steps)
-
         xyz = torch.full((L,27,3),np.nan).float()
         xyz[:,:14,:] = xyz14
 

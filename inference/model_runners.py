@@ -504,7 +504,7 @@ class Sampler:
             f'Timestep {t}, current sequence: { seq2chars(torch.argmax(pseq_0, dim=-1).tolist())}')
         
         if t > 1:
-            x_t_1, seqSampler_t_1, tors_t_1, px0 = self.denoiser.get_next_pose(
+            x_t_1, seq_t_1, tors_t_1, px0 = self.denoiser.get_next_pose(
                 xt=x_t,
                 px0=px0,
                 t=t,
