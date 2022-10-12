@@ -208,7 +208,7 @@ class Sampler:
         # TODO: Denoiser seems redundant. Combine with diffuser.
         denoise_kwargs = OmegaConf.to_container(self.diffuser_conf)
         denoise_kwargs.update(OmegaConf.to_container(self.denoiser_conf))
-        aa_decode_steps = min(denoise_kwargs['aa_decode_steps'] or 999, denoise_kwargs['partial_T'] or 999)
+        aa_decode_steps = min(denoise_kwargs['aa_decode_steps'], denoise_kwargs['partial_T'] or 999)
         denoise_kwargs.update({
             'L': L,
             'diffuser': self.diffuser,
