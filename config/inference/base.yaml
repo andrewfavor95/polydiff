@@ -122,7 +122,7 @@ contig_settings:
 
 preprocess:
   sidechain_input: False
-  motif_sidechain_input: False
+  motif_sidechain_input: True
   sequence_decode: True
   d_t1d: 22
   d_t2d: 44

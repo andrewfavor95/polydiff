@@ -293,7 +293,7 @@ def get_args(in_args=None):
     preprocess_group.add_argument("-sidechain_input", choices=("True","False"), required=True,
         help='Do you want to provide diffused sidechains to the model. No default - make up your mind')
     preprocess_group.add_argument("-motif_sidechain_input", default="True", choices=("True","False"),
-        help = 'Do you want to provide sidechains of the motif to the model. Default = False')
+        help = 'Do you want to provide sidechains of the motif to the model. Default = True')
     preprocess_group.add_argument("-sequence_decode", choices=("True","False"), default="True",
         help='Do you want to decode sequence. Overrides aa_decode_steps. Default=True')
     preprocess_group.add_argument('-d_t1d', type=int, default=21+1+1,

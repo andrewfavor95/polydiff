@@ -883,7 +883,7 @@ class Diffuser():
 
         print('Successful diffuser __init__')
     
-    def diffuse_pose(self, xyz, seq, atom_mask, diffuse_torsions, diffusion_mask=None, t_list=None):
+    def diffuse_pose(self, xyz, seq, atom_mask, diffuse_torsions=False, include_motif_sidechains=True, diffusion_mask=None, t_list=None):
         """
         Given full atom xyz, sequence and atom mask, diffuse the protein 
         translations, rotations, and chi angles
@@ -1000,8 +1000,8 @@ class Diffuser():
             diffused_fa[:,:,:3,:] = diffused_BB
 
             # Add in sidechains from motif
-            if
-            diffused_fa[:,diffusion_mask,:14,:] = xyz_true[None,diffusion_mask,:14]
+            if include_motif_sidechains:
+                diffused_fa[:,diffusion_mask,:14,:] = xyz_true[None,diffusion_mask,:14]
 
             if t_list is None: fa_stack = diffused_fa
             else:
