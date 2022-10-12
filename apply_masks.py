@@ -420,7 +420,8 @@ def mask_inputs(seq,
     else:
         #only mask the sequence-masked sidechains
         xyz_t[:,:,~seq_mask,3:,:] = float('nan') # don't know sidechain information for masked seq
-
+    if preprocess_param['motif_sidechain_input'] is False:
+        xyz_t[:,:,input_str_mask.squeeze(),3:,:] = float('nan')
     # Structure masking
     # str_mask = input_str_mask[0]
     # xyz_t[:,:,~str_mask,:,:] = float('nan') # NOTE: not using this because diffusion is effectively the mask 

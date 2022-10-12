@@ -1000,6 +1000,7 @@ class Diffuser():
             diffused_fa[:,:,:3,:] = diffused_BB
 
             # Add in sidechains from motif
+            if
             diffused_fa[:,diffusion_mask,:14,:] = xyz_true[None,diffusion_mask,:14]
 
             if t_list is None: fa_stack = diffused_fa

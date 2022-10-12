@@ -122,11 +122,12 @@ contig_settings:
 
 preprocess:
   sidechain_input: False
+  motif_sidechain_input: False
   sequence_decode: True
   d_t1d: 22
   d_t2d: 44
   prob_self_cond: 0.0
   predict_previous: False
-
+  
 logging:
   inputs: False
