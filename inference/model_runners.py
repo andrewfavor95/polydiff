@@ -277,7 +277,9 @@ class Sampler:
             xyz_mapped,
             torch.clone(seq_t),  # TODO: Check if copy is needed.
             atom_mask_mapped.squeeze(),
-            diffusion_mask=diffusion_mask.squeeze(), t_list=t_list)
+            diffusion_mask=diffusion_mask.squeeze(),
+            t_list=t_list,
+            diffuse_torsions=self.preprocess_conf.sidechain_input)
         xT = fa_stack[-1].squeeze()[:,:14,:]
         xt = torch.clone(xT)
 
@@ -581,7 +583,9 @@ class Seq2StrSampler(Sampler):
             x_nan,
             torch.clone(seq_T),  # TODO: Check if copy is needed.
             atom_mask.squeeze(),
-            diffusion_mask=self.diffusion_mask, t_list=[self.diffuser_conf.T])
+            diffusion_mask=self.diffusion_mask,
+            t_list=[self.diffuser_conf.T],
+            diffuse_torsions=self.preprocess_conf.sidechain_input)
         
         # the most diffused set of atoms is the last one 
         xT = torch.clone(fa_stack[-1].squeeze()[:,:14,:]) 

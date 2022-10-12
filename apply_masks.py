@@ -147,11 +147,12 @@ def mask_inputs(seq,
         assert(seq.shape[0] == 1), "Number of repeats of seq must be 1"
         L = seq.shape[-1]
 
-        kwargs = {'xyz'             :xyz_t.squeeze(),
-                  'seq'             :seq.squeeze(0),
-                  'atom_mask'       :atom_mask.squeeze(),
-                  'diffusion_mask'  :input_str_mask.squeeze(),
-                  't_list'          :t_list}
+        kwargs = {'xyz'              :xyz_t.squeeze(),
+                  'seq'              :seq.squeeze(0),
+                  'atom_mask'        :atom_mask.squeeze(),
+                  'diffusion_mask'   :input_str_mask.squeeze(),
+                  't_list'           :t_list,
+                  'diffuse_torsions' :preprocess_param['sidechain_input']}
         
         diffused_fullatoms, aa_masks, true_crds = diffuser.diffuse_pose(**kwargs)
 

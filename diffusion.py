@@ -883,7 +883,7 @@ class Diffuser():
 
         print('Successful diffuser __init__')
     
-    def diffuse_pose(self, xyz, seq, atom_mask, diffusion_mask=None, t_list=None):
+    def diffuse_pose(self, xyz, seq, atom_mask, diffuse_torsions, diffusion_mask=None, t_list=None):
         """
         Given full atom xyz, sequence and atom mask, diffuse the protein 
         translations, rotations, and chi angles
@@ -941,14 +941,6 @@ class Diffuser():
         #print('Time to diffuse frames: ',time.time()-tick)
 
 
-        # 3 diffuse chi angles/planar angles and sequence information 
-        tick = time.time()
-        diffused_torsions,aa_masks = self.torsion_diffuser.diffuse_torsions(xyz[:,:14].clone(), 
-                                                                            seq, 
-                                                                            atom_mask[:,:14].clone(),
-                                                                            diffusion_mask=diffusion_mask, 
-                                                                            n_steps=self.aa_decode_steps)
-        #print('Time to diffuse torsions: ',time.time()-tick)
 
 
         ##### Now combine all the diffused quantities to make full atom diffused poses 
@@ -958,11 +950,20 @@ class Diffuser():
         diffused_BB = (torch.from_numpy(diffused_frame_crds) + cum_delta[:,:,None,:]).transpose(0,1) # [n,L,3,3]
         #diffused_BB  = torch.from_numpy(diffused_frame_crds).transpose(0,1)
 
-        # TODO make an official option eventually - NRB
-        diffuse_torsions = False
-
         # Full atom diffusions at all timepoints 
         if diffuse_torsions:
+            # This section of code only works with integer sequence at the moment - NRB
+            assert(seq.shape[-1] == L), 'Tried to feed non-integer sequence to diffuse torsions'
+
+            # diffuse chi angles/planar angles and sequence information 
+            tick = time.time()
+            diffused_torsions,aa_masks = self.torsion_diffuser.diffuse_torsions(xyz[:,:14].clone(), 
+                                                                                seq, 
+                                                                                atom_mask[:,:14].clone(),
+                                                                                diffusion_mask=diffusion_mask, 
+                                                                                n_steps=self.aa_decode_steps)
+            #print('Time to diffuse torsions: ',time.time()-tick)
+
             diffused_torsions_trig = torch.stack([torch.cos(diffused_torsions), 
                                               torch.sin(diffused_torsions)], dim=-1)
             fa_stack = []
@@ -984,13 +985,22 @@ class Diffuser():
 
             fa_stack = torch.stack(fa_stack, dim=0)
 
-        else:
+        else: 
+            # Do aa_mask logic outside of diffuse torsions logic - NRB
+            # This is the same code as is present in the diffuse torsions function
+            if self.aa_decode_steps != 0:
+                _, _, _, aa_masks = get_aa_schedule(self.T, L, self.aa_decode_steps)
+            else:
+                _, _, _, aa_masks = get_aa_schedule(self.T, L, 10) # 10 is dummy number. No decoding is happening. TODO clean this up
 
             # diffused_BB is [t_steps,L,3,3]
             t_steps, L  = diffused_BB.shape[:2]
 
             diffused_fa = torch.zeros(t_steps,L,27,3)
             diffused_fa[:,:,:3,:] = diffused_BB
+
+            # Add in sidechains from motif
+            diffused_fa[:,diffusion_mask,:14,:] = xyz_true[None,diffusion_mask,:14]
 
             if t_list is None: fa_stack = diffused_fa
             else:
