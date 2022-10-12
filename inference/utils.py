@@ -42,12 +42,12 @@ class DecodeSchedule():
         self.T = torch.full((L,), 999)
 
         # number of residues being decoded on each step
-	if aa_decode_steps >0:
-		tmp = np.array(list(range((~self.visible).sum())))
-		np.random.shuffle(tmp)
-		ndecode_per_step = np.array_split(tmp, aa_decode_steps)
-		np.random.shuffle(ndecode_per_step)
-		self.ndecode_per_step = [len(a) for a in ndecode_per_step]
+        if aa_decode_steps >0:
+            tmp = np.array(list(range((~self.visible).sum())))
+            np.random.shuffle(tmp)
+            ndecode_per_step = np.array_split(tmp, aa_decode_steps)
+            np.random.shuffle(ndecode_per_step)
+            self.ndecode_per_step = [len(a) for a in ndecode_per_step]
 
 
     def get_next_idx(self, cur_indices, dmap):
