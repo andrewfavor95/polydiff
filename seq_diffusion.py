@@ -115,7 +115,7 @@ class DiscreteSeqDiffuser():
                 true_seq     (torch.tensor, [L])
 
         '''
-
+        diffusion_mask = diffusion_mask or []
 
         diffused_seq = self.apply_kernel_recursive(seq, diffusion_mask, t_list) # [t,L]
         true_seq     = seq.clone() # [L]
@@ -385,12 +385,15 @@ class DiscreteSeqDiffuser():
                 t: time index (positive integer)
         '''
 
+        px_0 = self.softmax(p_logit_x_0).squeeze(0)
+        return self.loss_prob(x_t, x_0, px_0, t, diffusion_mask)
+
+    def loss_prob(self, x_t, x_0, px_0, t, diffusion_mask):
         assert(t>0), f'Received t <= 0 in seq diffuser loss function. t: {t}'
 
         # Squeeze out batch dimension
         x_t  = x_t.squeeze(0)
         x_0  = x_0.squeeze(0)
-        px_0 = self.softmax(p_logit_x_0).squeeze(0)
 
         # Losses described in Equation 1
         if t>1:
@@ -412,7 +415,7 @@ class DiscreteSeqDiffuser():
         p_theta_Xt1 = torch.stack([self.p_theta_Xt1_given_Xt_from_pX0(x_ti, px_0i, t) for x_ti, px_0i in zip(x_t, px_0)], dim=0).to(x_t.device)
 
         # Now get probability of just x0 sequence by indexing by x0 residue indices
-        p_theta_X0 = torch.gather(p_theta_Xt1,1,x_0[:,None]).squeeze(1) # [L]
+        p_theta_X0 = torch.gather(px_0, 1, x_0[...,None]).squeeze(1)
 
         loss_aux = -1 * torch.log(p_theta_X0)
 
