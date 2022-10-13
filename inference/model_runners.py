@@ -465,11 +465,13 @@ class Sampler:
             pair_prev = None
             state_prev = None
         with torch.no_grad():
+            # So recycling is done a la training
+            px0=xt_in
             for _ in range(self.recycle_schedule[t-1]):
                 msa_prev, pair_prev, px0, state_prev, alpha, logits, plddt = self.model(msa_masked,
                                     msa_full,
                                     seq_in,
-                                    xt_in,
+                                    px0,
                                     idx_pdb,
                                     t1d=t1d,
                                     t2d=t2d,
@@ -750,11 +752,12 @@ class JWStyleSelfCond(Sampler):
         if self.symmetry is not None:
             idx_pdb, self.chain_idx = self.symmetry.res_idx_procesing(res_idx=idx_pdb)
         with torch.no_grad():
+            px0=xt_in
             for _ in range(self.recycle_schedule[t-1]):
                 msa_prev, pair_prev, px0, state_prev, alpha, logits, plddt = self.model(msa_masked,
                                     msa_full,
                                     seq_in,
-                                    xt_in,
+                                    px0,
                                     idx_pdb,
                                     t1d=t1d,
                                     t2d=t2d,
