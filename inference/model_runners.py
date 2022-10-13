@@ -563,7 +563,7 @@ class Sampler:
                 seq_diffusion_mask=self.mask_seq.squeeze(),
                 seq_t=seq_t,
                 pseq0=pseq_0,
-                diffuse_torsions=self.preprocess_conf.sidechain_input,
+                diffuse_sidechains=self.preprocess_conf.sidechain_input,
                 align_motif=self.inf_conf.align_motif,
             )
         else:

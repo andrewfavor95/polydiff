@@ -689,7 +689,7 @@ class Denoise():
 
         return Ca_grads
 
-    def get_next_pose(self, xt, px0, t, diffusion_mask, seq_diffusion_mask, seq_t, pseq0, diffuse_torsions, fix_motif=True, align_motif=True):
+    def get_next_pose(self, xt, px0, t, diffusion_mask, seq_diffusion_mask, seq_t, pseq0, diffuse_sidechains, fix_motif=True, align_motif=True):
         """
         Wrapper function to take px0, xt and t, and to produce xt-1
         First, aligns px0 to xt
@@ -752,7 +752,7 @@ class Denoise():
             # Seq is now one-hot and the AR code requires the seq to be an integer - NRB
             # seq_t = torch.argmax(seq_t, dim=-1)
 
-            if diffuse_torsions:
+            if diffuse_sidechains:
                 torsions_next, seq_next = self.get_next_torsions(xt, px0, seq_t, pseq0, t, diffusion_mask, noise_scale = self.noise_scale_torsion)       
 
                 # build full atom representation with the new torsions but the current seq 
@@ -782,7 +782,7 @@ class Denoise():
         else:
             # Doing sequence diffusion
 
-            if diffuse_torsions:
+            if diffuse_sidechains:
                 raise NotImplementedError()
 
             else:

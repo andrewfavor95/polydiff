@@ -144,7 +144,7 @@ def reverse(sampler, xyz_true, seq_true, mask, final_steps=None, use_true=False,
                     diffusion_mask=sampler.mask_str.squeeze(),
                     seq_t=seq_t,
                     pseq0=seq_true_one_hot,
-                    diffuse_torsions=self.preprocess.sidechain_input,
+                    diffuse_sidechains=self.preprocess.sidechain_input,
                     align_motif=sampler.inf_conf.align_motif,
                 )
             else:
