@@ -54,7 +54,7 @@ def main():
             widgets=[progressbar.Bar('=', '[', ']'), ' ', progressbar.Percentage()])
     bar.start()
     for i in range(args.n_samples): 
-        fa_stack,_,xyz_true = diffuser.diffuse_pose(torch.from_numpy(xyz),torch.from_numpy(seq),torch.from_numpy(mask),diffusion_mask=diffusion_mask, diffuse_torsions=False)
+        fa_stack,_,xyz_true = diffuser.diffuse_pose(torch.from_numpy(xyz),torch.from_numpy(seq),torch.from_numpy(mask),diffusion_mask=diffusion_mask, diffuse_sidechains=False)
         fa_stack = fa_stack.squeeze(1)
         fa_stack = torch.cat((xyz_true[None], fa_stack), dim=0)
         out = args.output_path+'_'+str(i)+'.pdb'

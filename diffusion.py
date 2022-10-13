@@ -883,7 +883,7 @@ class Diffuser():
 
         print('Successful diffuser __init__')
     
-    def diffuse_pose(self, xyz, seq, atom_mask, diffuse_torsions=False, include_motif_sidechains=True, diffusion_mask=None, t_list=None):
+    def diffuse_pose(self, xyz, seq, atom_mask, diffuse_sidechains=False, include_motif_sidechains=True, diffusion_mask=None, t_list=None):
         """
         Given full atom xyz, sequence and atom mask, diffuse the protein 
         translations, rotations, and chi angles
@@ -951,7 +951,7 @@ class Diffuser():
         #diffused_BB  = torch.from_numpy(diffused_frame_crds).transpose(0,1)
 
         # Full atom diffusions at all timepoints 
-        if diffuse_torsions:
+        if diffuse_sidechains:
             # This section of code only works with integer sequence at the moment - NRB
             assert(seq.shape[-1] == L), 'Tried to feed non-integer sequence to diffuse torsions'
 

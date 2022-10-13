@@ -152,7 +152,7 @@ def mask_inputs(seq,
                   'atom_mask'               :atom_mask.squeeze(),
                   'diffusion_mask'          :input_str_mask.squeeze(),
                   't_list'                  :t_list,
-                  'diffuse_torsions'        :preprocess_param['sidechain_input'],
+                  'diffuse_sidechains'      :preprocess_param['sidechain_input'],
                   'include_motif_sidechains':preprocess_param['motif_sidechain_input']}
         
         diffused_fullatoms, aa_masks, true_crds = diffuser.diffuse_pose(**kwargs)

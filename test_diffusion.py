@@ -108,7 +108,7 @@ diffused_frame_crds,\
 diffused_frames,\
 diffused_torsions,\
 diffused_FA_crds,\
-aa_masks = diffuser.diffuse_pose(xyz, seq, atom_mask, diffusion_mask=diffusion_mask, diffuse_torsions=True)
+aa_masks = diffuser.diffuse_pose(xyz, seq, atom_mask, diffusion_mask=diffusion_mask, diffuse_sidechains=True)
 
 
 # print('Writing translation pdb')
