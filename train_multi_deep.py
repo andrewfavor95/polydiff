@@ -263,7 +263,7 @@ class Trainer():
         config_dict['diffuser'] = self.diff_kwargs
         config_dict['seq_diffuser'] = self.seqdiff_kwargs
         # Add seq_diff_type
-        config_dict['seq_diffuser']['seq_diff_type'] = self.seq_diff_type
+        config_dict['seq_diffuser']['seqdiff'] = self.seq_diff_type
         config_dict['preprocess'] = self.preprocess_param
         self.config_dict = config_dict
 
@@ -1460,6 +1460,7 @@ class Trainer():
                     f.write(str(masks_1d['input_str_mask'][0].cpu().detach().numpy())+'\n')
                     f.write(str(masks_1d['input_seq_mask'][0].cpu().detach().numpy())+'\n') 
                     f.write(str(t1d[:,:,:,-1].cpu().detach().numpy()))
+
         # write total train loss
         train_tot /= float(counter * world_size)
         train_loss /= float(counter * world_size)
@@ -1471,22 +1472,6 @@ class Trainer():
         train_tot = train_tot.cpu().detach()
         train_loss = train_loss.cpu().detach().numpy()
         train_acc = train_acc.cpu().detach().numpy()
-
-        if counter % 1000 == 0:
-            # Dump the model's weights every 1000 examples
-            torch.save({'epoch': epoch,
-                #'model_state_dict': ddp_model.state_dict(),
-                'model_state_dict': ddp_model.module.shadow.state_dict(),
-                'final_state_dict': ddp_model.module.model.state_dict(),
-                'optimizer_state_dict': optimizer.state_dict(),
-                'scheduler_state_dict': scheduler.state_dict(),
-                'scaler_state_dict': scaler.state_dict(),
-                'train_loss': train_loss,
-                'train_acc': train_acc,
-                'valid_loss': 999.9,
-                'valid_acc': 999.9,
-                'best_loss': 999.9},
-                self.checkpoint_fn(self.model_name, 'intermediate'))
 
         if rank == 0:
             

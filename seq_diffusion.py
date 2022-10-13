@@ -348,7 +348,7 @@ class DiscreteSeqDiffuser():
         """
 
         t_idx = t-1
-
+        
         # compute joint probs
         Qt = self.get_Qt(t_idx).to(x_t.device)
         bar_Qt1 = self.get_bar_Qt(t_idx-1).to(x_t.device)
@@ -436,34 +436,63 @@ class DiscreteSeqDiffuser():
         # Not here is because True == seq is not diffused
         return torch.mean(loss[~diffusion_mask]), torch.mean(loss_aux[~diffusion_mask]), torch.mean(loss_vb[~diffusion_mask])
 
+    ########################################
+    ####### Functions for Inference ########
+    ########################################
+        
+    def sample_init(self, seq_t, seq_diffusion_mask):
+        '''
+            Function to generate an initial sequence while keeping a motif fixed
+    
+            Args:
+    
+                seq_t (torch.tensor): [L] Sequence with zeros everywhere except for fixed motif
+    
+                seq_diffusion_mask (torch.tensor): [L]
+    
+            Returns:
+    
+                seq_T (torch.tensor): [L,22]
+    
+        '''
+    
+        # Sampling from 0-19 since upper bound is exclusive
+        sampled_seq = torch.randint(low=0, high=20, size=seq_t.shape) # [L]
+    
+        seq_t[~seq_diffusion_mask] = sampled_seq[~seq_diffusion_mask]
+    
+        seq_T = torch.nn.functional.one_hot(seq_t, num_classes=22).float()
+    
+        return seq_T
+        
     def get_next_sequence(self, seq_t, pseq0, t, seq_diffusion_mask):
         '''
             Function to take the predicted sequence and get the sequence at t-1 to feed to the model
-
+    
             Args:
-
+    
                 seq_t (torch.tensor): [L,K] One-hot encoding of sequence fed to model at timestep t
-
+    
                 pseq0 (torch.tensor): [L,K] The model's prediction of sequence logits
-
+    
                 t (int): The current timestep
-
+    
                 seq_diffusion_mask (torch.tensor): [L] Whether each position is diffusing sequence or not
-
+    
             Returns:
-
+    
                 seq_t_1 (torch.tensor): [L,K] One-hot encoding of sequence to feed to model at timestep t-1
-
+    
         '''
+    
         L = seq_t.shape[0]
 
         int_seq_t = torch.argmax(seq_t, dim=-1)
-
+    
         seq_next_diff = []
         for l in range(L):
             seq_tl = int_seq_t[l]
             pseq0_l = pseq0[l] # [K]
-
             p_xt1 = self.p_theta_Xt1_given_Xt_from_pX0(seq_tl, pseq0_l, t) # [K]
             p_xt1 = torch.clamp(p_xt1, min=0) # Do not allow negative probabilities
             sampled_seq = torch.multinomial(p_xt1, 1) # [1]
@@ -514,7 +543,8 @@ class ContinuousSeqDiffuser():
         self.loss_type = loss_type
 
         # make noise/beta schedule
-        self.beta_schedule, _, _ = get_beta_schedule(T, s_b0, s_bT, schedule_type, **schedule_params)
+        # Argument order is beta_schedule, alpha_schedule, alphabar_schedule
+        self.beta_schedule, _, self.alphabar_schedule = get_beta_schedule(T, s_b0, s_bT, schedule_type, **schedule_params)
 
     def continuous_seq(self):
         '''
@@ -703,3 +733,89 @@ class ContinuousSeqDiffuser():
         '''
 
         raise NotImplementedError()
+
+    #########################
+    ####### Inference #######
+    #########################
+
+    def sample_init(self, seq_t, seq_diffusion_mask):
+        '''
+            Function to generate an initial sequence while keeping a motif fixed
+
+            Args:
+
+                seq_t (torch.tensor): [L] Sequence with zeros everywhere except for fixed motif
+
+                seq_diffusion_mask (torch.tensor): [L]
+
+            Returns:
+
+                seq_T (torch.tensor): [L,22]
+
+        '''
+        L = seq_t.shape[0]
+
+        mean = torch.zeros(L,20)
+        std  = torch.full((L,20), self.bitscale)
+        sampled_seq = torch.normal(mean, std)
+
+        seq_T = self.seq2bits(seq_t.clone(), K=20) # [L,20]
+
+        seq_T[~seq_diffusion_mask] = sampled_seq[~seq_diffusion_mask]
+
+        # Now add zeros to pad the sequence out to 22 classes
+        zeros = torch.zeros(L,2)
+
+        seq_T = torch.cat((seq_T, zeros), dim=-1) # [L,22]
+
+        return seq_T
+
+    def get_seq_mu_xt_x0(self, seq_t, pseq_0, t_idx, eps=1e-6):
+        """
+        Given xt, predicted x0 and the timestep t, give mu of x(t-1)
+        Assumes t_idx is 0 indexed
+
+        """
+        #sigma is predefined from beta. Often referred to as beta tilde t
+        sigma = ((1-self.alphabar_schedule[t_idx-1])/(1-self.alphabar_schedule[t_idx]))*self.beta_schedule[t_idx]*self.bitscale
+
+        a = ((torch.sqrt(self.alphabar_schedule[t_idx-1] + eps)*self.beta_schedule[t_idx])/(1-self.alphabar_schedule[t_idx]))*pseq_0
+        b = ((torch.sqrt(1-self.beta_schedule[t_idx] + eps)*(1-self.alphabar_schedule[t_idx-1]))/(1-self.alphabar_schedule[t_idx]))*seq_t
+
+        mu = a + b
+
+        return mu, sigma
+
+    def get_next_sequence(self, seq_t, pseq0, t, seq_diffusion_mask):
+        '''
+        Function to take predicted analog bits and get the sequence at t-1 to feed to the model
+    
+        Args:
+    
+            seq_t (torch.tensor): [L,K] The sequence bits fed to the model at timestep t
+    
+            pseq0 (torch.tensor): [L,K] The t=0 sequence bits predicted by the model
+    
+            t (int): The current timestep
+    
+            seq_diffusion_mask (torch.tensor): [L] Mask of whether each position is diffusing sequence or not
+    
+        Returns:
+    
+            seq_t_1 (torch.tensor): [L,K] The sequence bits to feed to the model at timestep t-1
+    
+        '''
+        t_idx = t-1
+    
+        # get noise at timestep t
+        mu, sigma = self.get_seq_mu_xt_x0(seq_t=seq_t, pseq_0=pseq0, t_idx=t_idx)
+    
+        sampled_seq = torch.normal(mu, sigma) # [L,K]
+        delta = sampled_seq - seq_t
+    
+        if not seq_diffusion_mask is None:
+            delta[seq_diffusion_mask,:] = 0
+    
+        seq_t_1 = seq_t + delta # [L,K]
+    
+        return seq_t_1

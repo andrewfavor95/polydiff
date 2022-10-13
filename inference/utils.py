@@ -298,6 +298,7 @@ class Denoise():
                  L,
                  diffuser,
                  visible,
+                 seq_diffuser=None,
                  b_0=0.001,
                  b_T=0.1,
                  min_b=1.0,
@@ -328,6 +329,7 @@ class Denoise():
         self.T = T
         self.L = L 
         self.diffuser = diffuser
+        self.seq_diffuser = seq_diffuser
         self.b_0 = b_0
         self.b_T = b_T
         self.noise_level = noise_level
@@ -687,7 +689,7 @@ class Denoise():
 
         return Ca_grads
 
-    def get_next_pose(self, xt, px0, t, diffusion_mask, seq_t, pseq0, fix_motif=True, align_motif=True):
+    def get_next_pose(self, xt, px0, t, diffusion_mask, seq_diffusion_mask, seq_t, pseq0, diffuse_torsions, fix_motif=True, align_motif=True):
         """
         Wrapper function to take px0, xt and t, and to produce xt-1
         First, aligns px0 to xt
@@ -709,6 +711,8 @@ class Denoise():
         L,n_atom = xt.shape[:2]
         assert (xt.shape[1]  == 14) or (xt.shape[1]  == 27)
         assert (px0.shape[1] == 14) or (px0.shape[1] == 27)# need full atom rep for torsion calculations   
+
+        pseq0 = pseq0.to(seq_t.device)
 
         #align to motif
         # DJ - I altered self.align_to_xt_motif to do a different alignment
@@ -741,12 +745,61 @@ class Denoise():
         # add the delta to the new frames 
         frames_next = torch.from_numpy(frames_next) + ca_deltas[:,None,:]  # translate
         
-        # get the next set of amino acid identities and chi angles 
-        torsions_next, seq_next = self.get_next_torsions(xt, px0, seq_t, pseq0, t, diffusion_mask, noise_scale = self.noise_scale_torsion)       
+        if self.seq_diffuser is None:
+            # Standard AR sequence decoding
+            # get the next set of amino acid identities and chi angles 
 
-        # build full atom representation with the new torsions but the current seq 
-        _, fullatom_next =  get_allatom(seq_t[None], frames_next[None], torsions_next[None])
-        fullatom_next[:,diffusion_mask,:14] = xt[diffusion_mask]
+            # Seq is now one-hot and the AR code requires the seq to be an integer - NRB
+            # seq_t = torch.argmax(seq_t, dim=-1)
+
+            if diffuse_torsions:
+                torsions_next, seq_next = self.get_next_torsions(xt, px0, seq_t, pseq0, t, diffusion_mask, noise_scale = self.noise_scale_torsion)       
+
+                # build full atom representation with the new torsions but the current seq 
+                _, fullatom_next =  get_allatom(seq_t[None], frames_next[None], torsions_next[None])
+                fullatom_next[:,diffusion_mask,:14] = xt[diffusion_mask]
+
+            else:  
+                ## Reveal some amino acids in the sequence according to schedule and predictions
+                # This is the same code used in get_next_torsions but brought out here
+
+                seq_next = torch.clone(seq_t)
+                if t <= self.aa_decode_steps:
+                    t_idx = t-1
+                    decode_positions = self.decode_scheduler.get_decode_positions(t_idx, px0)
+                    replacement      = pseq0[decode_positions]
+                    replacement = replacement.to(seq_next.device)
+                    seq_next[decode_positions] = replacement
+
+                # Torsions next is never used so we are just using a dummy variable for this - NRB
+                torsions_next = torch.zeros(1,1)
+
+                fullatom_next = torch.full_like(xt,float('nan')).unsqueeze(0)
+
+                fullatom_next[:,:,:3] = frames_next[None]
+                fullatom_next[:,diffusion_mask,:14] = xt[None,diffusion_mask]
+
+        else:
+            # Doing sequence diffusion
+
+            if diffuse_torsions:
+                raise NotImplementedError()
+
+            else:
+                seq_next = self.seq_diffuser.get_next_sequence(seq_t, pseq0, t, seq_diffusion_mask) # [L,20]
+
+                # This is never used so just make it a fudged tensor - NRB
+                torsions_next = torch.zeros(1,1)
+
+                # Add zeros to make the sequence have 22 classes and match the AR case
+                zeros = torch.zeros(L,2)
+                seq_next = torch.cat((seq_next, zeros), dim=-1) # [L,22]
+
+                fullatom_next = torch.full_like(xt,float('nan')).unsqueeze(0)
+
+                fullatom_next[:,:,:3] = frames_next[None]
+                fullatom_next[:,diffusion_mask,:14] = xt[None,diffusion_mask]
+
         return fullatom_next.squeeze()[:,:14,:], seq_next, torsions_next, px0
 
 def sampler_selector(conf: DictConfig):
@@ -760,6 +813,9 @@ def sampler_selector(conf: DictConfig):
         sampler = model_runners.JWStyleSelfCond(conf)
     elif conf.inference.model_runner == 'NRBStyleSelfCond':
         sampler = model_runners.NRBStyleSelfCond(conf)
+    elif conf.inference.model_runner == 'seqdiff':
+        ic('running sequence diffusion')
+        sampler = model_runners.SeqDiffusionSampler(conf)
     else:
         raise ValueError(f'Unrecognized sampler {conf.model_runner}')
     return sampler

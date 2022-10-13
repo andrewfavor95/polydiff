@@ -87,6 +87,13 @@ def main(conf: HydraConfig) -> None:
         # Save outputs 
         os.makedirs(os.path.dirname(out_prefix), exist_ok=True)
         final_seq = seq_stack[-1]
+
+        if not conf.seq_diffuser.seqdiff is None:
+            # When doing sequence diffusion the model does not make predictions beyond category 19
+            final_seq = final_seq[:,:20] # [L,20]
+
+            final_seq = torch.argmax(final_seq, dim=-1)
+
         bfacts = torch.ones_like(final_seq.squeeze())
 
         # pX0 last step

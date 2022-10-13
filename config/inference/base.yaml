@@ -98,10 +98,10 @@ diffuser:
   min_sigma: 0.02
   max_sigma: 1.5
 
-seqdiffuser:
-  seqdiff_b0: null
-  seqdiff_bT: null
-  seqdiff_schedule_type: null
+seq_diffuser:
+  s_b0: null
+  s_bT: null
+  schedule_type: null
   seqdiff: null
 
 denoiser:
