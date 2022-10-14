@@ -388,10 +388,8 @@ class Sampler:
             #NOTE: DJ - I don't know what this does or why it's here
             conf = torch.where(self.mask_str.squeeze(), 1., 0.)[None,None,...,None]
         
-
         t1d = torch.cat((t1d, conf), dim=-1)
         t1d = t1d.float()
-
         
         ### xyz_t ###
         #############
@@ -545,14 +543,14 @@ class Sampler:
         sampled_seq[mask_seq.squeeze()] = seq_init[
             mask_seq.squeeze()].to(self.device)
 
-        #pseq_0 = torch.nn.functional.one_hot(
-        #    sampled_seq, num_classes=22).to(self.device)
-        pseq_0 = sampled_seq # [L]
+        pseq_0 = torch.nn.functional.one_hot(
+            sampled_seq, num_classes=22).to(self.device)
 
-        # self._log.info(
-        #    f'Timestep {t}, current sequence: { seq2chars(torch.argmax(pseq_0, dim=-1).tolist())}')
+        seq_t = torch.nn.functional.one_hot(
+            seq_t, num_classes=22).to(self.device)
+
         self._log.info(
-           f'Timestep {t}, current sequence: { seq2chars(pseq_0.tolist())}')
+           f'Timestep {t}, current sequence: { seq2chars(torch.argmax(pseq_0, dim=-1).tolist())}')
         
         if t > final_step:
             x_t_1, seq_t_1, tors_t_1, px0 = self.denoiser.get_next_pose(
@@ -565,6 +563,7 @@ class Sampler:
                 pseq0=pseq_0,
                 diffuse_sidechains=self.preprocess_conf.sidechain_input,
                 align_motif=self.inf_conf.align_motif,
+                include_motif_sidechains=self.preprocess_conf.motif_sidechain_input
             )
         else:
             x_t_1 = torch.clone(px0).to(x_t.device)
@@ -1256,6 +1255,10 @@ class JWStyleSelfCond(Sampler):
 
         pseq_0 = torch.nn.functional.one_hot(
             sampled_seq, num_classes=22).to(self.device)
+
+        seq_t = torch.nn.functional.one_hot(
+            seq_t, num_classes=22).to(self.device)
+
         self._log.info(
             f'Timestep {t}, current sequence: { seq2chars(torch.argmax(pseq_0, dim=-1).tolist())}')
 
@@ -1267,7 +1270,9 @@ class JWStyleSelfCond(Sampler):
                 diffusion_mask=self.mask_str.squeeze(),
                 seq_t=seq_t,
                 pseq0=pseq_0,
+                diffuse_sidechains=self.preprocess_conf.sidechain_input,
                 align_motif=self.inf_conf.align_motif,
+                include_motif_sidechains=self.preprocess_conf.motif_sidechain_input
             )
         else:
             x_t_1 = torch.clone(px0).to(x_t.device)

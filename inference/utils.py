@@ -358,7 +358,7 @@ class Denoise():
         # amino acid decoding schedule 
         #out = get_aa_schedule(T,L,nsteps=aa_decode_steps)
         #self.aa_decode_times, self.decode_order, self.idx2steps, self.aa_mask_stack = out
-        self.decode_scheduler = DecodeSchedule(L, visible, aa_decode_steps, mode='distance_based')
+        if seq_diffuser is None: self.decode_scheduler = DecodeSchedule(L, visible, aa_decode_steps, mode='distance_based')
 
     @property
     def idx2steps(self):
@@ -689,7 +689,18 @@ class Denoise():
 
         return Ca_grads
 
-    def get_next_pose(self, xt, px0, t, diffusion_mask, seq_diffusion_mask, seq_t, pseq0, diffuse_sidechains, fix_motif=True, align_motif=True):
+    def get_next_pose(self,
+                      xt,
+                      px0,
+                      t,
+                      diffusion_mask,
+                      seq_diffusion_mask,
+                      seq_t,
+                      pseq0,
+                      diffuse_sidechains,
+                      fix_motif=True,
+                      align_motif=True,
+                      include_motif_sidechains=True):
         """
         Wrapper function to take px0, xt and t, and to produce xt-1
         First, aligns px0 to xt
@@ -703,10 +714,23 @@ class Denoise():
 
             t (int, required): timestep t
 
-            diffusion_mask (torch.tensor, required): Mask
+            diffusion_mask (torch.tensor, required): Mask for structure diffusion
 
-            seq_t (torch.tensor, required): Sequence at the current timestep 
+            seq_diffusion_mask (torch.tensor, required): Mask for sequence diffusion
+
+            seq_t (torch.tensor, required): [L,22] Sequence at the current timestep 
+
+            pseq0 (torch.tensor, required): AR decoding: [L,22] Seq Diff: [L,20] Model's prediction of sequence
+
+            diffuse_sidechains (bool): Do diffusive sidechain prediction
+
+            fix_motif (bool): Fix the motif structure
+
+            align_motif (bool): Align the model's prediction of the motif to the input motif
+
+            include_motif_sidechains (bool): Provide sidechains of the fixed motif to the model
         """
+
         get_allatom = ComputeAllAtomCoords().to(device=xt.device)
         L,n_atom = xt.shape[:2]
         assert (xt.shape[1]  == 14) or (xt.shape[1]  == 27)
@@ -749,15 +773,21 @@ class Denoise():
             # Standard AR sequence decoding
             # get the next set of amino acid identities and chi angles 
 
-            # Seq is now one-hot and the AR code requires the seq to be an integer - NRB
-            # seq_t = torch.argmax(seq_t, dim=-1)
+            # Seq here is integer representation
+            seq_t = torch.argmax(seq_t, dim=-1).cpu() # [L]
+            pseq0 = torch.argmax(pseq0, dim=-1).cpu() # [L]
 
             if diffuse_sidechains:
                 torsions_next, seq_next = self.get_next_torsions(xt, px0, seq_t, pseq0, t, diffusion_mask, noise_scale = self.noise_scale_torsion)       
 
                 # build full atom representation with the new torsions but the current seq 
                 _, fullatom_next =  get_allatom(seq_t[None], frames_next[None], torsions_next[None])
-                fullatom_next[:,diffusion_mask,:14] = xt[diffusion_mask]
+
+                if include_motif_sidechains:
+                    fullatom_next[:,diffusion_mask,:14] = xt[diffusion_mask]
+                else:
+                    # It makes no sense to not include motif sidechains if you are working with sidechains in the nondiffused region
+                    raise NotImplementedError()
 
             else:  
                 ## Reveal some amino acids in the sequence according to schedule and predictions
@@ -777,10 +807,14 @@ class Denoise():
                 fullatom_next = torch.full_like(xt,float('nan')).unsqueeze(0)
 
                 fullatom_next[:,:,:3] = frames_next[None]
-                fullatom_next[:,diffusion_mask,:14] = xt[None,diffusion_mask]
+
+                if include_motif_sidechains:
+                    fullatom_next[:,diffusion_mask,:14] = xt[None,diffusion_mask]
 
         else:
             # Doing sequence diffusion
+
+            # Seq here is one-hot representation
 
             if diffuse_sidechains:
                 raise NotImplementedError()
@@ -798,7 +832,9 @@ class Denoise():
                 fullatom_next = torch.full_like(xt,float('nan')).unsqueeze(0)
 
                 fullatom_next[:,:,:3] = frames_next[None]
-                fullatom_next[:,diffusion_mask,:14] = xt[None,diffusion_mask]
+
+                if include_motif_sidechains:
+                    fullatom_next[:,diffusion_mask,:14] = xt[None,diffusion_mask]
 
         return fullatom_next.squeeze()[:,:14,:], seq_next, torsions_next, px0
 
