@@ -259,8 +259,8 @@ def cartesian_product_transpose(*arrays):
         start, end = end, end + rows
     return out.reshape(cols, rows).T
 
-def reverse_simple(sampler):
-    x_init, seq_init, forward_traj, aa_masks = sampler.sample_init(return_forward_trajectory=True)
+def reverse_simple(sampler, feed_true_xt=False):
+    x_init, seq_init, forward_traj, aa_masks, seq_orig = sampler.sample_init(return_forward_trajectory=True)
     #x_init, seq_init = sampler.sample_init()
     
     denoised_xyz_stack = []
@@ -277,6 +277,17 @@ def reverse_simple(sampler):
 
     # Loop over number of reverse diffusion time steps.
     for t in tqdm.tqdm(range(sampler.t_step_input, 0, -1)):
+        if feed_true_xt:
+            #ic(forward_traj.shape, aa_masks.shape)
+            x_t = forward_traj[t,:,:14]
+            aa_mask = aa_masks[t-1]
+            seq_t = torch.full_like(seq_orig, 21)
+            seq_t[aa_mask] = seq_orig[aa_mask]
+            if t == sampler.t_step_input:
+                ic('asserting seq_t matches seq_init')
+                torch.testing.assert_close(seq_t, seq_init)
+
+
         px0, x_t, seq_t, tors_t, plddt, logits = sampler.sample_step(
             t=t, seq_t=seq_t, x_t=x_t, seq_init=seq_init, return_extra=True)
 
