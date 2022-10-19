@@ -676,6 +676,11 @@ class Denoise():
         if not diffusion_mask == None:
             Ca_grads[diffusion_mask,:] = 0
 
+        # check for NaN's 
+        if torch.isnan(Ca_grads).any():
+            print('WARNING: NaN in potential gradients, replacing with zero grad.')
+            return Ca_grads[:] = 0
+
         return Ca_grads
 
     def get_next_pose(self, xt, px0, t, diffusion_mask, seq_t, pseq0, fix_motif=True, align_motif=True):

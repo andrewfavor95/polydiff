@@ -1,6 +1,7 @@
 import torch
 
 from util import generate_Cbeta
+from icecream import ic 
 
 class Potential:
     '''
@@ -23,6 +24,40 @@ class Potential:
                                                      by taking a step along it's gradient
         '''
         raise NotImplementedError('Potential compute function was not overwritten')
+
+
+class monomer_contacts(Potential):
+    '''
+        Differentiable way to maximise number of contacts within a protein
+        
+        Motivation is given here: https://www.plumed.org/doc-v2.7/user-doc/html/_c_o_o_r_d_i_n_a_t_i_o_n.html
+
+        Author: PV
+    '''
+
+    def __init__(self, weight=1, r_0=8, d_0=2, eps=1e-6):
+
+        self.r_0       = r_0
+        self.weight    = weight
+        self.d_0       = d_0
+        self.eps       = eps
+
+    def compute(self, seq, xyz):
+
+        Ca = xyz[:,1] # [L,3]
+
+        #cdist needs a batch dimension - NRB
+        dgram = torch.cdist(Ca[None,...].contiguous(), Ca[None,...].contiguous(), p=2) # [1,Lb,Lb]
+        divide_by_r_0 = (dgram - self.d_0) / self.r_0
+        numerator = torch.pow(divide_by_r_0,6)
+        denominator = torch.pow(divide_by_r_0,12)
+
+        ncontacts = (1 - numerator) / ((1 - denominator))
+
+
+        #Potential value is the average of both radii of gyration (is avg. the best way to do this?)
+        return self.weight * ncontacts.sum()
+
 
 class monomer_ROG(Potential):
     '''
@@ -196,7 +231,8 @@ class binder_any_ReLU(Potential):
 implemented_potentials = { 'monomer_ROG':          monomer_ROG,
                            'binder_ROG':           binder_ROG,
                            'binder_distance_ReLU': binder_distance_ReLU,
-                           'binder_any_ReLU':      binder_any_ReLU }
+                           'binder_any_ReLU':      binder_any_ReLU,
+                           'monomer_contacts':     monomer_contacts}
 
 require_binderlen      = { 'binder_ROG',
                            'binder_distance_ReLU',
