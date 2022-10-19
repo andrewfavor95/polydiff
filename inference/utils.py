@@ -679,7 +679,7 @@ class Denoise():
         # check for NaN's 
         if torch.isnan(Ca_grads).any():
             print('WARNING: NaN in potential gradients, replacing with zero grad.')
-            return Ca_grads[:] = 0
+            Ca_grads[:] = 0
 
         return Ca_grads
 
