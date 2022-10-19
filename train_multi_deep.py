@@ -1923,11 +1923,14 @@ if __name__ == "__main__":
     # set load params based on debug
     global LOAD_PARAM
     global LOAD_PARAM2
+
+    max_workers = 8 if preprocess_param['prob_self_cond'] == 0 else 0
+
     LOAD_PARAM = {'shuffle': False,
-              'num_workers': 8 if not DEBUG else 0,
+              'num_workers': max_workers if not DEBUG else 0,
               'pin_memory': True}
     LOAD_PARAM2 = {'shuffle': False,
-              'num_workers': 8 if not DEBUG else 0,
+              'num_workers': max_workers if not DEBUG else 0,
               'pin_memory': True}
 
 

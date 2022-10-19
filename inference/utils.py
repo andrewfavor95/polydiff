@@ -725,7 +725,7 @@ class Denoise():
         
         # get the next set of CA coordinates 
         _, ca_deltas = get_next_ca(xt, px0, t, diffusion_mask,
-                crd_scale=self.crd_scale, beta_schedule=self.schedule, self.alphabar_schedule, noise_scale=self.noise_scale_ca)
+                crd_scale=self.crd_scale, beta_schedule=self.schedule, alphabar_schedule=self.alphabar_schedule, noise_scale=self.noise_scale_ca)
         
         # get the next set of backbone frames (coordinates)
         frames_next = get_next_frames(xt, px0, t, diffuser=self.diffuser,
@@ -758,6 +758,8 @@ def sampler_selector(conf: DictConfig):
         sampler = model_runners.Seq2StrSampler(conf)
     elif conf.inference.model_runner == 'JWStyleSelfCond':
         sampler = model_runners.JWStyleSelfCond(conf)
+    elif conf.inference.model_runner == 'NRBStyleSelfCond':
+        sampler = model_runners.NRBStyleSelfCond(conf)
     else:
         raise ValueError(f'Unrecognized sampler {conf.model_runner}')
     return sampler
