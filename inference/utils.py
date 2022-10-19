@@ -24,6 +24,172 @@ import string
 from inference import model_runners
 import hydra
 
+###########################################################
+#### Functions which can be called outside of Denoiser ####
+###########################################################
+
+# These functions behave exactly the same as before but now do not rely on class fields from the Denoiser
+
+def slerp_update(r_t, r_0, t, mask=0):
+    """slerp_update uses SLERP to update the frames at time t to the
+    predicted frame for t=0
+
+    Args:
+        R_t, R_0: rotation matrices of shape [3, 3]
+        t: time step
+        mask: set to 1 / True to skip update.
+
+    Returns:
+        slerped rotation for time t-1 of shape [3, 3]
+    """
+    # interpolate FRAMES between one and next 
+    if not mask:
+        key_rots = scipy_R.from_matrix(np.stack([r_t, r_0], axis=0))
+    else:
+        key_rots = scipy_R.from_matrix(np.stack([r_t, r_t], axis=0))
+
+    key_times = [0,1]
+
+    interpolator = Slerp(key_times, key_rots)
+    alpha = np.array([1/t])
+    
+    # grab the interpolated FRAME 
+    interp_frame  = interpolator(alpha)
+    
+    # constructed rotation matrix which when applied YIELDS interpolated frame 
+    interp_rot = (interp_frame.as_matrix().squeeze() @ np.linalg.inv(r_t.squeeze()) )[None,...]
+
+    return interp_rot
+
+def get_next_frames(xt, px0, t, diffuser, so3_type, diffusion_mask, noise_scale=1.):
+    """get_next_frames gets updated frames using either SLERP or the IGSO(3) + score_based reverse diffusion.
+    
+
+    based on self.so3_type use slerp or score based update.
+
+    SLERP xt frames towards px0, by factor 1/t
+    Rather than generating random rotations (as occurs during forward process), calculate rotation between xt and px0
+   
+    Args:
+        xt: noised coordinates of shape [L, 14, 3]
+        px0: prediction of coordinates at t=0, of shape [L, 14, 3]
+        t: integer time step
+        diffuser: Diffuser object for reverse igSO3 sampling
+        so3_type: The type of SO3 noising being used ('igso3', or 'slerp')
+        diffusion_mask: of shape [L] of type bool, True means not to be
+            updated (e.g. mask is true for motif residues)
+        noise_scale: scale factor for the noise added (IGSO3 only)
+    
+    Returns:
+        backbone coordinates for step x_t-1 of shape [L, 3, 3]
+    """
+    N_0  = px0[None,:,0,:]
+    Ca_0 = px0[None,:,1,:]
+    C_0  = px0[None,:,2,:]
+
+    R_0, Ca_0 = rigid_from_3_points(N_0, Ca_0, C_0)
+
+    N_t  = xt[None, :, 0, :]
+    Ca_t = xt[None, :, 1, :]
+    C_t  = xt[None, :, 2, :]
+
+    R_t, Ca_t = rigid_from_3_points(N_t, Ca_t, C_t)
+
+    R_0 = scipy_R.from_matrix(R_0.squeeze().numpy())
+    R_t = scipy_R.from_matrix(R_t.squeeze().numpy())
+
+    # Sample next frame for each residue
+    all_rot_transitions = []
+    for i in range(len(xt)):
+        r_0 = R_0[i].as_matrix()
+        r_t = R_t[i].as_matrix()
+        mask_i = diffusion_mask[i]
+
+        if so3_type == "igso3":
+            r_t_next = diffuser.so3_diffuser.reverse_sample(r_t, r_0, t,
+                    mask=mask_i, noise_level=noise_scale)[None,...]
+            interp_rot =  r_t_next @ (r_t.T)
+        elif so3_type == "slerp":
+            interp_rot = slerp_update(r_t, r_0, t, diffusion_mask[i])
+        else:
+            assert False, "so3 diffusion type %s not implemented"%so3_type
+
+        all_rot_transitions.append(interp_rot)
+
+    all_rot_transitions = np.stack(all_rot_transitions, axis=0)
+
+    # Apply the interpolated rotation matrices to the coordinates
+    next_crds   = np.einsum('lrij,laj->lrai', all_rot_transitions, xt[:,:3,:] - Ca_t.squeeze()[:,None,...].numpy()) + Ca_t.squeeze()[:,None,None,...].numpy()
+
+    # (L,3,3) set of backbone coordinates with slight rotation 
+    return next_crds.squeeze(1)
+
+def get_mu_xt_x0(xt, px0, t, beta_schedule, alphabar_schedule, eps=1e-6):
+    """
+    Given xt, predicted x0 and the timestep t, give mu of x(t-1)
+    Assumes t is 0 indexed
+    """
+    #sigma is predefined from beta. Often referred to as beta tilde t
+    t_idx = t-1
+    sigma = ((1-alphabar_schedule[t_idx-1])/(1-alphabar_schedule[t_idx]))*beta_schedule[t_idx]
+
+    xt_ca = xt[:,1,:]
+    px0_ca = px0[:,1,:]
+
+    a = ((torch.sqrt(alphabar_schedule[t_idx-1] + eps)*beta_schedule[t_idx])/(1-alphabar_schedule[t_idx]))*px0_ca
+    b = ((torch.sqrt(1-beta_schedule[t_idx] + eps)*(1-alphabar_schedule[t_idx-1]))/(1-alphabar_schedule[t_idx]))*xt_ca
+
+    mu = a + b
+
+    return mu, sigma
+
+def get_next_ca(xt, px0, t, diffusion_mask, crd_scale, beta_schedule, alphabar_schedule, noise_scale=1.):
+    """
+    Given full atom x0 prediction (xyz coordinates), diffuse to x(t-1)
+    
+    Parameters:
+        
+        xt (L, 14/27, 3) set of coordinates
+        
+        px0 (L, 14/27, 3) set of coordinates
+
+        t: time step. Note this is zero-index current time step, so are generating t-1    
+
+        logits_aa (L x 20 ) amino acid probabilities at each position
+
+        seq_schedule (L): Tensor of bools, True is unmasked, False is masked. For this specific t
+
+        diffusion_mask (torch.tensor, required): Tensor of bools, True means NOT diffused at this residue, False means diffused 
+
+        noise_scale: scale factor for the noise being added
+
+    """
+    get_allatom = ComputeAllAtomCoords().to(device=xt.device)
+    L = len(xt)
+
+    # bring to origin after global alignment (when don't have a motif) or replace input motif and bring to origin, and then scale 
+    px0 = px0 * crd_scale
+    xt = xt * crd_scale
+
+    # get mu(xt, x0)
+    mu, sigma = get_mu_xt_x0(xt, px0, t, beta_schedule=beta_schedule, alphabar_schedule=alphabar_schedule)
+
+    sampled_crds = torch.normal(mu, torch.sqrt(sigma*noise_scale))
+    delta = sampled_crds - xt[:,1,:] #check sign of this is correct
+
+    if not diffusion_mask is None:
+        # calculate the mean displacement between the current motif and where 
+        # RoseTTAFold thinks it should go 
+        # print('Got motif delta')
+        # motif_delta = (px0[diffusion_mask,:3,...] - xt[diffusion_mask,:3,...]).mean(0).mean(0)
+
+        delta[diffusion_mask,...] = 0
+        # delta[diffusion_mask,...] = motif_delta
+
+    out_crds = xt + delta[:, None, :]
+
+    return out_crds/crd_scale, delta/crd_scale
+
 class DecodeSchedule():
     """
     Class for managing AA decoding schedule stuff
@@ -477,168 +643,6 @@ class Denoise():
         return torch.Tensor(px0_)
         # return torch.tensor(xT_motif_out)
 
-    def get_mu_xt_x0(self, xt, px0, t, eps=1e-6):
-        """
-        Given xt, predicted x0 and the timestep t, give mu of x(t-1)
-        Assumes t is 0 indexed
-        """
-        #sigma is predefined from beta. Often referred to as beta tilde t
-        t_idx = t-1
-        
-        sigma = ((1-self.alphabar_schedule[t_idx-1])/(1-self.alphabar_schedule[t_idx]))*self.schedule[t_idx]
-
-        xt_ca = xt[:,1,:]
-        px0_ca = px0[:,1,:]
-
-        a = ((torch.sqrt(self.alphabar_schedule[t_idx-1] + eps)*self.schedule[t_idx])/(1-self.alphabar_schedule[t_idx]))*px0_ca
-        b = ((torch.sqrt(1-self.schedule[t_idx] + eps)*(1-self.alphabar_schedule[t_idx-1]))/(1-self.alphabar_schedule[t_idx]))*xt_ca
-
-        mu = a + b
-
-        return mu, sigma
-
-    def get_next_ca(self, xt, px0, t, diffusion_mask, noise_scale=1.):
-        """
-        Given full atom x0 prediction (xyz coordinates), diffuse to x(t-1)
-        
-        Parameters:
-            
-            xt (L, 14/27, 3) set of coordinates
-            
-            px0 (L, 14/27, 3) set of coordinates
-
-            t: time step. Note this is zero-index current time step, so are generating t-1    
-
-            logits_aa (L x 20 ) amino acid probabilities at each position
-
-            seq_schedule (L): Tensor of bools, True is unmasked, False is masked. For this specific t
-
-            diffusion_mask (torch.tensor, required): Tensor of bools, True means NOT diffused at this residue, False means diffused 
-
-            noise_scale: scale factor for the noise being added
-
-        """
-        get_allatom = ComputeAllAtomCoords().to(device=xt.device)
-        L = len(xt)
-
-        # bring to origin after global alignment (when don't have a motif) or replace input motif and bring to origin, and then scale 
-        px0 = px0 * self.crd_scale
-        xt = xt * self.crd_scale
-
-        # get mu(xt, x0)
-        mu, sigma = self.get_mu_xt_x0(xt, px0, t)
-
-        sampled_crds = torch.normal(mu, torch.sqrt(sigma*noise_scale))
-        delta = sampled_crds - xt[:,1,:] #check sign of this is correct
-
-        if not diffusion_mask is None:
-            # calculate the mean displacement between the current motif and where 
-            # RoseTTAFold thinks it should go 
-            # print('Got motif delta')
-            # motif_delta = (px0[diffusion_mask,:3,...] - xt[diffusion_mask,:3,...]).mean(0).mean(0)
-
-            delta[diffusion_mask,...] = 0
-            # delta[diffusion_mask,...] = motif_delta
-
-        out_crds = xt + delta[:, None, :]
-
-
-        return out_crds/self.crd_scale, delta/self.crd_scale
-
-    def slerp_update(self, r_t, r_0, t, mask=0):
-        """slerp_update uses SLERP to update the frames at time t to the
-        predicted frame for t=0
-
-        Args:
-            R_t, R_0: rotation matrices of shape [3, 3]
-            t: time step
-            mask: set to 1 / True to skip update.
-
-        Returns:
-            slerped rotation for time t-1 of shape [3, 3]
-        """
-        # interpolate FRAMES between one and next 
-        if not mask:
-            key_rots = scipy_R.from_matrix(np.stack([r_t, r_0], axis=0))
-        else:
-            key_rots = scipy_R.from_matrix(np.stack([r_t, r_t], axis=0))
-
-        key_times = [0,1]
-
-        interpolator = Slerp(key_times, key_rots)
-        alpha = np.array([1/t])
-        
-        # grab the interpolated FRAME 
-        interp_frame  = interpolator(alpha)
-        
-        # constructed rotation matrix which when applied YIELDS interpolated frame 
-        interp_rot = (interp_frame.as_matrix().squeeze() @ np.linalg.inv(r_t.squeeze()) )[None,...]
-
-        return interp_rot
-
-
-    def get_next_frames(self, xt, px0, t, diffusion_mask, noise_scale=1.):
-        """get_next_frames gets updated frames using either SLERP or the IGSO(3) + score_based reverse diffusion.
-        
-
-        based on self.so3_type use slerp or score based update.
-
-        SLERP xt frames towards px0, by factor 1/t
-        Rather than generating random rotations (as occurs during forward process), calculate rotation between xt and px0
-       
-        Args:
-            xt: noised coordinates of shape [L, 14, 3]
-            px0: prediction of coordinates at t=0, of shape [L, 14, 3]
-            t: integer time step
-            diffusion_mask: of shape [L] of type bool, True means not to be
-                updated (e.g. mask is true for motif residues)
-            noise_scale: scale factor for the noise added (IGSO3 only)
-        
-        Returns:
-            backbone coordinates for step x_t-1 of shape [L, 3, 3]
-        """
-        N_0  = px0[None,:,0,:]
-        Ca_0 = px0[None,:,1,:]
-        C_0  = px0[None,:,2,:]
-
-        R_0, Ca_0 = rigid_from_3_points(N_0, Ca_0, C_0)
-
-        N_t  = xt[None, :, 0, :]
-        Ca_t = xt[None, :, 1, :]
-        C_t  = xt[None, :, 2, :]
-
-        R_t, Ca_t = rigid_from_3_points(N_t, Ca_t, C_t)
-
-        R_0 = scipy_R.from_matrix(R_0.squeeze().numpy())
-        R_t = scipy_R.from_matrix(R_t.squeeze().numpy())
-
-        
-        # Sample next frame for each residue
-        all_rot_transitions = []
-        for i in range(len(xt)):
-            r_0 = R_0[i].as_matrix()
-            r_t = R_t[i].as_matrix()
-            mask_i = diffusion_mask[i]
-
-            if self.so3_type == "igso3":
-                r_t_next = self.diffuser.so3_diffuser.reverse_sample(r_t, r_0, t,
-                        mask=mask_i, noise_level=noise_scale)[None,...]
-                interp_rot =  r_t_next @ (r_t.T)
-            elif self.so3_type == "slerp":
-                interp_rot = self.slerp_update(r_t, r_0, t, diffusion_mask[i])
-            else:
-                assert False, "so3 diffusion type %s not implemented"%self.so3_type
-
-            all_rot_transitions.append(interp_rot)
-
-
-        all_rot_transitions = np.stack(all_rot_transitions, axis=0)
-
-        # Apply the interpolated rotation matrices to the coordinates
-        next_crds   = np.einsum('lrij,laj->lrai', all_rot_transitions, xt[:,:3,:] - Ca_t.squeeze()[:,None,...].numpy()) + Ca_t.squeeze()[:,None,None,...].numpy()
-
-        # (L,3,3) set of backbone coordinates with slight rotation 
-        return next_crds.squeeze(1)
 
     def get_potential_gradients(self, seq, xyz, diffusion_mask ):
         '''
@@ -720,10 +724,12 @@ class Denoise():
             diffusion_mask[:] = False
         
         # get the next set of CA coordinates 
-        _, ca_deltas = self.get_next_ca(xt, px0, t, diffusion_mask, noise_scale = self.noise_scale_ca)
+        _, ca_deltas = get_next_ca(xt, px0, t, diffusion_mask,
+                crd_scale=self.crd_scale, beta_schedule=self.schedule, self.alphabar_schedule, noise_scale=self.noise_scale_ca)
         
         # get the next set of backbone frames (coordinates)
-        frames_next = self.get_next_frames(xt, px0, t, diffusion_mask, noise_scale = self.noise_scale_frame)
+        frames_next = get_next_frames(xt, px0, t, diffuser=self.diffuser,
+                so3_type=self.so3_type, diffusion_mask=diffusion_mask, noise_scale=self.noise_scale_frame)
 
         # Apply gradient step from guiding potentials
         # This can be moved to below where the full atom representation is calculated to allow for potentials involving sidechains

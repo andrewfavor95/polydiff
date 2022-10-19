@@ -4,6 +4,8 @@ from icecream import ic
 import random
 from blosum62 import p_j_given_i as P_JGI
 import numpy as np
+from diffusion import get_beta_schedule
+from inference.utils import get_next_ca, get_next_frames
 
 ic.configureOutput(includeContext=True)
 
@@ -156,6 +158,48 @@ def mask_inputs(seq,
                   'include_motif_sidechains':preprocess_param['motif_sidechain_input']}
         
         diffused_fullatoms, aa_masks, true_crds = diffuser.diffuse_pose(**kwargs)
+
+        ############################################
+        ########### New Self Conditioning ##########
+        ############################################
+
+        # JW noticed that the frames returned from the diffuser are not from a single noising trajectory
+        # So we are going to take a denoising step from x_t+1 to get x_t and have their trajectories agree
+
+        # Only want to do this process when we are actually using self conditioning training
+        if preprocess_param['prob_self_cond'] > 0 and t < 200: # Only can get t+1 if we are at t < 200
+
+            tmp_x_t_plus1 = diffused_fullatoms[0]
+
+            beta_schedule, _, alphabar_schedule = get_beta_schedule(
+                                       T=diffuser.T,
+                                       b0=diffuser.b_0,
+                                       bT=diffuser.b_T,
+                                       schedule_type='linear',
+                                       inference=False)
+
+            _, ca_deltas = get_next_ca(
+                                       xt=tmp_x_t_plus1,
+                                       px0=true_crds,
+                                       t=t+1,
+                                       diffusion_mask=input_str_mask.squeeze(),
+                                       crd_scale=diffuser.crd_scale,
+                                       beta_schedule=beta_schedule,
+                                       alphabar_schedule=alphabar_schedule,
+                                       noise_scale=1) # Noise scale ca hard coded for now - NRB
+
+            frames_next = get_next_frames(
+                                       xt=tmp_x_t_plus1,
+                                       px0=true_crds,
+                                       t=t+1,
+                                       diffuser=diffuser,
+                                       so3_type='igso3', # Hard coding for now - NRB
+                                       diffusion_mask=input_str_mask.squeeze(),
+                                       noise_scale=1) # Noise scale frame hard coded for now - NRB
+            
+        ############################################
+        ######### End New Self Conditioning ########
+        ############################################
 
         if seq_diffuser is not None:
             seq_args = {
