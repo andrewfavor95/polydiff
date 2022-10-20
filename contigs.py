@@ -77,7 +77,7 @@ class ContigMap():
         count = 0
         while length_compatible is False:
             inpaint_chains=0
-            contig_list = self.contigs
+            contig_list = self.contigs[0].strip().split()
             sampled_mask = []
             sampled_mask_length = 0
             #allow receptor chain to be last in contig string
