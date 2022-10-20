@@ -27,6 +27,7 @@ inference:
   autoregressive_confidence: True
   no_confidence: True
   use_jw_selfcond: False
+  symmetric_self_cond: True
 
 contigmap:
   contigs: ['20', 'A3-23', '30']
