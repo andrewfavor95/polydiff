@@ -302,6 +302,8 @@ def get_args(in_args=None):
             help = 'dimension of t2d raw inputs')
     diff_group.add_argument('-prob_self_cond', type=float, default=0,
             help='The probability the model will receive self conditioning information during training. Default=0')
+    diff_group.add_argument('-new_self_cond', action="store_true", default=False,
+            help='Whether to use the new (consistent frames) self conditioning or the old (inconsisent frames) self conditioning. Default=False (old version)')
     diff_group.add_argument('-str_self_cond', action="store_true", default=False,
             help='Whether to train the model with structure self conditioning information. Default=False')
     diff_group.add_argument('-seq_self_cond', action="store_true", default=False,
@@ -416,7 +418,8 @@ def get_args(in_args=None):
                   'predict_previous',
                   'prob_self_cond',
                   'str_self_cond',
-                  'seq_self_cond'
+                  'seq_self_cond',
+                  'new_self_cond'
                   ]:
         preprocess_param[param] = getattr(args, param)
     if not preprocess_param['sequence_decode']:

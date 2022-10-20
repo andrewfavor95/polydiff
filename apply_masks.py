@@ -167,15 +167,15 @@ def mask_inputs(seq,
         # So we are going to take a denoising step from x_t+1 to get x_t and have their trajectories agree
 
         # Only want to do this process when we are actually using self conditioning training
-        if preprocess_param['prob_self_cond'] > 0 and t < 200: # Only can get t+1 if we are at t < 200
+        if preprocess_param['new_self_cond'] and t < 200: # Only can get t+1 if we are at t < 200
 
             tmp_x_t_plus1 = diffused_fullatoms[0]
 
             beta_schedule, _, alphabar_schedule = get_beta_schedule(
-                                       T=diffuser.T,
-                                       b0=diffuser.b_0,
-                                       bT=diffuser.b_T,
-                                       schedule_type='linear',
+                                       T=diffusion_param['diff_T'],
+                                       b0=diffusion_param['diff_b0'],
+                                       bT=diffusion_param['diff_bT'],
+                                       schedule_type=diffusion_param['diff_schedule_type'],
                                        inference=False)
 
             _, ca_deltas = get_next_ca(
@@ -183,19 +183,31 @@ def mask_inputs(seq,
                                        px0=true_crds,
                                        t=t+1,
                                        diffusion_mask=input_str_mask.squeeze(),
-                                       crd_scale=diffuser.crd_scale,
+                                       crd_scale=diffusion_param['diff_crd_scale'],
                                        beta_schedule=beta_schedule,
                                        alphabar_schedule=alphabar_schedule,
-                                       noise_scale=1) # Noise scale ca hard coded for now - NRB
+                                       noise_scale=1)
+
+            # Noise scale ca hard coded for now. Maybe can eventually be piped down from inference configs? - NRB
 
             frames_next = get_next_frames(
                                        xt=tmp_x_t_plus1,
                                        px0=true_crds,
                                        t=t+1,
                                        diffuser=diffuser,
-                                       so3_type='igso3', # Hard coding for now - NRB
+                                       so3_type=diffusion_param['diff_so3_type'],
                                        diffusion_mask=input_str_mask.squeeze(),
                                        noise_scale=1) # Noise scale frame hard coded for now - NRB
+
+            frames_next = torch.from_numpy(frames_next) + ca_deltas[:,None,:]  # translate
+            
+            tmp_x_t = torch.zeros_like(tmp_x_t_plus1)
+            tmp_x_t[:,:3] = frames_next
+            
+            if preprocess_param['motif_sidechain_input']:
+                tmp_x_t[input_str_mask.squeeze(),:27] = tmp_x_t_plus1[input_str_mask.squeeze()]
+            
+            diffused_fullatoms[1] = tmp_x_t
             
         ############################################
         ######### End New Self Conditioning ########
