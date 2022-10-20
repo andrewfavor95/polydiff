@@ -14,6 +14,7 @@ def get_args():
     parser.add_argument('--datadir',type=str,help='folder with trb files indicating motif residues to fix.')
     parser.add_argument('--output_parsed',type=str,help='file to write parsed pdbs.')
     parser.add_argument('--output_fixed_pos',type=str,help='file prefix to write fixed positions.')
+    parser.add_argument('--no_fixed_pos',action='store_true', help='omit writing a fixed position dictionary.')
     return parser.parse_args()
 
 alpha_1 = list("ARNDCQEGHILKMFPSTWYV-")
@@ -155,12 +156,15 @@ def main():
     args = get_args()
 
     pdb_dict_list = parse_multiple_chains(args.input_files)
-    fixed_position_dict = make_fixed_positions_dict(pdb_dict_list, args.datadir)
 
     with open(args.output_parsed, 'w') as f:
         for entry in pdb_dict_list:
             f.write(json.dumps(entry)+'\n')
 
+    if args.no_fixed_pos:
+        return
+
+    fixed_position_dict = make_fixed_positions_dict(pdb_dict_list, args.datadir)
     with open(args.output_fixed_pos,'w') as f:
         f.write(json.dumps(fixed_position_dict) + '\n')
 
