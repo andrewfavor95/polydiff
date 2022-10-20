@@ -181,7 +181,6 @@ class Sampler:
         else:
             print('WARNING: Model, Diffuser and Preprocess parameters are not saved in this checkpoint. Check carefully that the values specified in the config are correct for this checkpoint')     
 
-        self._conf['diffuser']['chi_type']='interp'
         ic(self._conf)
 
     def load_model(self):
