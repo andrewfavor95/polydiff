@@ -535,6 +535,14 @@ class Sampler:
             return px0, x_t_1, seq_t_1, tors_t_1, plddt, logits
         return px0, x_t_1, seq_t_1, tors_t_1, plddt
 
+    def symmetrise_prev_pred(self, px0, seq_in, alpha):
+        """
+        Method for symmetrising px0 output, either for recycling or for self-conditioning
+        """
+        _,px0_aa = self.allatom(torch.argmax(seq_in, dim=-1), px0, alpha)
+        px0_sym,_ = self.symmetry.apply_symmetry(px0_aa.to('cpu').squeeze()[:,:14], torch.argmax(seq_in, dim=-1).squeeze().to('cpu'))
+        px0_sym = px0_sym[None].to(self.device)
+        return px0_sym
 
 class Seq2StrSampler(Sampler):
     """
@@ -745,6 +753,7 @@ class NRBStyleSelfCond(Sampler):
 
         if t < self.diffuser.T:
             ic('Providing Self Cond')
+                
             zeros = torch.zeros(B,1,L,24,3).float().to(xyz_t.device)
             xyz_t = torch.cat((self.prev_pred.unsqueeze(1),zeros), dim=-2) # [B,T,L,27,3]
 
@@ -772,8 +781,9 @@ class NRBStyleSelfCond(Sampler):
                                     state_prev = None,
                                     t=torch.tensor(t),
                                     return_infer=True,
-                                    motif_mask=self.diffusion_mask.squeeze().to(self.device))
-
+                                    motif_mask=self.diffusion_mask.squeeze().to(self.device))   
+                if self.symmetry is not None and self.inf_conf.symmetric_self_cond:
+                    px0 = self.symmetrise_prev_pred(px0=px0,seq_in=seq_in, alpha=alpha)[:,:,:3]
         self.prev_pred = torch.clone(px0)
 
         # prediction of X0
