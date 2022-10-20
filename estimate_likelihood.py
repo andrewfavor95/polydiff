@@ -198,9 +198,9 @@ def get_sampler(conf):
     seq_true = torch.tensor(seq_true)
     L = input_xyz.shape[0]
 
-    conf.contigmap.contigs=[f'{L}']
+    #conf.contigmap.contigs=[f'{L}']
 
-    sampler = model_runners.Sampler(conf)
+    sampler = iu.sampler_selector(conf)
     return sampler
 
 
@@ -287,9 +287,12 @@ def reverse_simple(sampler, feed_true_xt=False):
                 ic('asserting seq_t matches seq_init')
                 torch.testing.assert_close(seq_t, seq_init)
 
-
-        px0, x_t, seq_t, tors_t, plddt, logits = sampler.sample_step(
-            t=t, seq_t=seq_t, x_t=x_t, seq_init=seq_init, return_extra=True)
+        logits = torch.zeros(5)
+        px0, x_t, seq_t, tors_t, plddt = sampler.sample_step(
+            t=t, seq_t=seq_t, x_t=x_t, seq_init=seq_init,final_step=sampler.inf_conf.final_step)
+        # return extra is not enabled by NRB's sampler
+        #px0, x_t, seq_t, tors_t, plddt, logits = sampler.sample_step(
+        #    t=t, seq_t=seq_t, x_t=x_t, seq_init=seq_init,final_step=sampler.inf_conf.final_step, return_extra=True)
 
         px0_xyz_stack.append(px0)
         denoised_xyz_stack.append(x_t)
