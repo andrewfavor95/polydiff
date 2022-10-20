@@ -28,6 +28,7 @@ inference:
   no_confidence: True
   use_jw_selfcond: False
   symmetric_self_cond: True
+  final_step: 1
 
 contigmap:
   contigs: ['20', 'A3-23', '30']

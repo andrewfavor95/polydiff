@@ -1020,11 +1020,14 @@ def recycle_schedule(T, rec_sched=None, num_designs=1):
     Input:
         - T: Max T
         - rec_sched: timestep:num_recycles|timestep:num_recycles
-            e.g. T=200, rec_sched = 50:2|25:4|2:10. At timestep 50, start having 2 recycles, then 4 at t=25, 2=10
+            e.g. T=200, rec_sched = 50:2/25:4/2:10. At timestep 50, start having 2 recycles, then 4 at t=25, 2=10
     """
     if rec_sched is not None:
         schedule = np.ones(T, dtype='int')
-        parts = rec_sched.split("|")
+        if "/" in rec_sched:
+            parts = rec_sched.split("/")
+        else:
+            parts = [rec_sched]
         indices=[int(i.split(":")[0]) for i in parts]
         assert all(indices[i] > indices[i+1] for i in range(len(indices) - 1)), "Recycle schedule indices must be in decreasing order"
         for part in parts:

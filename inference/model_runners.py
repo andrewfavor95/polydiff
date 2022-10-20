@@ -111,8 +111,9 @@ class Sampler:
 
         self.potential_manager = PotentialManager(self.potential_conf, self.ppi_conf, self.diffuser_conf)
         
-        # Get recycle schedule
-        self.recycle_schedule = iu.recycle_schedule(self.T, self.inf_conf.recycle_schedule, self.inf_conf.num_recycles)
+        # Get recycle schedule    
+        recycle_schedule = str(self.inf_conf.recycle_schedule) if self.inf_conf.recycle_schedule is not None else None
+        self.recycle_schedule = iu.recycle_schedule(self.T, recycle_schedule, self.inf_conf.num_recycles)
 
     def process_target(self, pdb_path):
         assert not (self.inf_conf.ppi_design and self.inf_conf.autogenerate_contigs), "target reprocessing not implemented yet for these configuration arguments"
@@ -434,7 +435,7 @@ class Sampler:
         """ 
         return msa_masked, msa_full, seq[None], torch.squeeze(xyz_t, dim=0), idx, t1d, t2d, xyz_t, alpha_t
         
-    def sample_step(self, *, t, seq_t, x_t, seq_init, return_extra=False):
+    def sample_step(self, *, t, seq_t, x_t, seq_init, final_step, return_extra=False):
         '''Generate the next pose that the model should be supplied at timestep t-1.
 
         Args:
@@ -512,7 +513,7 @@ class Sampler:
         self._log.info(
             f'Timestep {t}, current sequence: { seq2chars(torch.argmax(pseq_0, dim=-1).tolist())}')
         
-        if t > 1:
+        if t > final_step:
             x_t_1, seq_t_1, tors_t_1, px0 = self.denoiser.get_next_pose(
                 xt=x_t,
                 px0=px0,
@@ -727,7 +728,7 @@ class NRBStyleSelfCond(Sampler):
     frame_sql2_pdb_data_T200_sinusoidal_frozenmotif_lddt_distog_noseq_physics_selfcond_lowlr_train_session2022-10-06_1665075957.8513756
     """
 
-    def sample_step(self, *, t, seq_t, x_t, seq_init):
+    def sample_step(self, *, t, seq_t, x_t, seq_init, final_step):
         '''
         Generate the next pose that the model should be supplied at timestep t-1.
 
@@ -802,7 +803,7 @@ class NRBStyleSelfCond(Sampler):
         self._log.info(
             f'Timestep {t}, current sequence: { seq2chars(torch.argmax(pseq_0, dim=-1).tolist())}')
 
-        if t > 1:
+        if t > final_step:
             x_t_1, seq_t_1, tors_t_1, px0 = self.denoiser.get_next_pose(
                 xt=x_t,
                 px0=px0,
@@ -832,7 +833,7 @@ class JWStyleSelfCond(Sampler):
         self.self_cond = self.inf_conf.use_jw_selfcond 
         if not self.self_cond:
             print(" ", "*" * 100, " ", "WARNING: You're using the JWStyleSelfCond sampler, but inference.use_jw_selfcond is set to False. Is this intentional?", " ", "*" * 100, " ", sep=os.linesep)
-    def sample_step(self, *, t, seq_t, x_t, seq_init):
+    def sample_step(self, *, t, seq_t, x_t, seq_init, final_step):
         '''
         Generate the next pose that the model should be supplied at timestep t-1.
 
@@ -904,7 +905,7 @@ class JWStyleSelfCond(Sampler):
         self._log.info(
             f'Timestep {t}, current sequence: { seq2chars(torch.argmax(pseq_0, dim=-1).tolist())}')
 
-        if t > 1:
+        if t > final_step:
             x_t_1, seq_t_1, tors_t_1, px0 = self.denoiser.get_next_pose(
                 xt=x_t,
                 px0=px0,
