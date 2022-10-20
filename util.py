@@ -508,7 +508,7 @@ for i in range(22):
 
 N_BACKBONE_ATOMS = 3
 N_HEAVY = 14 
-def writepdb_multi(filename, atoms_stack, bfacts, seq, backbone_only=False, chain_ids=None, use_hydrogens=True):
+def writepdb_multi(filename, atoms_stack, bfacts, seq_stack, backbone_only=False, chain_ids=None, use_hydrogens=True):
     """
     Function for writing multiple structural states of the same sequence into a single 
     pdb file. 
@@ -516,10 +516,12 @@ def writepdb_multi(filename, atoms_stack, bfacts, seq, backbone_only=False, chai
 
     f = open(filename,"w")
 
-    for atoms in atoms_stack:
-
+    if seq_stack.ndim != 2:
+        T = atoms_stack.shape[0]
+        seq_stack = torch.tile(seq_stack, (T,1))
+    seq_stack = seq_stack.cpu()
+    for atoms, scpu in zip(atoms_stack, seq_stack):
         ctr = 1
-        scpu = seq.cpu()
         atomscpu = atoms.cpu()
         Bfacts = torch.clamp( bfacts.cpu(), 0, 1)
         for i,s in enumerate(scpu):

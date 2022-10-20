@@ -302,8 +302,7 @@ class Sampler:
         
         if return_forward_trajectory:
             forward_traj = torch.cat([xyz_true[None], fa_stack[:,:,:]])
-            #forward_traj = fa_stack
-            return xt, seq_t, forward_traj, aa_masks
+            return xt, seq_t, forward_traj, aa_masks, seq_orig
         
         self.msa_prev = None
         self.pair_prev = None
