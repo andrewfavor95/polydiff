@@ -1113,7 +1113,35 @@ class SeqDiffusionSampler(Sampler):
         msa_masked, msa_full, seq_in, xt_in, idx_pdb, t1d, t2d, xyz_t, alpha_t = self._preprocess(
             seq_t, x_t, t)
 
-        N,L = msa_masked.shape[:2]
+        B,N,L = xyz_t.shape[:3]
+
+        ##################################
+        ######## Str Self Cond ###########
+        ##################################
+        if t < self.diffuser.T:
+            ic('Providing Str Self Cond')
+                
+            zeros = torch.zeros(B,1,L,24,3).float().to(xyz_t.device)
+            xyz_t = torch.cat((self.prev_pred.unsqueeze(1),zeros), dim=-2) # [B,T,L,27,3]
+
+            t2d   = xyz_to_t2d(xyz_t) # [B,T,L,L,44]
+
+        else:
+            xyz_t = torch.zeros_like(xyz_t)
+            t2d   = torch.zeros_like(t2d)
+        
+        ##################################
+        ######## Seq Self Cond ###########
+        ##################################
+        if self.seq_self_cond:
+            if t < self.diffuser.T:
+                ic('Providing Seq Self Cond')
+
+                t1d[:,:,:,:20] = self.prev_seq_pred # [B,T,L,d_t1d]
+                t1d[:,:,:,20]  = 0 # Setting mask token to zero
+
+            else:
+                t1d[:,:,:,:21] = 0
 
         if self.symmetry is not None:
             raise NotImplementedError()
@@ -1137,12 +1165,17 @@ class SeqDiffusionSampler(Sampler):
                                     return_infer=True,
                                     motif_mask=self.diffusion_mask.squeeze().to(self.device))
 
-        # prediction of X0 
-        _, px0  = self.allatom(torch.argmax(seq_in, dim=-1), px0, alpha)
-        px0     = px0.squeeze()[:,:14]
 
         # For sequence diffusion we never make predictions beyond index 19
         pseq_0 = logits.squeeze()[:,:20] # [L,20]
+
+        self.prev_seq_pred = torch.clone(pseq_0)
+        self.prev_pred     = torch.clone(px0)
+
+        # prediction of X0
+        _, px0  = self.allatom(torch.argmax(seq_in, dim=-1), px0, alpha)
+        px0     = px0.squeeze()[:,:14]
+
 
         self._log.info(
             f'Timestep {t}, current sequence: { seq2chars(torch.argmax(pseq_0, dim=-1).tolist())}')

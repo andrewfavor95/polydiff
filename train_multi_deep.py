@@ -1123,24 +1123,10 @@ class Trainer():
                     with ddp_model.no_sync():
                         with torch.cuda.amp.autocast(enabled=USE_AMP):
 
-                            if self.preprocess_param['seq_self_cond']:
-                                # When doing sequence self-conditioning we give the model the perturbed seq and the model's prediction of the seq
-                                # These are in two lines in the MSA and in this order: [model pred, perturbed true]
-                                # Since this is the step before self conditioning, we just make the model pred all zeros
-
-                                use_msa_masked = torch.stack((msa_masked[:,0,:,0],msa_masked[:,0,:,0]), dim=2) # [B,I,N_short,L,48]
-                                use_msa_masked[:,:,0] = 0
-
-                                use_msa_full = torch.stack((msa_full[:,0,:,0],msa_full[:,0,:,0]), dim=2) # [B,I,N_long,L,25]
-                                use_msa_full[:,:,0] = 0
-
-                            else:
-                                # When doing no sequence self-conditioning we an MSA with depth == 1 - NRB
-                                use_msa_masked = msa_masked[:,0]
-                                use_msa_full   = msa_full[:,0]
-
                             # Select timestep t = t+1
                             use_seq        = seq[:,0]
+                            use_msa_masked = msa_masked[:,0]
+                            use_msa_full   = msa_full[:,0]
                             use_xyz_prev   = xyz_prev[:,0] # grab t entry, could also make this None when not self conditioning
                             use_t1d        = t1d[:,0]
                             use_t2d        = t2d[:,0] # May want to make this zero for self cond
@@ -1171,6 +1157,9 @@ class Trainer():
             alpha_t    = alpha_t[:,1]
             little_t   = little_t[1]
             xyz_prev   = xyz_prev[:,1]
+            msa_masked = msa_masked[:,1]
+            msa_full   = msa_full[:,1]
+            mask_msa   = mask_msa[:,1]
 
             # Only provide previous xyz - NRB
             msa_prev   = None
@@ -1200,43 +1189,19 @@ class Trainer():
 
             if self.preprocess_param['seq_self_cond']:
                 if unroll_performed:
+                    # When doing seq self conditioning training, the model only receives px0_seq information through template features
+                    # Turn model's prediction of x0 sequence into t1d
+
                     # Removing prediction of mask character
                     pred_seq = sequence_logits[0,:20,:].permute(1,0) # [L,20]
-                    pred_seq = pred_seq[:L] # Only take first L characters, not N*L
 
-                    ################
-                    ## msa_masked ##
-                    ################
-                    msa_masked = torch.stack((msa_masked[:,1,:,0],msa_masked[:,1,:,0]), dim=2) # [B,I,N_short,L,48]
-
-                    msa_masked[:,:,0]         = 0 # Zero this out before we reassign it - NRB
-                    msa_masked[:,:,0,:,:20]   = pred_seq
-                    msa_masked[:,:,0,:,22:42] = pred_seq
-
-                    ################
-                    ### msa_full ###
-                    ################
-                    msa_full = torch.stack((msa_full[:,1,:,0],msa_full[:,1,:,0]), dim=2) # [B,I,N_long,L,25]
-
-                    msa_full[:,:,0]       = 0 # Zero this out before we reassign it - NRB
-                    msa_full[:,:,0,:,:20] = pred_seq
+                    t1d[:,:,:,:20] = pred_seq # [B,T,L,33]
+                    t1d[:,:,:,20]  = 0 # Mask token set to zero
                      
                 else:
-                    msa_masked_zeros = torch.zeros_like(msa_masked[:,1,:,0]).to(msa_masked.device)
-                    msa_masked       = torch.stack((msa_masked_zeros, msa_masked[:,1,:,0]), dim=2) # [B,I,N_short,L,48]
+                    zeros          = torch.zeros(L,21)
+                    t1d[:,:,:,:21] = zeros # [B,T,L,33]
 
-                    msa_full_zeros   = torch.zeros_like(msa_full[:,1,:,0]).to(msa_full.device)
-                    msa_full         = torch.stack((msa_full_zeros, msa_full[:,1,:,0]), dim=2) # [B,I,N_long,L,25]
-
-                # Always use mask_msa as the input version but stacked in a different dimension
-                # [B,n,N_short,L] to [B,N_short,L] since N_short of input is always size 1, now n becomes N_short
-                mask_msa = mask_msa.squeeze(2) # [B,2,L]
-
-            else:
-                # Default behavior, no seq self conditioning
-                msa_masked = msa_masked[:,1]
-                msa_full   = msa_full[:,1]
-                mask_msa   = mask_msa[:,1]
 
             with torch.no_grad():
                 for i_cycle in range(N_cycle-1):
@@ -1299,10 +1264,6 @@ class Trainer():
                         prob = self.active_fn(logit_s[0]) # distogram
                         acc_s = self.calc_acc(prob, c6d[...,0], idx_pdb, mask_2d)
 
-                        if self.preprocess_param['seq_self_cond']:
-                            # logit_aa_s is [B,21,N*L] and we only want the first L
-                            logit_aa_s = logit_aa_s[:,:,:L] # [B,21,N*L]
-                    
                         loss, loss_s, loss_dict = self.calc_loss(logit_s, c6d,
                                 logit_aa_s, msa[:, i_cycle], mask_msa[:,i_cycle], logit_exp,
                                 pred_crds, alphas, true_crds, mask_crds,
@@ -1343,10 +1304,6 @@ class Trainer():
                     prob = self.active_fn(logit_s[0]) # distogram
                     acc_s = self.calc_acc(prob, c6d[...,0], idx_pdb, mask_2d)
 
-                    if self.preprocess_param['seq_self_cond']:
-                        # logit_aa_s is [B,21,N*L] and we only want the first L
-                        logit_aa_s = logit_aa_s[:,:,:L] # [B,21,L]
-                    
                     loss, loss_s, loss_dict = self.calc_loss(logit_s, c6d,
                                 logit_aa_s, msa[:, i_cycle], mask_msa[:,i_cycle], logit_exp,
                                 pred_crds, alphas, true_crds, mask_crds,
