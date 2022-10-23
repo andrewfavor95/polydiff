@@ -2,6 +2,7 @@ import random
 import sys
 
 import torch
+import kinematics
 import numpy as np
 from icecream import ic
 
@@ -50,7 +51,72 @@ def get_diffusion_pos(L,min_length, max_length=None):
 
     return start_idx, end_idx 
 
-def get_diffusion_mask(L, full_prop, low_prop, high_prop, broken_prop):
+def get_cb_distogram(xyz):
+    N  = xyz[:,0]
+    Ca = xyz[:,1]
+    C  = xyz[:,2]
+
+    # recreate Cb given N,Ca,C
+    b = Ca - N
+    c = C - Ca
+    a = torch.cross(b, c, dim=-1)
+    Cb = -0.58273431*a + 0.56802827*b - 0.54067466*c + Ca
+    dist = kinematics.get_pair_dist(Cb, Cb)
+    return dist
+
+def get_contacts(xyz, xyz_less_than=5, seq_dist_greater_than=10):
+    L = xyz.shape[0]
+    dist = get_cb_distogram(xyz)
+
+    is_close_xyz = dist < xyz_less_than
+
+    idx = torch.ones_like(dist).nonzero()
+    seq_dist = torch.abs(torch.arange(L)[None] - torch.arange(L)[:,None])
+    is_far_seq = torch.abs(seq_dist) > seq_dist_greater_than
+
+    contacts = is_far_seq * is_close_xyz
+    return contacts
+
+def sample_around_contact(L, indices, len_low, len_high):
+    diffusion_mask = torch.ones(L).bool()
+    for anchor in indices:
+        mask_length = int(np.floor(random.uniform(len_low, len_high)))
+        l = anchor - mask_length // 2
+        r = anchor + (mask_length - mask_length//2)
+        l = max(0, l)
+        r = min(r, L)
+        diffusion_mask[l:r] = False
+    return diffusion_mask
+
+def get_double_contact(xyz, full_prop, low_prop, high_prop, broken_prop, xyz_less_than=5, seq_dist_greater_than=25, len_low=5, len_high=10):
+    contacts = get_contacts(xyz, xyz_less_than, seq_dist_greater_than)
+    if not contacts.any():
+        return get_diffusion_mask_simple(xyz, full_prop, low_prop, high_prop, broken_prop, triple_contact_prop)
+    contact_idxs = contacts.nonzero()
+    contact_idx = np.random.choice(np.arange(len(contact_idxs)))
+    indices = contact_idxs[contact_idx]
+    L = xyz.shape[0]
+    print('using a double contact')
+    return sample_around_contact(L, indices, len_low, len_high)
+
+def find_third_contact(contacts):
+    for i,j in contacts.nonzero():
+        if j < i:
+            continue
+        for k in (contacts[i,:] * contacts[j,:]).nonzero():
+            return torch.tensor([i,j,k])
+    return None
+
+def get_triple_contact(xyz, full_prop, low_prop, high_prop, broken_prop, xyz_less_than=5, seq_dist_greater_than=10, len_low=1, len_high=4):
+    contacts = get_contacts(xyz, xyz_less_than, seq_dist_greater_than)
+    indices = find_third_contact(contacts)
+    if indices is None:
+        return get_diffusion_mask_simple(xyz, full_prop, low_prop, high_prop, broken_prop, triple_contact_prop)
+    L = xyz.shape[0]
+    print('using a triple contact')
+    return sample_around_contact(L, indices, len_low, len_high)
+
+def get_diffusion_mask_simple(xyz, full_prop, low_prop, high_prop, broken_prop):
     """
     Function to make a diffusion mask.
     Options:
@@ -61,6 +127,7 @@ def get_diffusion_mask(L, full_prop, low_prop, high_prop, broken_prop):
     Output:
         1D diffusion mask. True is unmasked, False is masked/diffused
     """
+    L = xyz.shape[0]
     if random.uniform(0,1) < full_prop:
         return torch.zeros(L).bool()
     
@@ -77,6 +144,17 @@ def get_diffusion_mask(L, full_prop, low_prop, high_prop, broken_prop):
         diffusion_mask[:split] = False
         diffusion_mask[-(mask_length-split):] = False
     return diffusion_mask
+
+def get_diffusion_mask(
+        xyz, full_prop, low_prop, high_prop, broken_prop,
+        mask_props=[
+            (get_double_contact, 0.25),
+            (get_triple_contact, 0.25),
+            (get_diffusion_mask_simple, 0.5)]):
+    masks = [ i for i, j in mask_props]
+    props = [ j for i, j in mask_props]
+    get_mask = np.random.choice(masks, p=props)
+    return get_mask(xyz, full_prop, low_prop, high_prop, broken_prop)
 
 
 #####################################
