@@ -661,7 +661,8 @@ class Trainer():
     #   - if slurm, assume 1 job launched per GPU
     #   - if interactive, launch one job for each GPU on node
     def run_model_training(self, world_size):
-        if ('MASTER_ADDR' not in os.environ):
+        if ('MASTER_ADDR' not in os.environ or os.environ['MASTER_ADDR'] == ''):
+            ic('setting master_addr')
             os.environ['MASTER_ADDR'] = 'localhost' # multinode requires this set in submit script
         if ('MASTER_PORT' not in os.environ):
             os.environ['MASTER_PORT'] = '%d'%self.port
@@ -705,6 +706,7 @@ class Trainer():
             wandb.config = all_param
             wandb.save(os.path.join(os.getcwd(), self.outdir, 'git_diff.txt'))
         gpu = rank % torch.cuda.device_count()
+        ic(os.environ['MASTER_ADDR'])
         dist.init_process_group(backend="nccl", world_size=world_size, rank=rank)
         torch.cuda.set_device("cuda:%d"%gpu)
 
@@ -833,7 +835,7 @@ class Trainer():
         print('Making model...')
         model = RoseTTAFoldModule(**self.model_param, d_t1d=self.preprocess_param['d_t1d'], d_t2d=self.preprocess_param['d_t2d'], T=self.diffusion_param['diff_T']).to(gpu)
         if self.log_inputs:
-            pickle_dir = pickle_function_call(model, 'forward', 'training')
+            pickle_dir = pickle_function_call(model, 'forward', 'training_nrb')
             print(f'pickle_dir: {pickle_dir}')
 
         model = EMA(model, 0.999)

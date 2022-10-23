@@ -180,6 +180,7 @@ class Trajectory:
     forward: torch.FloatTensor
     seq: torch.FloatTensor
     logits: torch.FloatTensor
+    diffusion_mask: torch.BoolTensor
 
 def run_partial_trajectory_sweep(sampler, xyz, seq, mask, T=None):
     stack_by_step = defaultdict(list)
@@ -259,7 +260,8 @@ def cartesian_product_transpose(*arrays):
         start, end = end, end + rows
     return out.reshape(cols, rows).T
 
-def reverse_simple(sampler, feed_true_xt=False):
+import itertools
+def reverse_simple(sampler, feed_true_xt=False, stop_after=99999):
     x_init, seq_init, forward_traj, aa_masks, seq_orig = sampler.sample_init(return_forward_trajectory=True)
     #x_init, seq_init = sampler.sample_init()
     
@@ -276,7 +278,7 @@ def reverse_simple(sampler, feed_true_xt=False):
 
 
     # Loop over number of reverse diffusion time steps.
-    for t in tqdm.tqdm(range(sampler.t_step_input, 0, -1)):
+    for t in itertools.islice(tqdm.tqdm(range(sampler.t_step_input, 0, -1)), stop_after):
         if feed_true_xt:
             #ic(forward_traj.shape, aa_masks.shape)
             x_t = forward_traj[t,:,:14]
@@ -310,5 +312,5 @@ def reverse_simple(sampler, feed_true_xt=False):
     logits_stack = torch.stack(logits_stack)
     logits_stack = torch.flip(logits_stack, [0,])
     #return denoised_xyz_stack, px0_xyz_stack, forward_traj, seq_stack
-    return Trajectory(denoised_xyz_stack, px0_xyz_stack, forward_traj.cpu(), seq_stack, logits_stack), {'x_init': x_init}
+    return Trajectory(denoised_xyz_stack, px0_xyz_stack, forward_traj.cpu(), seq_stack, logits_stack, sampler.mask_str[0]), {'x_init': x_init, 'mask_str':sampler.mask_str[0]}
 

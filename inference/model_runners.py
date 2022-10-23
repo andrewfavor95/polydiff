@@ -51,6 +51,9 @@ class Sampler:
 
         # Load checkpoint, so that we can assemble the config
         self.load_checkpoint()
+        # Now actually load the model weights into RF
+        self.model = self.load_model()
+
         self.initialize_sampler(conf)
 
     def initialize_sampler(self, conf: DictConfig):
@@ -85,8 +88,6 @@ class Sampler:
         self.preprocess_conf = self._conf.preprocess
         self.diffuser = Diffuser(**self._conf.diffuser)
         
-        # Now actually load the model weights into RF
-        self.model = self.load_model()
 
         if self.inf_conf.symmetry is not None:
             self.symmetry = symmetry.SymGen(
@@ -168,6 +169,9 @@ class Sampler:
             for cat in ['model','diffuser','seqdiffuser','preprocess']:
                 #assert all([i in self._conf[cat].keys() for i in self.ckpt['config_dict'][cat].keys()]), f"There are keys in the checkpoint config_dict {cat} params not in the config file"
                 for key in self._conf[cat]:
+                    if key == 'chi_type' and self.ckpt['config_dict'][cat][key] == 'circular':
+                        ic('---------------------------------------------SKIPPPING CIRCULAR CHI TYPE')
+                        continue
                     try:
                         print(f"USING MODEL CONFIG: self._conf[{cat}][{key}] = {self.ckpt['config_dict'][cat][key]}")
                         self._conf[cat][key] = self.ckpt['config_dict'][cat][key]
@@ -191,7 +195,7 @@ class Sampler:
         self.d_t1d=self._conf.preprocess.d_t1d
         self.d_t2d=self._conf.preprocess.d_t2d
 
-        model = RoseTTAFoldModule(**self._conf.model, d_t1d=self.preprocess_conf.d_t1d, d_t2d=self.preprocess_conf.d_t2d, T=self.diffuser_conf.T).to(self.device)
+        model = RoseTTAFoldModule(**self._conf.model, d_t1d=self.d_t1d, d_t2d=self.d_t2d, T=self._conf.diffuser.T).to(self.device)
         if self._conf.logging.inputs:
             pickle_dir = pickle_function_call(model, 'forward', 'inference')
             print(f'pickle_dir: {pickle_dir}')
@@ -744,7 +748,6 @@ class NRBStyleSelfCond(Sampler):
             tors_t_1: (L, ?) The updated torsion angles of the next  step.
             plddt: (L, 1) Predicted lDDT of x0.
         '''
-        out = self._preprocess(seq_t, x_t, t)
         msa_masked, msa_full, seq_in, xt_in, idx_pdb, t1d, t2d, xyz_t, alpha_t = self._preprocess(
             seq_t, x_t, t)
 
