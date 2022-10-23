@@ -1576,7 +1576,8 @@ class DistilledDataset(data.Dataset):
                  # Model will crash anyways if the dims mismatch
                  # Also -- already checked the math works out in assertions above 
 
-        masks_1d = generate_masks(msa, task, self.params, chosen_dataset, complete_chain)
+        ic(xyz_t.shape)
+        masks_1d = generate_masks(msa, task, self.params, chosen_dataset, complete_chain, xyz=xyz_t[0])
         
         #Concatenate on the contacts tensor onto t1d
         n_t1d = t1d.shape[0]
