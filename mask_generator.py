@@ -91,7 +91,7 @@ def sample_around_contact(L, indices, len_low, len_high):
 def get_double_contact(xyz, full_prop, low_prop, high_prop, broken_prop, xyz_less_than=5, seq_dist_greater_than=25, len_low=5, len_high=10):
     contacts = get_contacts(xyz, xyz_less_than, seq_dist_greater_than)
     if not contacts.any():
-        return get_diffusion_mask_simple(xyz, full_prop, low_prop, high_prop, broken_prop, triple_contact_prop)
+        return get_diffusion_mask_simple(xyz, full_prop, low_prop, high_prop, broken_prop)
     contact_idxs = contacts.nonzero()
     contact_idx = np.random.choice(np.arange(len(contact_idxs)))
     indices = contact_idxs[contact_idx]
@@ -111,7 +111,7 @@ def get_triple_contact(xyz, full_prop, low_prop, high_prop, broken_prop, xyz_les
     contacts = get_contacts(xyz, xyz_less_than, seq_dist_greater_than)
     indices = find_third_contact(contacts)
     if indices is None:
-        return get_diffusion_mask_simple(xyz, full_prop, low_prop, high_prop, broken_prop, triple_contact_prop)
+        return get_diffusion_mask_simple(xyz, full_prop, low_prop, high_prop, broken_prop)
     L = xyz.shape[0]
     print('using a triple contact')
     return sample_around_contact(L, indices, len_low, len_high)
