@@ -78,14 +78,14 @@ def get_contacts(xyz, xyz_less_than=5, seq_dist_greater_than=10):
     return contacts
 
 def sample_around_contact(L, indices, len_low, len_high):
-    diffusion_mask = torch.ones(L).bool()
+    diffusion_mask = torch.zeros(L).bool()
     for anchor in indices:
         mask_length = int(np.floor(random.uniform(len_low, len_high)))
         l = anchor - mask_length // 2
         r = anchor + (mask_length - mask_length//2)
         l = max(0, l)
         r = min(r, L)
-        diffusion_mask[l:r] = False
+        diffusion_mask[l:r] = True
     return diffusion_mask
 
 def get_double_contact(xyz, full_prop, low_prop, high_prop, broken_prop, xyz_less_than=5, seq_dist_greater_than=25, len_low=5, len_high=10):
@@ -135,11 +135,13 @@ def get_diffusion_mask_simple(xyz, full_prop, low_prop, high_prop, broken_prop):
     mask_length = int(np.floor(random.uniform(low_prop, high_prop) * L))
     # decide if mask goes in the middle or the ends
     if random.uniform(0,1) < broken_prop:
+        print('broken motif')
         high_start = L-mask_length-1
         start = random.randint(0, high_start)
         diffusion_mask[start:start+mask_length] = False
     else:
         # split mask in two
+        print('nonbroken motif')
         split = random.randint(1, mask_length-2)
         diffusion_mask[:split] = False
         diffusion_mask[-(mask_length-split):] = False
