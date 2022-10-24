@@ -79,6 +79,11 @@ def main(conf: HydraConfig) -> None:
 
         # pX0 last step
         out = f'{out_prefix}.pdb'
+
+        # replace mask and unknown tokens in the final seq with alanine
+        final_seq = torch.where(final_seq == 20, 0, final_seq)
+        final_seq = torch.where(final_seq == 21, 0, final_seq)
+
         writepdb(out, denoised_xyz_stack[0], final_seq, sampler.ppi_conf.binderlen, chain_idx=sampler.chain_idx)
 
         # run metadata
