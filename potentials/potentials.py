@@ -242,6 +242,8 @@ class monomer_contacts(Potential):
 
         Motivation is given here: https://www.plumed.org/doc-v2.7/user-doc/html/_c_o_o_r_d_i_n_a_t_i_o_n.html
         Author: PV
+
+        NOTE: This function sometimes produces NaN's -- added check in reverse diffusion for nan grads
     '''
 
     def __init__(self, weight=1, r_0=8, d_0=2, eps=1e-6):
@@ -266,6 +268,168 @@ class monomer_contacts(Potential):
 
         #Potential value is the average of both radii of gyration (is avg. the best way to do this?)
         return self.weight * ncontacts.sum()
+
+
+def make_contact_matrix(nchain, contact_string=None):
+    """
+    Calculate a matrix of inter/intra chain contact indicators
+    
+    Parameters:
+        nchain (int, required): How many chains are in this design 
+        
+        contact_str (str, optional): String denoting how to define contacts, comma delimited between pairs of chains
+            '!' denotes repulsive, '&' denotes attractive
+    """
+    alphabet   = [a for a in 'ABCDEFGHIJKLMNOPQRSTUVWXYZ']
+    letter2num = {a:i for i,a in enumerate(alphabet)}
+    
+    contacts   = np.zeros((nchain,nchain))
+    written    = np.zeros((nchain,nchain))
+    
+    contact_list = contact_string.split(',') 
+    for c in contact_list:
+        if not len(c) == 3:
+            raise SyntaxError('Invalid contact(s) specification')
+
+        i,j = letter2num[c[0]],letter2num[c[2]]
+        symbol = c[1]
+        
+        # denote contacting/repulsive
+        assert symbol in ['!','&']
+        if symbol == '!':
+            contacts[i,j] = -1
+            contacts[j,i] = -1
+        else:
+            contacts[i,j] = 1
+            contacts[j,i] = 1
+            
+    return contacts 
+
+
+class olig_contacts(Potential):
+    """
+    Applies PV's num contacts potential between chains
+
+    Author: DJ 
+    """
+
+    def __init__(self, chain_lengths, contact_matrix, weight_intra=1, weight_inter=1):
+        """
+        Parameters:
+            chain_lengths (list, required): List of chain lengths, length is (Nchains)
+
+            contact_matrix (torch.tensor/np.array, required): 
+                square matrix of shape (Nchains,Nchains) whose (i,j) enry represents 
+                attractive (1), repulsive (-1), or non-existent (0) contact potentials 
+                between chains in the complex
+
+            weight (int/float, optional): Scaling/weighting factor
+        """
+        self.chain_lengths  = chain_lengths
+        self.contact_matrix = contact_matrix
+        self.weight_intra = weight_intra 
+        self.weight_inter = weight_inter 
+
+        # check contact matrix only contains valid entries 
+        assert all([i in [-1,0,1] for i in contact_matrix.flatten()]), 'Contact matrix must contain only 0, 1, or -1 in entries'
+        # assert the matrix is square and symmetric 
+        shape = contact_matrix.shape 
+        assert len(shape) == 2 
+        assert shape[0] == shape[1]
+        for i in range(shape[0]):
+            for j in range(shape[1]):
+                assert contact_matrix[i,j] == contact_matrix[j,i]
+        self.i = shape[0]
+        self.j = shape[1]
+
+         
+        self._compute_chain_indices()
+
+    def _compute_chain_indices(self):
+        # make list of shape [i,N] for indices of each chain in total length
+        indices = []
+        start   = 0
+        for l in self.chain_lengths:
+            indices.append(torch.arange(start,start+l))
+            start += l
+        self.indices = indices 
+
+
+    def compute(self, seq, xyz):
+        """
+        Iterate through the contact matrix, compute contact potentials between chains that need it,
+        and negate contacts for any 
+        """
+
+        all_contacts = 0
+        start = 0
+        for i in range(self.i):
+            for j in range(self.j):
+                # only compute for upper triangle 
+                if i <= j:
+
+                    Ca_i = xyz[self.indices[i]]  # slice out crds for this chain 
+                    Ca_j = xyz[self.indices[j]]  #                    that chain 
+
+                    dgram           = torch.cdist(Ca_i[None,...].contiguous(), Ca_j[None,...].contiguous(), p=2) # [1,Lb,Lb]
+                    
+                    divide_by_r_0   = (dgram - self.d_0) / self.r_0
+                    numerator       = torch.pow(divide_by_r_0,6)
+                    denominator     = torch.pow(divide_by_r_0,12)
+                    ncontacts       = (1 - numerator) / (1 - denominator)
+
+                    # weight, don't double count intra 
+                    scalar = (i==j)*self.weight_intra/2 + (i!=j)*self.weight_inter
+                    
+                    #                 contacts              attr/repuls          relative weights 
+                    all_contacts += ncontacts.sum() * self.contact_matrix[i,j] * scalar 
+
+        return all_contacts 
+                    
+
+class olig_intra_contacts(Potential):
+    """
+    Applies PV's num contacts potential for each chain individually in an oligomer design 
+
+    Author: DJ 
+    """
+
+    def __init__(self, chain_lengths, weight=1):
+        """
+        Parameters:
+
+            chain_lengths (list, required): Ordered list of chain lengths 
+
+            weight (int/float, optional): Scaling/weighting factor
+        """
+        self.chain_lengths = chain_lengths 
+        self.weight = weight 
+
+
+    def compute(self, seq, xyz):
+        """
+        Computes intra-chain num contacts potential
+        """
+        assert sum(self.chain_lengths) == len(seq.squeeze), 'given chain lengths do not match total sequence length'
+
+        all_contacts = 0
+        start = 0
+        for Lc in self.chain_lengths:
+            Ca = xyz[start:start+Lc]  # slice out crds for this chain 
+            dgram = torch.cdist(Ca[None,...].contiguous(), Ca[None,...].contiguous(), p=2) # [1,Lb,Lb]
+            divide_by_r_0 = (dgram - self.d_0) / self.r_0
+            numerator = torch.pow(divide_by_r_0,6)
+            denominator = torch.pow(divide_by_r_0,12)
+            ncontacts = (1 - numerator) / (1 - denominator)
+
+            # add contacts for this chain to all contacts 
+            all_contacts += ncontacts.sum()
+
+            # increment the start to be at the next chain 
+            start += Lc 
+
+
+        return self.weight * all_contacts
 
 
 class binder_distance_ReLU(Potential):
@@ -391,7 +555,9 @@ implemented_potentials = { 'monomer_ROG':          monomer_ROG,
                            'binder_ncontacts':     binder_ncontacts,
                            'dimer_ncontacts':      dimer_ncontacts,
                            'interface_ncontacts':  interface_ncontacts,
-                           'monomer_contacts':     monomer_contacts}
+                           'monomer_contacts':     monomer_contacts,
+                           'olig_intra_contacts':  olig_intra_contacts,
+                           'olig_contacts':        olig_contacts}
 
 require_binderlen      = { 'binder_ROG',
                            'binder_distance_ReLU',

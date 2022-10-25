@@ -15,8 +15,12 @@ class PotentialManager:
         self.guide_scale = potentials_config.guide_scale
         self.guide_decay = potentials_config.guide_decay
 
-        if potentials_config.guiding_potentials is None: setting_list = []
-        else: setting_list = [self.parse_potential_string(potstr) for potstr in potentials_config.guiding_potentials]
+
+        if potentials_config.guiding_potentials is None: 
+            setting_list = []
+        else: 
+            setting_list = [self.parse_potential_string(potstr) for potstr in potentials_config.guiding_potentials]
+
 
         # PPI potentials require knowledge about the binderlen which may be detected at runtime
         # This is a mechanism to still allow this info to be used in potentials - NRB 
