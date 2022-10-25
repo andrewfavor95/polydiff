@@ -228,7 +228,7 @@ def cross_product_matrix(u):
     return matrix
 
 # writepdb
-def writepdb(filename, atoms, seq, idx_pdb=None, bfacts=None, chain_idx=None):
+def writepdb(filename, atoms, seq, binderlen=None, idx_pdb=None, bfacts=None, chain_idx=None):
     f = open(filename,"w")
     ctr = 1
     scpu = seq.cpu().squeeze()
@@ -241,7 +241,13 @@ def writepdb(filename, atoms, seq, idx_pdb=None, bfacts=None, chain_idx=None):
     Bfacts = torch.clamp( bfacts.cpu(), 0, 1)
     for i,s in enumerate(scpu):
         if chain_idx is None:
-            chain = 'A'
+            if binderlen is not None:
+                if i < binderlen:
+                    chain = 'A'
+                else:
+                    chain = 'B'
+            elif binderlen is None:
+                chain = 'A'
         else:
             chain = chain_idx[i]
         if (len(atomscpu.shape)==2):
