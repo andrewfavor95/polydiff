@@ -27,6 +27,7 @@ def main():
     parser.add_argument('--no_submit', dest='submit', action="store_false", default=True, help='Do not submit slurm array job, only generate job list.')
     parser.add_argument('--no_logs', dest='keep_logs', action="store_false", default=True, help='Don\'t keep slurm logs.')
     parser.add_argument('--out', type=str, default='out/out',help='Path prefix for output files')
+    parser.add_argument('--benchmark_json', default='benchmarks.json', help='custom benchmarks json path')
 
     args, unknown = parser.parse_known_args()
     if len(unknown)>0:
@@ -43,7 +44,7 @@ def main():
         args.command = os.path.abspath(script_dir+'../run_inference.py')
 
     # parse pre-defined benchmarks
-    with open(script_dir+'benchmarks.json') as f: 
+    with open(script_dir+args.benchmark_json) as f: 
         benchmarks = json.load(f)
     input_path = script_dir+'input/' # prepend path to input pdbs in current repo
     benchmark_list = []
