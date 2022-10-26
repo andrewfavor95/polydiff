@@ -76,6 +76,7 @@ def set_data_loader_params(args):
         "MAX_COMPLEX_CHAIN" : 200,
         "TASK_NAMES" : ['seq2str'],
         "TASK_P" : [1.0],
+        "DIFF_MASK_PROBS": args.diff_mask_probs,
         "DIFF_MASK_LOW":args.diff_mask_low,
         "DIFF_MASK_HIGH":args.diff_mask_high,
         "DATASETS":args.dataset,

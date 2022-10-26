@@ -1386,8 +1386,17 @@ class Trainer():
                     
                     if WANDB and rank == 0:
                         loss_dict.update({'t':little_t, 'total_examples':epoch*self.n_train+counter*world_size, 'dataset':chosen_dataset[0], 'task':chosen_task[0]})
+                        metrics = {}
+                        for m in self.metrics:
+                            with torch.no_grad():
+                                metrics.update(m(logit_s, c6d,
+                                    logit_aa_s, msa[:, i_cycle], mask_msa[:,i_cycle], logit_exp,
+                                    pred_crds, alphas, true_crds, mask_crds,
+                                    mask_BB, mask_2d, same_chain,
+                                    pred_lddts, idx_pdb, chosen_dataset[0], chosen_task[0], diffusion_mask, t=little_t, unclamp=unclamp, negative=negative,
+                                **self.loss_param))
+                        loss_dict['metrics'] = metrics
                         wandb.log(loss_dict)
-
 
                     sys.stdout.flush()
                     local_tot = 0.0

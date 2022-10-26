@@ -128,9 +128,6 @@ def get_diffusion_mask_simple(xyz, full_prop, low_prop, high_prop, broken_prop):
         1D diffusion mask. True is unmasked, False is masked/diffused
     """
     L = xyz.shape[0]
-    if random.uniform(0,1) < full_prop:
-        return torch.zeros(L).bool()
-    
     diffusion_mask = torch.ones(L).bool()
     mask_length = int(np.floor(random.uniform(low_prop, high_prop) * L))
     # decide if mask goes in the middle or the ends
@@ -149,12 +146,15 @@ def get_diffusion_mask_simple(xyz, full_prop, low_prop, high_prop, broken_prop):
 
 def get_diffusion_mask(
         xyz, full_prop, low_prop, high_prop, broken_prop,
-        mask_props=[
-            (get_double_contact, 0.25),
-            (get_triple_contact, 0.25),
-            (get_diffusion_mask_simple, 0.5)]):
-    masks = [ i for i, j in mask_props]
-    props = [ j for i, j in mask_props]
+        diff_mask_probs):
+    
+    L = xyz.shape[0]
+    if random.uniform(0,1) < full_prop:
+        return torch.zeros(L).bool()
+
+    mask_probs = list(diff_mask_probs.items())
+    masks = [m for m, _ in mask_probs]
+    props = [p for _, p in mask_probs]
     get_mask = np.random.choice(masks, p=props)
     return get_mask(xyz, full_prop, low_prop, high_prop, broken_prop)
 
@@ -225,7 +225,14 @@ def generate_masks(msa, task, loader_params, chosen_dataset, full_chain=None, xy
         #input_seq_mask     = torch.clone(input_str_mask)
         
         #MADE A NEW FUNCTION
-        diffusion_mask = get_diffusion_mask(xyz, full_prop=loader_params['P_UNCOND'], low_prop=loader_params['MASK_MIN_PROPORTION'], high_prop=loader_params['MASK_MAX_PROPORTION'], broken_prop=loader_params['MASK_BROKEN_PROPORTION']) 
+        diffusion_mask = get_diffusion_mask(
+            xyz,
+            full_prop=loader_params['P_UNCOND'],
+            low_prop=loader_params['MASK_MIN_PROPORTION'],
+            high_prop=loader_params['MASK_MAX_PROPORTION'],
+            broken_prop=loader_params['MASK_BROKEN_PROPORTION'],
+            diff_mask_probs=loader_params['DIFF_MASK_PROBS'],
+            ) 
         input_str_mask = diffusion_mask
         input_seq_mask = diffusion_mask
         # t1dconf scaling will be taken care of by diffuser, so just leave those at 1 here 

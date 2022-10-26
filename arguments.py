@@ -1,4 +1,7 @@
 import argparse
+import pprint
+from typing import OrderedDict
+import mask_generator
 import data_loader
 import os
 import metrics
@@ -106,8 +109,17 @@ def get_args(in_args=None):
     data_group.add_argument('-data_pkl', type=str, default='./dataset.pkl', 
             help='Path to pickled dataset to load for training on. If path doesn\'t exist, will write new pickle with that name.')
 
+
     # Diffusion args 
     diff_group = parser.add_argument_group("diffusion parameters")
+    def parse_mask_str(s):
+        parsed = OrderedDict()
+        for k,v in [e.split(':') for e in s.split(',')]:
+            parsed[getattr(mask_generator, k)] = float(v)
+        assert sum(parsed.values()) == 1, f'mask function probabilities must sum to 1, got: {parsed}'
+        return parsed
+    diff_group.add_argument('-diff_mask_probs', type=parse_mask_str, default={mask_generator.get_diffusion_mask_simple: 1.0},
+        help='functions in mask generator to use for diffusion masking and their probabilities.  Example: get_double_contact:0.2,get_triple_contact:0.8')
     diff_group.add_argument('-diff_mask_low', type=int, default=20,
             help='Minimum number of residues to diffuse if doing diffusion. Default 20')
     diff_group.add_argument('-diff_mask_high', type=int, default=999, 
@@ -333,7 +345,9 @@ def get_args(in_args=None):
 
     # set up diffusion params
     diffusion_params = {}
-    for param in ['diff_mask_low',
+    for param in [
+                  'diff_mask_probs',
+                  'diff_mask_low',
                   'diff_mask_high',
                   'diff_b0',
                   'diff_bT',
@@ -426,3 +440,7 @@ def get_args(in_args=None):
         raise NotImplementedError("switching off sequence decoding still needs to be implemented")
 
     return args, trunk_param, loader_param, loss_param, diffusion_params, preprocess_param
+
+if __name__ == '__main__':
+    args = get_args()
+    pprint.PrettyPrinter(indent=4).pprint(args)

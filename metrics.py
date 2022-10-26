@@ -80,10 +80,10 @@ def contigs(logit_s, label_s,
               lj_lin=0.75, use_H=False, w_disp=0.0, eps=1e-6, **kwargs):
     if diffusion_mask is None:
         diffusion_mask = torch.full((L,), False)
-	return {
-		'contig_description_simple': contig_description_simple(diffusion_mask),
-		'n_contigs': n_contigs(diffusion_mask),
-		'n_contigs': n_contigs(diffusion_mask),
-		'n_contig_res': n_contig_res(diffusion_mask),
-	}
+    return {
+        'contig_description_simple': contig_description_simple(diffusion_mask),
+        'n_contigs': n_contigs(diffusion_mask),
+        'n_contigs': n_contigs(diffusion_mask),
+        'n_contig_res': n_contig_res(diffusion_mask),
+    }
 
