@@ -44,13 +44,14 @@ class DiscreteSeqDiffuser():
                  s_bT=None,
                  schedule_type='linear',
                  schedule_params={},
-                 lamda=1):
+                 lamda=1,
+                 K=20):
 
         assert (not s_a0 is None and not s_aT is None) ^ (not s_b0 is None and not s_bT is None), \
                 f"SequenceDiffuser cannot use alpha and beta schedules at the same time, a_0: {s_a0} a_T: {s_aT} " + \
                 f"b_0: {s_b0} b_T: {s_bT}"
 
-        self.K = 20
+        self.K = K
 
         self.T = T
         self.rate_matrix_type = rate_matrix
@@ -80,7 +81,7 @@ class DiscreteSeqDiffuser():
 
         # The number of categories to choose between, we are using the 20 AAs with no gap or mask token
         self.lamda = lamda
-        self.softmax = torch.nn.Softmax(dim=1)
+        self.softmax = torch.nn.Softmax(dim=2)
         self.rate_matrix = None
 
         # A field variable that keeps track of whether we are working with a singly or doubly stochastic transition matrix
@@ -385,13 +386,19 @@ class DiscreteSeqDiffuser():
                 t: time index (positive integer)
         '''
 
-        px_0 = self.softmax(p_logit_x_0).squeeze(0)
+        px_0 = self.softmax(p_logit_x_0)
         return self.loss_prob(x_t, x_0, px_0, t, diffusion_mask)
 
     def loss_prob(self, x_t, x_0, px_0, t, diffusion_mask):
         assert(t>0), f'Received t <= 0 in seq diffuser loss function. t: {t}'
+        assert px_0.ndim == 3, f'{px_0.ndim} != 3. {px_0.shape}'
+        B, L, K = px_0.shape
+        assert K == self.K, f'{K} != {self.K}'
+        assert x_t.shape == (B,L), f'{x_t.shape} != {B,L}'
+        assert x_0.shape == (B,L), f'{x_0.shape} != {B,L}'
 
         # Squeeze out batch dimension
+        px_0 = px_0.squeeze(0)
         x_t  = x_t.squeeze(0)
         x_0  = x_0.squeeze(0)
 
@@ -424,9 +431,58 @@ class DiscreteSeqDiffuser():
 
         # Default is all diffused
         if diffusion_mask is None: diffusion_mask = torch.zeros_like(loss, dtype=torch.bool)
+        assert diffusion_mask.dtype == torch.bool
 
         # Not here is because True == seq is not diffused
         return torch.mean(loss[~diffusion_mask]), torch.mean(loss_aux[~diffusion_mask]), torch.mean(loss_vb[~diffusion_mask])
+
+    def get_next_sequence(self, seq_t, pseq0, t, seq_diffusion_mask):
+        '''
+            Function to take the predicted sequence and get the sequence at t-1 to feed to the model
+
+            Args:
+
+                seq_t (torch.tensor): [L,K] One-hot encoding of sequence fed to model at timestep t
+
+                pseq0 (torch.tensor): [L,K] The model's prediction of sequence logits
+
+                t (int): The current timestep
+
+                seq_diffusion_mask (torch.tensor): [L] Whether each position is diffusing sequence or not
+
+            Returns:
+
+                seq_t_1 (torch.tensor): [L,K] One-hot encoding of sequence to feed to model at timestep t-1
+
+        '''
+        L = seq_t.shape[0]
+
+        int_seq_t = torch.argmax(seq_t, dim=-1)
+
+        seq_next_diff = []
+        for l in range(L):
+            seq_tl = int_seq_t[l]
+            pseq0_l = pseq0[l] # [K]
+
+            p_xt1 = self.p_theta_Xt1_given_Xt_from_pX0(seq_tl, pseq0_l, t) # [K]
+            p_xt1 = torch.clamp(p_xt1, min=0) # Do not allow negative probabilities
+            sampled_seq = torch.multinomial(p_xt1, 1) # [1]
+            seq_next_diff.append(sampled_seq)
+        
+        seq_next_diff = torch.tensor(seq_next_diff) # [L]
+
+        seq_next_diff[seq_diffusion_mask] = int_seq_t[seq_diffusion_mask]
+
+        seq_t_1 = torch.nn.functional.one_hot(seq_next_diff, num_classes=self.K)
+
+        return seq_t_1
+
+    def get_pi(self, L):
+        '''Return the stationary distribution.'''
+        # TODO: compute this explicitly from Q_bar
+        if self.rate_matrix_type == 'uniform':
+            return torch.nn.functional.one_hot(torch.randint(0, self.K, size=(L,)), num_classes=self.K)
+        raise NotImplementedError(f'rate_matrix_type {rate_matrix_type} not supported')
 
 class ContinuousSeqDiffuser():
 
