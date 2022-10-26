@@ -83,7 +83,6 @@ def contigs(logit_s, label_s,
     return {
         'contig_description_simple': contig_description_simple(diffusion_mask),
         'n_contigs': n_contigs(diffusion_mask),
-        'n_contigs': n_contigs(diffusion_mask),
         'n_contig_res': n_contig_res(diffusion_mask),
     }
 

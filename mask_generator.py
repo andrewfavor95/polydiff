@@ -100,14 +100,20 @@ def get_double_contact(xyz, full_prop, low_prop, high_prop, broken_prop, xyz_les
     return sample_around_contact(L, indices, len_low, len_high)
 
 def find_third_contact(contacts):
-    for i,j in contacts.nonzero():
+    contact_idxs = contacts.nonzero()
+    contact_idxs = contact_idxs[torch.randperm(len(contact_idxs))]
+    for i,j in contact_idxs:
         if j < i:
             continue
-        for k in (contacts[i,:] * contacts[j,:]).nonzero():
-            return torch.tensor([i,j,k])
+        K = (contacts[i,:] * contacts[j,:]).nonzero()
+        if len(K):
+            K = K[torch.randperm(len(K))]
+            for k in K:
+                ic(i,j,k)
+                return torch.tensor([i,j,k])
     return None
 
-def get_triple_contact(xyz, full_prop, low_prop, high_prop, broken_prop, xyz_less_than=5, seq_dist_greater_than=10, len_low=1, len_high=4):
+def get_triple_contact(xyz, full_prop, low_prop, high_prop, broken_prop, xyz_less_than=6, seq_dist_greater_than=10, len_low=1, len_high=3):
     contacts = get_contacts(xyz, xyz_less_than, seq_dist_greater_than)
     indices = find_third_contact(contacts)
     if indices is None:
