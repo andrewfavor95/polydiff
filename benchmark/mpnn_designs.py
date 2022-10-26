@@ -18,10 +18,11 @@ def get_args():
     parser.add_argument('--chunk',type=int,default=-1,help='How many designs to process in each job')
     parser.add_argument('-p', type=str, default='gpu',help='-p argument for slurm (partition)')
     parser.add_argument('-J', type=str, help='name of slurm job')
-    parser.add_argument('--gres', type=str, default='gpu:rtx2080:1',help='--gres argument for slurm, e.g. gpu:rtx2080:1')
+    parser.add_argument('--gres', type=str, default='gpu:a4000:1',help='--gres argument for slurm, e.g. gpu:rtx2080:1')
     parser.add_argument('--no_submit', dest='submit', action="store_false", default=True, help='Do not submit slurm array job, only generate job list.')
     parser.add_argument('--cautious', action="store_true", default=False, help='Skip design if output file exists')
     parser.add_argument('--no_logs', dest='keep_logs', action="store_false", default=True, help='Don\'t keep slurm logs.')
+    parser.add_argument('--num_seq_per_target', default=8,type=int, help='How many mpnn sequences per design? Default = 8')
     args, unknown = parser.parse_known_args()
     if len(unknown)>0:
         print(f'WARNING: Unknown arguments {unknown}')
@@ -80,9 +81,9 @@ def main():
               f'--jsonl_path {mpnn_folder}pdbs_{i}.jsonl '\
               f'--fixed_positions_jsonl {mpnn_folder}pdbs_position_fixed_{i}.jsonl '\
               f'--out_folder {mpnn_folder} '\
-              f'--num_seq_per_target 1 '\
+              f'--num_seq_per_target  {args.num_seq_per_target}'\
               f'--sampling_temp="0.1" '\
-              f'--batch_size 1 '\
+              f'--batch_size {8 if args.num_seq_per_target > 8 else args.num_seq_per_target} '\
               f'--omit_AAs XC',
               file=job_list_file)
     if args.submit: job_list_file.close()

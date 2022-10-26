@@ -166,15 +166,23 @@ def main():
 
         with open(args.seqdir+name+'.fa') as f:
             lines = f.readlines()
+            n_designs = int(len(lines)/2-1)
             seq = lines[3].strip() # 2nd seq is 1st design
-
-        pdbstr = write_pdb(
-            xyz = pdb['xyz'][:,:3], # don't output sidechains
-            prefix = args.outdir+name,
-            res = seq,
-            pdb_idx = pdb['pdb_idx'])
+            if n_designs == 1:
+                    prefix = args.outdir+name   
+                else:
+                    prefix = args.outdir+name+f"_{i}"
+            pdbstr = write_pdb(
+                xyz = pdb['xyz'][:,:3], # don't output sidechains
+                prefix = args.outdir+name,
+                res = seq,
+                pdb_idx = pdb['pdb_idx'])
 
         dest = args.datadir+'/mpnn/'+name+'.trb'
+        if n_designs == 1:
+                dest = args.datadir+'/mpnn/'+name+'.trb'
+            else:
+                dest = args.datadir+'/mpnn/'+name+f'_{i}.trb'
         if not os.path.exists(dest):
             os.symlink('../'+name+'.trb', dest)
 
