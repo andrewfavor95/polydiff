@@ -835,7 +835,7 @@ class Trainer():
         print('Making model...')
         model = RoseTTAFoldModule(**self.model_param, d_t1d=self.preprocess_param['d_t1d'], d_t2d=self.preprocess_param['d_t2d'], T=self.diffusion_param['diff_T']).to(gpu)
         if self.log_inputs:
-            pickle_dir = pickle_function_call(model, 'forward', 'training_nrb')
+            pickle_dir = pickle_function_call(model, 'forward', 'training')
             print(f'pickle_dir: {pickle_dir}')
 
         model = EMA(model, 0.999)

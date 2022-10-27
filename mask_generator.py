@@ -52,15 +52,7 @@ def get_diffusion_pos(L,min_length, max_length=None):
     return start_idx, end_idx 
 
 def get_cb_distogram(xyz):
-    N  = xyz[:,0]
-    Ca = xyz[:,1]
-    C  = xyz[:,2]
-
-    # recreate Cb given N,Ca,C
-    b = Ca - N
-    c = C - Ca
-    a = torch.cross(b, c, dim=-1)
-    Cb = -0.58273431*a + 0.56802827*b - 0.54067466*c + Ca
+    Cb = kinematics.get_Cb(xyz)
     dist = kinematics.get_pair_dist(Cb, Cb)
     return dist
 
@@ -96,7 +88,6 @@ def get_double_contact(xyz, full_prop, low_prop, high_prop, broken_prop, xyz_les
     contact_idx = np.random.choice(np.arange(len(contact_idxs)))
     indices = contact_idxs[contact_idx]
     L = xyz.shape[0]
-    print('using a double contact')
     return sample_around_contact(L, indices, len_low, len_high)
 
 def find_third_contact(contacts):
@@ -109,7 +100,6 @@ def find_third_contact(contacts):
         if len(K):
             K = K[torch.randperm(len(K))]
             for k in K:
-                ic(i,j,k)
                 return torch.tensor([i,j,k])
     return None
 
@@ -119,7 +109,6 @@ def get_triple_contact(xyz, full_prop, low_prop, high_prop, broken_prop, xyz_les
     if indices is None:
         return get_diffusion_mask_simple(xyz, full_prop, low_prop, high_prop, broken_prop)
     L = xyz.shape[0]
-    print('using a triple contact')
     return sample_around_contact(L, indices, len_low, len_high)
 
 def get_diffusion_mask_simple(xyz, full_prop, low_prop, high_prop, broken_prop):
@@ -138,13 +127,11 @@ def get_diffusion_mask_simple(xyz, full_prop, low_prop, high_prop, broken_prop):
     mask_length = int(np.floor(random.uniform(low_prop, high_prop) * L))
     # decide if mask goes in the middle or the ends
     if random.uniform(0,1) < broken_prop:
-        print('broken motif')
         high_start = L-mask_length-1
         start = random.randint(0, high_start)
         diffusion_mask[start:start+mask_length] = False
     else:
         # split mask in two
-        print('nonbroken motif')
         split = random.randint(1, mask_length-2)
         diffusion_mask[:split] = False
         diffusion_mask[-(mask_length-split):] = False
