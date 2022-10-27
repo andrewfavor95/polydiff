@@ -811,6 +811,9 @@ class Denoise():
                 if include_motif_sidechains:
                     fullatom_next[:,diffusion_mask,:14] = xt[None,diffusion_mask]
 
+            seq_next = torch.nn.functional.one_hot(
+                    seq_next, num_classes=22)
+
         else:
             # Doing sequence diffusion
 

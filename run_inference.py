@@ -92,7 +92,8 @@ def main(conf: HydraConfig) -> None:
             # When doing sequence diffusion the model does not make predictions beyond category 19
             final_seq = final_seq[:,:20] # [L,20]
 
-            final_seq = torch.argmax(final_seq, dim=-1)
+        # All samplers now use a one-hot seq so they all need this step
+        final_seq = torch.argmax(final_seq, dim=-1)
 
         bfacts = torch.ones_like(final_seq.squeeze())
 

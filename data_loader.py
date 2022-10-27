@@ -1583,11 +1583,21 @@ class DistilledDataset(data.Dataset):
         n_t1d = t1d.shape[0]
 
         if (not self.seq_diffuser is None) and torch.any(seq > 19):
-            print('Found sequence index greater than 19 while doing sequence diffusion, skipping example')
-            print(f'This is the offending sequence: {seq}')
+            #print('Found sequence index greater than 19 while doing sequence diffusion, skipping example')
+            #print(f'This is the offending sequence: {seq}')
 
             # If there is a better way to return null values to the train cycle I am open to suggestions - NRB
-            return [torch.tensor([]) for _ in range(20)]
+            #return [torch.tensor([]) for _ in range(20)]
+
+            print('Found sequence index greater than 19 while doing sequence diffusion, changing idx to ALA')
+            print(f'This is the offending sequence: {seq}')
+
+            # This error happens extremely rarely, 4 times in 25k examples so it is safe to do this changing
+            # It would be better to solve this error correctly though
+            seq = torch.where(seq > 19, 0, seq)
+
+            ic(f'Fixed sequence {seq}')
+
 
         seq, msa_masked, msa_full, xyz_t, t1d, mask_msa, little_t, true_crds = mask_inputs(seq,
                                                                                     msa_masked,
@@ -1661,7 +1671,7 @@ class DistilledDataset(data.Dataset):
 
         if torch.sum(masks_1d['input_str_mask']) > 0:
             #assert torch.sum(xyz_prev[masks_1d['input_str_mask'],1]) - torch.sum(true_crds[masks_1d['input_str_mask'],1]) < 0.001
-            # TODO checkt this is correct - NRB
+            # TODO check this is correct - NRB
             assert torch.mean(xyz_prev[:,masks_1d['input_str_mask'],1] - true_crds[None,masks_1d['input_str_mask'],1]) < 0.001
 
         return seq, msa, msa_masked, msa_full, mask_msa, true_crds, atom_mask, idx_pdb, xyz_t, t1d, t2d, alpha_t, xyz_prev, same_chain, unclamp, negative, masks_1d, task, chosen_dataset, little_t

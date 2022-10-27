@@ -135,6 +135,8 @@ preprocess:
   d_t1d: 22
   d_t2d: 44
   prob_self_cond: 0.0
+  str_self_cond: False
+  seq_self_cond: False
   predict_previous: False
   
 logging:

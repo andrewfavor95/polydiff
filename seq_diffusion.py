@@ -644,7 +644,7 @@ class ContinuousSeqDiffuser():
 
             t (int)
 
-            diffusion_mask (torch.tensor, [L])
+            diffusion_mask (torch.tensor, [L]) True means NOT diffused
         '''
 
         # t_idx is 0-indexed
@@ -708,12 +708,13 @@ class ContinuousSeqDiffuser():
         '''
 
         loss = torch.square( seq_true - seq_pred )
+        return torch.mean(loss)
 
-        # Sum loss across all categories
-        loss = torch.mean(loss, dim=-1)
-        loss = loss * diffusion_mask # Zero out entries that are not being diffused
+        # loss = torch.mean(loss, dim=-1)
+        # These need to be not diffusion mask since True means NOT diffused and the intention of this was to penalize diffused residues only - NRB
+        #loss = loss * ~diffusion_mask # Zero out entries that are not being diffused
 
-        return loss.sum() / (diffusion_mask.sum() + 1e-8)
+        #return loss.sum() / (~diffusion_mask.sum() + 1e-8)
 
     def sigmoid_loss(self,
                      seq_true,
@@ -746,7 +747,7 @@ class ContinuousSeqDiffuser():
 
                 seq_t (torch.tensor): [L] Sequence with zeros everywhere except for fixed motif
 
-                seq_diffusion_mask (torch.tensor): [L]
+                seq_diffusion_mask (torch.tensor): [L] True means NOT diffused
 
             Returns:
 
@@ -798,7 +799,7 @@ class ContinuousSeqDiffuser():
     
             t (int): The current timestep
     
-            seq_diffusion_mask (torch.tensor): [L] Mask of whether each position is diffusing sequence or not
+            seq_diffusion_mask (torch.tensor): [L] Mask of whether each position is diffusing sequence or not, True means NOT diffused 
     
         Returns:
     
