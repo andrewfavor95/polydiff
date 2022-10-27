@@ -1,5 +1,6 @@
 import torch
-
+from icecream import ic 
+import numpy as np 
 from util import generate_Cbeta
 
 class Potential:
@@ -308,12 +309,16 @@ def make_contact_matrix(nchain, contact_string=None):
 
 class olig_contacts(Potential):
     """
-    Applies PV's num contacts potential between chains
+    Applies PV's num contacts potential within/between chains in symmetric oligomers 
 
     Author: DJ 
     """
 
-    def __init__(self, chain_lengths, contact_matrix, weight_intra=1, weight_inter=1):
+    def __init__(self, 
+                 contact_matrix, 
+                 weight_intra=1, 
+                 weight_inter=1,
+                 r_0=8, d_0=2):
         """
         Parameters:
             chain_lengths (list, required): List of chain lengths, length is (Nchains)
@@ -325,10 +330,12 @@ class olig_contacts(Potential):
 
             weight (int/float, optional): Scaling/weighting factor
         """
-        self.chain_lengths  = chain_lengths
+        ic(contact_matrix)
         self.contact_matrix = contact_matrix
         self.weight_intra = weight_intra 
         self.weight_inter = weight_inter 
+        self.r_0 = r_0
+        self.d_0 = d_0
 
         # check contact matrix only contains valid entries 
         assert all([i in [-1,0,1] for i in contact_matrix.flatten()]), 'Contact matrix must contain only 0, 1, or -1 in entries'
@@ -339,20 +346,27 @@ class olig_contacts(Potential):
         for i in range(shape[0]):
             for j in range(shape[1]):
                 assert contact_matrix[i,j] == contact_matrix[j,i]
-        self.i = shape[0]
-        self.j = shape[1]
+        self.nchain=shape[0]
 
          
-        self._compute_chain_indices()
+    #   self._compute_chain_indices()
 
-    def _compute_chain_indices(self):
-        # make list of shape [i,N] for indices of each chain in total length
-        indices = []
-        start   = 0
-        for l in self.chain_lengths:
-            indices.append(torch.arange(start,start+l))
-            start += l
-        self.indices = indices 
+    # def _compute_chain_indices(self):
+    #     # make list of shape [i,N] for indices of each chain in total length
+    #     indices = []
+    #     start   = 0
+    #     for l in self.chain_lengths:
+    #         indices.append(torch.arange(start,start+l))
+    #         start += l
+    #     self.indices = indices 
+
+    def _get_idx(self,i,L):
+        """
+        Returns the zero-indexed indices of the residues in chain i
+        """
+        assert L%self.nchain == 0
+        Lchain = L//self.nchain
+        return i*Lchain + torch.arange(Lchain)
 
 
     def compute(self, seq, xyz):
@@ -360,19 +374,23 @@ class olig_contacts(Potential):
         Iterate through the contact matrix, compute contact potentials between chains that need it,
         and negate contacts for any 
         """
+        L = len(seq.squeeze())
 
         all_contacts = 0
         start = 0
-        for i in range(self.i):
-            for j in range(self.j):
-                # only compute for upper triangle 
-                if i <= j:
+        for i in range(self.nchain):
+            for j in range(self.nchain):
+                # only compute for upper triangle, disregard zeros in contact matrix 
+                if (i <= j) and (self.contact_matrix[i,j] != 0):
 
-                    Ca_i = xyz[self.indices[i]]  # slice out crds for this chain 
-                    Ca_j = xyz[self.indices[j]]  #                    that chain 
+                    # get the indices for these two chains 
+                    idx_i = self._get_idx(i,L)
+                    idx_j = self._get_idx(j,L)
 
+                    Ca_i = xyz[idx_i,1]  # slice out crds for this chain 
+                    Ca_j = xyz[idx_j,1]  # slice out crds for that chain 
                     dgram           = torch.cdist(Ca_i[None,...].contiguous(), Ca_j[None,...].contiguous(), p=2) # [1,Lb,Lb]
-                    
+
                     divide_by_r_0   = (dgram - self.d_0) / self.r_0
                     numerator       = torch.pow(divide_by_r_0,6)
                     denominator     = torch.pow(divide_by_r_0,12)
@@ -380,7 +398,7 @@ class olig_contacts(Potential):
 
                     # weight, don't double count intra 
                     scalar = (i==j)*self.weight_intra/2 + (i!=j)*self.weight_inter
-                    
+
                     #                 contacts              attr/repuls          relative weights 
                     all_contacts += ncontacts.sum() * self.contact_matrix[i,j] * scalar 
 

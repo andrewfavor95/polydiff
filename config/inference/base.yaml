@@ -115,6 +115,9 @@ potentials:
   guiding_potentials: null 
   guide_scale: 10
   guide_decay: constant
+  olig_inter_all : null
+  olig_intra_all : null
+  olig_custom_contact : null
 
 contig_settings:
   ref_idx: null

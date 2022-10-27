@@ -26,9 +26,9 @@ sys.path.append('../') # to access RF structure prediction stuff
 # import data_loader 
 from model_input_logger import pickle_function_call
 
-TOR_INDICES = util.torsion_indices
+TOR_INDICES  = util.torsion_indices
 TOR_CAN_FLIP = util.torsion_can_flip
-REF_ANGLES = util.reference_angles
+REF_ANGLES   = util.reference_angles
 
 class Sampler:
 
@@ -95,6 +95,7 @@ class Sampler:
         self.diffuser = Diffuser(**self._conf.diffuser)
         ic(self.preprocess_conf.d_t1d) 
 
+        # TODO: Add symmetrization RMSD check here
         if self.inf_conf.symmetry is not None:
             self.symmetry = symmetry.SymGen(
                 self.inf_conf.symmetry,
@@ -104,6 +105,8 @@ class Sampler:
             )
         else:
             self.symmetry = None
+
+
         self.allatom = ComputeAllAtomCoords().to(self.device)
         self.target_feats = iu.process_target(self.inf_conf.input_pdb)
         self.chain_idx = None
@@ -116,7 +119,10 @@ class Sampler:
         if self.inf_conf.ppi_design and self.inf_conf.autogenerate_contigs:
             self.ppi_conf.binderlen = ''.join(chain_idx[0] for chain_idx in self.target_feats['pdb_idx']).index('B')
 
-        self.potential_manager = PotentialManager(self.potential_conf, self.ppi_conf, self.diffuser_conf)
+        self.potential_manager = PotentialManager(self.potential_conf, 
+                                                  self.ppi_conf, 
+                                                  self.diffuser_conf, 
+                                                  self.inf_conf)
         
         # Get recycle schedule    
         recycle_schedule = str(self.inf_conf.recycle_schedule) if self.inf_conf.recycle_schedule is not None else None

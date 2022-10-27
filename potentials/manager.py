@@ -1,21 +1,101 @@
 import torch
 from icecream import ic
 import potentials.potentials as potentials
+import numpy as np 
+
+
+def make_contact_matrix(nchain, intra_all=False, inter_all=False, contact_string=None):
+    """
+    Calculate a matrix of inter/intra chain contact indicators
+    
+    Parameters:
+        nchain (int, required): How many chains are in this design 
+        
+        contact_str (str, optional): String denoting how to define contacts, comma delimited between pairs of chains
+            '!' denotes repulsive, '&' denotes attractive
+    """
+    alphabet   = [a for a in 'ABCDEFGHIJKLMNOPQRSTUVWXYZ']
+    letter2num = {a:i for i,a in enumerate(alphabet)}
+    
+    contacts   = np.zeros((nchain,nchain))
+    written    = np.zeros((nchain,nchain))
+    
+    
+    # intra_all - everything on the diagonal has contact potential
+    if intra_all:
+        contacts[np.arange(nchain),np.arange(nchain)] = 1
+    
+    # inter all - everything off the diagonal has contact potential
+    if inter_all:
+        mask2d = torch.full_like(contacts,False)
+        for i in range(len(contacts)):
+            for j in range(len(contacts)):
+                if i!=j:
+                    mask2d[i,j] = True
+                    
+        contacts[mask2d] = 1
+
+
+    # custom contacts/repulsions from user 
+    if contact_string != None:
+        contact_list = contact_string.split(',') 
+        for c in contact_list:
+            assert len(c) == 3
+            i,j = letter2num[c[0]],letter2num[c[2]]
+
+            symbol = c[1]
+
+            assert symbol in ['!','&']
+            if symbol == '!':
+                contacts[i,j] = -1
+                contacts[j,i] = -1
+            else:
+                contacts[i,j] = 1
+                contacts[j,i] = 1
+            
+    return contacts 
+
+
+def calc_nchains(symbol, components=1):
+    """
+    Calculates number of chains for given symmetry 
+    """
+    S = symbol.lower()
+
+    if S.startswith('c'):
+        return int(S[1:])*components 
+    elif S.startswith('d'):
+        return 2*int(S[1:])*components 
+    elif S.startswith('o'):
+        raise NotImplementedError()
+    elif S.startswith('t'):
+        return 12*components
+    else:
+        raise RuntimeError('Unknown symmetry symbol ',S)
+
 
 class PotentialManager:
     '''
         Class to define a set of potentials from the given config object and to apply all of the specified potentials
         during each cycle of the inference loop.
 
-        Author: NRB 
+        Author: NRB
     '''
 
-    def __init__(self, potentials_config, ppi_config, diffuser_config):
-        
+    def __init__(self, 
+                 potentials_config, 
+                 ppi_config, 
+                 diffuser_config, 
+                 inference_config
+                 ):
+
+        self.potentials_config = potentials_config
+        self.ppi_config        = ppi_config
+        self.inference_config  = inference_config
+
         self.guide_scale = potentials_config.guide_scale
         self.guide_decay = potentials_config.guide_decay
-
-
+    
         if potentials_config.guiding_potentials is None: 
             setting_list = []
         else: 
@@ -71,7 +151,22 @@ class PotentialManager:
         for potential_dict in setting_list:
             assert(potential_dict['type'] in potentials.implemented_potentials), f'potential with name: {potential_dict["type"]} is not one of the implemented potentials: {potentials.implemented_potentials}'
 
-            to_apply.append( potentials.implemented_potentials[potential_dict['type']](**{k: potential_dict[k] for k in potential_dict.keys() - {'type'}}) )
+            kwargs = {k: potential_dict[k] for k in potential_dict.keys() - {'type'}}
+
+            # symmetric oligomer contact potential args
+            if self.inference_config.symmetry:
+
+                num_chains = calc_nchains(symbol=self.inference_config.symmetry, components=1) # hard code 1 for now 
+                print('WARNING: Hard coded in potentials, number of components = 1 per ASU. Multi-component ASU potentials may not work yet.')
+                contact_kwargs={'nchain':num_chains,
+                                'intra_all':self.potentials_config.olig_intra_all,
+                                'inter_all':self.potentials_config.olig_inter_all,
+                                'contact_string':self.potentials_config.olig_custom_contact }
+                contact_matrix = make_contact_matrix(**contact_kwargs)
+                kwargs.update({'contact_matrix':contact_matrix})
+
+
+            to_apply.append( potentials.implemented_potentials[potential_dict['type']](**kwargs) )
 
         return to_apply
 
