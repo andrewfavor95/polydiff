@@ -2,6 +2,7 @@ import torch
 from icecream import ic 
 import numpy as np 
 from util import generate_Cbeta
+from inference.utils import parse_pdb
 
 class Potential:
     '''
@@ -450,6 +451,85 @@ class olig_intra_contacts(Potential):
 
         return self.weight * all_contacts
 
+class substrate_contacts(Potential):
+    '''
+        Differentiable way to maximise number of contacts to substrate
+
+        Motivation is given here: https://www.plumed.org/doc-v2.7/user-doc/html/_c_o_o_r_d_i_n_a_t_i_o_n.html
+        Author: AL
+    '''
+
+    def __init__(self, weight=1, r_0=8, d_0=2, eps=1e-6):
+
+        self.r_0       = r_0
+        self.weight    = weight
+        self.d_0       = d_0
+        self.eps       = eps
+        
+        # motif frame coordinates
+        # NOTE: these probably need to be set after sample_init() call, because the motif sequence position in design must be known
+        self.motif_frame = None # [4,3] xyz coordinates from 4 atoms of input motif
+        self.motif_mapping = None # list of tuples giving positions of above atoms in design [(resi, atom_idx)]
+        self.motif_substrate_atoms = None # xyz coordinates of substrate from input motif
+
+    def compute(self, seq, xyz):
+
+        # grab the coordinates of the corresponding atoms in the new frame using mapping
+        res = torch.tensor([k[0] for k in self.motif_mapping])
+        atoms = torch.tensor([k[1] for k in self.motif_mapping])
+        new_frame = xyz[res,atoms,:]
+
+        # calculate affine transformation matrix and translation vector b/w new frame and motif frame
+        A, t = _recover_affine(self.motif_frame, new_frame)
+
+        # apply affine transformation to substrate atoms
+        substrate_atoms = torch.dot(A, self.motif_substrate_atoms) + t
+
+        Ca = xyz[:,1] # [L,3]
+
+        #cdist needs a batch dimension - NRB
+        dgram = torch.cdist(Ca[None,...].contiguous(), substrate_atoms, p=2) # [1,Lb,Lb]
+
+        divide_by_r_0 = (dgram - self.d_0) / self.r_0
+        numerator = torch.pow(divide_by_r_0,6)
+        denominator = torch.pow(divide_by_r_0,12)
+
+        ncontacts = (1 - numerator) / ((1 - denominator))
+
+        #Potential value is the average of both radii of gyration (is avg. the best way to do this?)
+        return self.weight * ncontacts.sum()
+
+    def _recover_affine(frame1, frame2):
+        """
+        Uses Simplex Affine Matrix (SAM) formula to recover affine transform between two sets of 4 xyz coordinates
+        See: https://www.researchgate.net/publication/332410209_Beginner%27s_guide_to_mapping_simplexes_affinely
+
+        Args: 
+        frame1 - 4 coordinates from starting frame [4,3]
+        frame2 - 4 coordinates from ending frame [4,3]
+        
+        Outputs:
+        A - affine transformation matrix from frame1->frame2
+        t - affine translation vector from frame1->frame2
+        """
+
+        l = len(frame1)
+        # construct SAM denominator matrix
+        B = torch.vstack([frame1.T, torch.ones(l)])
+        D = 1.0 / torch.linalg.det(B) # SAM denominator
+
+        M = torch.zeros((3,4), dtype=torch.float64)
+        for i, R in enumerate(frame2.T):
+            for j in range(l):
+                num = torch.vstack([R, B])
+                # make SAM numerator matrix
+                num = torch.cat((num[:j+1],num[j+2:])) # make numerator matrix
+                # calculate SAM entry
+                M[i][j] = (-1)**j * D * torch.linalg.det(num)
+
+        A, t = np.hsplit(np.array(M), [l-1])
+        t = np.transpose(t)[0]
+        return A, t
 
 class binder_distance_ReLU(Potential):
     '''
