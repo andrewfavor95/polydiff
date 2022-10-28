@@ -14,6 +14,7 @@ def main():
         help='Step of pipeline to start at')
     parser.add_argument('--inpaint', action='store_true', default=False, 
         help="Use sweep_hyperparam_inpaint.py, i.e. command-line arguments are in argparse format")
+    parser.add_argument('--af2_unmpnned', action='store_true', default=False)
     args, unknown = parser.parse_known_args()
 
     outdir = os.path.dirname(args.out)
@@ -40,7 +41,8 @@ def main():
 
     print('Threading MPNN sequences onto design models...')
     run_pipeline_step(f'{script_dir}thread_mpnn.py {outdir}')
-    jobid_score = run_pipeline_step(f'{script_dir}score_designs.py --chunk 100 {outdir}/')
+    if args.af2_unmpnned:
+        jobid_score = run_pipeline_step(f'{script_dir}score_designs.py --chunk 100 {outdir}/')
     jobid_score_mpnn = run_pipeline_step(f'{script_dir}score_designs.py --chunk 100 {outdir}/mpnn')
 
     print('Waiting for TM-align jobs to finish...')
