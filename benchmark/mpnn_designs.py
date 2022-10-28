@@ -81,7 +81,7 @@ def main():
               f'--jsonl_path {mpnn_folder}pdbs_{i}.jsonl '\
               f'--fixed_positions_jsonl {mpnn_folder}pdbs_position_fixed_{i}.jsonl '\
               f'--out_folder {mpnn_folder} '\
-              f'--num_seq_per_target  {args.num_seq_per_target}'\
+              f'--num_seq_per_target  {args.num_seq_per_target} '\
               f'--sampling_temp="0.1" '\
               f'--batch_size {8 if args.num_seq_per_target > 8 else args.num_seq_per_target} '\
               f'--omit_AAs XC',

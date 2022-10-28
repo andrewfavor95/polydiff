@@ -15,6 +15,7 @@ def main():
     parser.add_argument('--inpaint', action='store_true', default=False, 
         help="Use sweep_hyperparam_inpaint.py, i.e. command-line arguments are in argparse format")
     parser.add_argument('--af2_unmpnned', action='store_true', default=False)
+    parser.add_argument('--num_seq_per_target', default=8,type=int, help='How many mpnn sequences per design? Default = 8')
     args, unknown = parser.parse_known_args()
 
     outdir = os.path.dirname(args.out)
@@ -31,7 +32,7 @@ def main():
         wait_for_jobs(jobid_sweep)
 
     if args.start_step in ['sweep','mpnn']:
-        jobid_mpnn = run_pipeline_step(f'{script_dir}mpnn_designs.py --chunk 100 -p cpu --gres "" {outdir}')
+        jobid_mpnn = run_pipeline_step(f'{script_dir}mpnn_designs.py --num_seq_per_target {args.num_seq_per_target} --chunk 100 -p cpu --gres "" {outdir}')
 
     jobid_tmalign = run_pipeline_step(f'{script_dir}pair_tmalign.py {outdir}')
 
