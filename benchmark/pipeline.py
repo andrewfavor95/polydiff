@@ -53,7 +53,8 @@ def main():
     run_pipeline_step(f'{script_dir}parse_tmalign.py {outdir}')
 
     print('Waiting for scoring jobs to finish...')
-    wait_for_jobs(jobid_score)
+    if args.af2_unmpnned:
+        wait_for_jobs(jobid_score)
     wait_for_jobs(jobid_score_mpnn)
 
     print('Compiling metrics...')
