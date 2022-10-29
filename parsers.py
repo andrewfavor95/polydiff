@@ -93,7 +93,7 @@ def parse_pdb(filename, xyz27=False,seq=False):
     return parse_pdb_lines(lines, xyz27, seq)
 
 #'''
-def parse_pdb_lines(lines, xyz27, seq):
+def parse_pdb_lines(lines, xyz27, seq, get_aa=util.aa2num.get):
 
     # indices of residues observed in the structure
     idx_s = [int(l[22:26]) for l in lines if l[:4]=="ATOM" and l[12:16].strip()=="CA"]
@@ -109,7 +109,7 @@ def parse_pdb_lines(lines, xyz27, seq):
             continue
         resNo, atom, aa = int(l[22:26]), l[12:16], l[17:20]
         idx = idx_s.index(resNo)
-        for i_atm, tgtatm in enumerate(util.aa2long[util.aa2num[aa]]):
+        for i_atm, tgtatm in enumerate(util.aa2long[get_aa(aa)]):
             if tgtatm == atom:
                 xyz[idx,i_atm,:] = [float(l[30:38]), float(l[38:46]), float(l[46:54])]
                 break
