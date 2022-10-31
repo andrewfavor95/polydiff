@@ -6,6 +6,7 @@
 import os, argparse, glob
 import numpy as np
 import pandas as pd
+from icecream import ic
 
 def main():
     parser = argparse.ArgumentParser()
@@ -55,7 +56,7 @@ def main():
         df = df.merge(tmp, on='name', how='outer')
 
     # mpnn metrics require adding an extra column
-    df_mpnn = pd.DataFrame.from_records(records)
+    df_mpnn = pd.DataFrame(dict(name=[]))
     for path in [
         args.datadir+'/mpnn/af2_metrics.csv.*',
         args.datadir+'/mpnn/pyrosetta_metrics.csv.*',
@@ -67,6 +68,10 @@ def main():
     if os.path.exists(args.datadir+'/mpnn/'):
         mpnn_scores = load_mpnn_scores(args.datadir+'/mpnn/')
         df_mpnn = df_mpnn.merge(mpnn_scores, on='name', how='outer')
+        df_mpnn['mpnn_index'] = df_mpnn.name.map(lambda x: int(x.split('_')[-1]))
+        df_mpnn.name = df_mpnn.name.map(lambda x: '_'.join(x.split('_')[:-1]))
+        df_mpnn = df_mpnn.merge(df, on='name', how='outer')
+        print(df_mpnn['contig_rmsd_af2'])
 
     # combine regular and mpnn designs
     df_s = []
@@ -106,10 +111,11 @@ def load_mpnn_scores(folder):
             for header in lines[2::2]:
                 scores.append(float(header.split(',')[2].split('=')[1]))
 
-        records.append(dict(
-            name = os.path.basename(fn).replace('.fa',''),
-            mpnn_score = scores[0] if len(scores)==1 else scores
-        ))
+            for i, score in enumerate(scores):
+                records.append(dict(
+                    name = os.path.basename(fn).replace('.fa','') + f'_{i}',
+                    mpnn_score = score
+                ))
 
     df = pd.DataFrame.from_records(records)
     return df

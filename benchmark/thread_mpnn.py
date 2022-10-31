@@ -169,10 +169,7 @@ def main():
             n_designs = int(len(lines)/2-1)
             for i in range(n_designs):
                 seq = lines[2*i + 3].strip() # 2nd seq is 1st design
-                if n_designs == 1:
-                    prefix = args.outdir+name   
-                else:
-                    prefix = args.outdir+name+f"_{i}"
+                prefix = args.outdir+name+f"_{i}"
                 pdbstr = write_pdb(
                     xyz = pdb['xyz'][:,:3], # don't output sidechains
                     prefix = prefix,
