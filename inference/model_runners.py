@@ -790,7 +790,7 @@ class NRBStyleSelfCond(Sampler):
             idx_pdb, self.chain_idx = self.symmetry.res_idx_procesing(res_idx=idx_pdb)
         with torch.no_grad():
             px0=xt_in
-            for _ in range(self.recycle_schedule[t-1]):
+            for rec in range(self.recycle_schedule[t-1]):
                 msa_prev, pair_prev, px0, state_prev, alpha, logits, plddt = self.model(msa_masked,
                                     msa_full,
                                     seq_in,
@@ -810,7 +810,7 @@ class NRBStyleSelfCond(Sampler):
                     px0 = self.symmetrise_prev_pred(px0=px0,seq_in=seq_in, alpha=alpha)[:,:,:3]
                 # To permit 'recycling' within a timestep, in a manner akin to how this model was trained
                 # Aim is to basically just replace the xyz_t with the model's last px0, and to *not* recycle the state, pair or msa embeddings
-                if _ < self.recycle_schedule[t-1] -1:
+                if rec < self.recycle_schedule[t-1] -1:
                     zeros = torch.zeros(B,1,L,24,3).float().to(xyz_t.device)
                     xyz_t = torch.cat((px0.unsqueeze(1),zeros), dim=-2) # [B,T,L,27,3]
 
