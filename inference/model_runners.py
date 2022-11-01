@@ -51,12 +51,18 @@ class Sampler:
 
         # Load checkpoint, so that we can assemble the config
         self.load_checkpoint()
+        self.assemble_config_from_chk()
         # Now actually load the model weights into RF
         self.model = self.load_model()
 
         self.initialize_sampler(conf)
 
     def initialize_sampler(self, conf: DictConfig):
+        '''
+        Initializes the sampler, or re-initialize it using a new config.
+
+        Note that self.model will not be affected by new config values.
+        '''
         # Assign config to Sampler
         self._conf = conf
         
