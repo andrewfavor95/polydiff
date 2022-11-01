@@ -93,7 +93,7 @@ class Sampler:
         self.diffuser_conf = self._conf.diffuser
         self.preprocess_conf = self._conf.preprocess
         self.diffuser = Diffuser(**self._conf.diffuser)
-        
+        ic(self.preprocess_conf.d_t1d) 
 
         if self.inf_conf.symmetry is not None:
             self.symmetry = symmetry.SymGen(
@@ -200,7 +200,6 @@ class Sampler:
         # Now read input dimensions from checkpoint.
         self.d_t1d=self._conf.preprocess.d_t1d
         self.d_t2d=self._conf.preprocess.d_t2d
-
         model = RoseTTAFoldModule(**self._conf.model, d_t1d=self.d_t1d, d_t2d=self.d_t2d, T=self._conf.diffuser.T).to(self.device)
         if self._conf.logging.inputs:
             pickle_dir = pickle_function_call(model, 'forward', 'inference')
@@ -398,9 +397,13 @@ class Sampler:
         
         ### idx ###
         ###########
+        """
         idx = torch.arange(L)[None]
         if ppi_design:
             idx[:,binderlen:] += 200
+        """
+        # JW Just get this from the contig_mapper now. This handles chain breaks
+        idx = torch.tensor(self.contig_map.rf)[None]
 
         ### alpha_t ###
         ###############
@@ -431,6 +434,19 @@ class Sampler:
         ### added_features ###
         ######################
         # NB the hotspot input has been removed in this branch. 
+        # JW added it back in, using pdb indexing
+        if self.preprocess_conf.d_t1d == 23: # add hotpot residues
+            if self.ppi_conf.hotspot_res is None:
+                print("WARNING: you're using a model trained on complexes and hotspot residues, without specifying hotspots. If you're doing monomer diffusion this is fine")
+            else:
+                hotspots = [(i[0],int(i[1:])) for i in self.ppi_conf.hotspot_res]
+                hotspot_idx=[]
+                for i,res in enumerate(self.contig_map.con_ref_pdb_idx):
+                    if res in hotspots:
+                        hotspot_idx.append(self.contig_map.hal_idx0[i])
+            hotspot_tens = torch.zeros(L).float()
+            hotspot_tens[hotspot_idx] = 1.0
+            t1d=torch.cat((t1d, hotspot_tens[None,None,...,None].to(self.device)), dim=-1)
         """
         # t1d
         if self.preprocess_conf.d_t1d == 23: # add hotspot residues
@@ -792,6 +808,13 @@ class NRBStyleSelfCond(Sampler):
                                     motif_mask=self.diffusion_mask.squeeze().to(self.device))   
                 if self.symmetry is not None and self.inf_conf.symmetric_self_cond:
                     px0 = self.symmetrise_prev_pred(px0=px0,seq_in=seq_in, alpha=alpha)[:,:,:3]
+                # To permit 'recycling' within a timestep, in a manner akin to how this model was trained
+                # Aim is to basically just replace the xyz_t with the model's last px0, and to *not* recycle the state, pair or msa embeddings
+                if _ < self.recycle_schedule[t-1] -1:
+                    zeros = torch.zeros(B,1,L,24,3).float().to(xyz_t.device)
+                    xyz_t = torch.cat((px0.unsqueeze(1),zeros), dim=-2) # [B,T,L,27,3]
+
+                    t2d   = xyz_to_t2d(xyz_t) # [B,T,L,L,44]
         self.prev_pred = torch.clone(px0)
 
         # prediction of X0

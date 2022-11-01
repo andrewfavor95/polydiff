@@ -1,6 +1,7 @@
 import sys
 import numpy as np 
 import random
+from icecream import ic
 class ContigMap():
     '''
     New class for doing mapping.
@@ -49,7 +50,6 @@ class ContigMap():
             self.hal=hal_idx
             self.rf = rf_idx
         self.mask_1d = [False if i == ('_','_') else True for i in self.ref]
-        
         #take care of sequence and structure masking
         if self.inpaint_seq_tensor is None:
             if self.inpaint_seq is not None:
@@ -68,7 +68,8 @@ class ContigMap():
             self.inpaint_str = self.inpaint_str_tensor        
         #get 0-indexed input/output (for trb file)
         self.ref_idx0,self.hal_idx0, self.ref_idx0_inpaint, self.hal_idx0_inpaint, self.ref_idx0_receptor, self.hal_idx0_receptor=self.get_idx0()
-    
+        self.con_ref_pdb_idx=[i for i in self.ref if i != ('_','_')] 
+
     def get_sampled_mask(self):
         '''
         Function to get a sampled mask from a contig.
