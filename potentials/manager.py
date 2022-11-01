@@ -27,13 +27,13 @@ def make_contact_matrix(nchain, intra_all=False, inter_all=False, contact_string
     
     # inter all - everything off the diagonal has contact potential
     if inter_all:
-        mask2d = torch.full_like(contacts,False)
+        mask2d = np.full_like(contacts,False)
         for i in range(len(contacts)):
             for j in range(len(contacts)):
                 if i!=j:
                     mask2d[i,j] = True
-                    
-        contacts[mask2d] = 1
+        
+        contacts[mask2d.astype(bool)] = 1
 
 
     # custom contacts/repulsions from user 

@@ -330,6 +330,7 @@ class olig_contacts(Potential):
 
             weight (int/float, optional): Scaling/weighting factor
         """
+        print('This is chain contact matrix you are using')
         ic(contact_matrix)
         self.contact_matrix = contact_matrix
         self.weight_intra = weight_intra 
