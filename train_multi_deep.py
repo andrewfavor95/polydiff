@@ -250,6 +250,9 @@ class Trainer():
         self.seqdiff_kwargs = seqdiff_kwargs
         self.assemble_config()
         ic(self.config_dict) 
+
+        self.assemble_train_args()
+
     def assemble_config(self) -> None:
         config_dict = {}
         config_dict['model'] = self.model_param
@@ -263,6 +266,35 @@ class Trainer():
         config_dict['seq_diffuser']['seq_diff_type'] = self.seq_diff_type
         config_dict['preprocess'] = self.preprocess_param
         self.config_dict = config_dict
+
+    def assemble_train_args(self) -> None:
+
+        # preprocess and model param are saved in config dict
+        # and so are not saved here
+
+        self.training_arguments = {
+
+            'ckpt_load_path': self.ckpt_load_path,
+            'interactive': self.interactive,
+            'n_epoch': self.n_epoch,
+            'learning_rate': self.init_lr,
+            'l2_coeff': self.l2_coeff,
+            'port': self.port,
+
+            'epoch_size': N_EXAMPLE_PER_EPOCH,
+            'batch_size': self.batch_size,
+            'accum_step': self.ACCUM_STEP,
+            'maxcycle': self.maxcycle,
+            'wandb_prefix': self.wandb_prefix,
+            'metrics': self.metrics,
+            'zero_weights': self.zero_weights,
+            'log_inputs': self.log_inputs,
+
+            'diffusion_param': self.diffusion_param,
+            'loader_param': self.loader_param,
+            'loss_param': self.loss_param
+
+        }
 
     def calc_loss(self, logit_s, label_s,
                   logit_aa_s, label_aa_s, mask_aa_s, logit_exp,
@@ -919,7 +951,8 @@ class Trainer():
                             'valid_loss': 999.9,
                             'valid_acc': 999.9,
                             'best_loss': 999.9,
-                            'config_dict':self.config_dict},
+                            'config_dict':self.config_dict,
+                            'training_arguments': self.training_arguments},
                             self.checkpoint_fn(self.model_name, str(epoch)))
                 
         dist.destroy_process_group()
