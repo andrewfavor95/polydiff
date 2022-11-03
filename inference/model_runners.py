@@ -37,37 +37,36 @@ class Sampler:
         Args:
             conf: Configuration.
         """
+        self.initialized = False
+        self.initialize(conf)
+    
+    def initialize(self, conf: DictConfig):
         self._log = logging.getLogger(__name__)
         if torch.cuda.is_available():
             self.device = torch.device('cuda')
         else:
             self.device = torch.device('cpu')
-        
+        needs_model_reload = not self.initialized or conf.inference.ckpt_path != self._conf.inference.ckpt_path
+
         # Assign config to Sampler
         self._conf = conf
 
         # Initialize inference only helper objects to Sampler
         self.ckpt_path = conf.inference.ckpt_path
 
-        # Load checkpoint, so that we can assemble the config
-        self.load_checkpoint()
-        self.assemble_config_from_chk()
-        # Now actually load the model weights into RF
-        self.model = self.load_model()
+        if needs_model_reload:
+            # Load checkpoint, so that we can assemble the config
+            self.load_checkpoint()
+            self.assemble_config_from_chk()
+            # Now actually load the model weights into RF
+            self.model = self.load_model()
+        else:
+            self.assemble_config_from_chk()
 
-        self.initialize_sampler(conf)
+        # self.initialize_sampler(conf)
+        self.initialized=True
 
-    def initialize_sampler(self, conf: DictConfig):
-        '''
-        Initializes the sampler, or re-initialize it using a new config.
-
-        Note that self.model will not be affected by new config values.
-        '''
-        # Assign config to Sampler
-        self._conf = conf
-        
         # Assemble config from the checkpoint
-        self.assemble_config_from_chk() 
         print(' ')
         print('-'*100)
         print(' ')
@@ -198,7 +197,7 @@ class Sampler:
         else:
             print('WARNING: Model, Diffuser and Preprocess parameters are not saved in this checkpoint. Check carefully that the values specified in the config are correct for this checkpoint')     
 
-        ic(self._conf)
+        # ic(self._conf)
 
     def load_model(self):
         """Create RosettaFold model from preloaded checkpoint."""
@@ -268,7 +267,7 @@ class Sampler:
         # adjust size of input xt according to residue map 
         if self.diffuser_conf.partial_T:
             assert xyz_27.shape[0] == L_mapped, f"there must be a coordinate in the input PDB for each residue implied by the contig string for partial diffusion.  length of input PDB != length of contig string: {xyz_27.shape[0]} != {L_mapped}"
-            assert contig_map.hal_idx0 == contig_map.ref_idx0, 'for partial diffusion there can be no offset between the index of a residue in the input and the index of the residue in the output'
+            assert contig_map.hal_idx0 == contig_map.ref_idx0, f'for partial diffusion there can be no offset between the index of a residue in the input and the index of the residue in the output, {contig_map.hal_idx0} != {contig_map.ref_idx0}'
             # Partially diffusing from a known structure
             xyz_mapped=xyz_27
             atom_mask_mapped = mask_27
@@ -317,6 +316,7 @@ class Sampler:
         
         if return_forward_trajectory:
             forward_traj = torch.cat([xyz_true[None], fa_stack[:,:,:]])
+            aa_masks[:, diffusion_mask.squeeze()] = True
             return xt, seq_t, forward_traj, aa_masks, seq_orig
         
         self.msa_prev = None
