@@ -17,9 +17,11 @@
 
 import os, sys, argparse, glob, time
 
+import re
 import numpy as np
 import pandas as pd
 from collections import OrderedDict
+from icecream import ic
 
 sys.path.insert(0,'/software/mlfold/') # common path on digs
 from alphafold.common import protein
@@ -421,6 +423,9 @@ def main():
         else:
             trb_dir = os.path.dirname(fn)+'/'
         trbname = os.path.join(trb_dir, name+args.pdb_suffix+'.trb')
+        if not os.path.exists(trbname):
+            # strip the mpnn suffix
+            trbname = re.sub('_\d+\.trb$', '.trb', trbname)
         if os.path.exists(trbname): 
             trb = np.load(trbname,allow_pickle=True)
 
@@ -453,7 +458,7 @@ def main():
         row['rmsd_af2_des'] = calc_rmsd(xyz_pred.reshape(L*3,3), xyz_des.reshape(L*3,3))
  
         # load contig position
-        if os.path.exists(trbname): 
+        if os.path.exists(trbname):
             idx_motif = [i for i,idx in zip(trb['con_hal_idx0'],trb['con_ref_pdb_idx']) 
                          if idx[0]!='R']
 
@@ -461,10 +466,17 @@ def main():
 
             idx_motif_ref = [i for i,idx in zip(trb['con_ref_idx0'],trb['con_ref_pdb_idx']) 
                              if idx[0]!='R']
-            xyz_ref_motif = xyz_ref[idx_motif_ref]
-            row['contig_rmsd_af2_des'] = calc_rmsd(xyz_pred[idx_motif].reshape(L_motif*3,3), 
-                                                   xyz_des[idx_motif].reshape(L_motif*3,3))
-            row['contig_rmsd_af2'] = calc_rmsd(xyz_pred[idx_motif].reshape(L_motif*3,3), xyz_ref_motif.reshape(L_motif*3,3))
+            for suffix, atom_i in [
+                    ('', np.array([0,1,2])),
+                    ('_c_alpha', np.array([1]))
+                        ]:
+                n_atoms = len(atom_i)
+                xyz_ref_motif = xyz_ref[idx_motif_ref][:, atom_i].reshape(L_motif*n_atoms,3)
+                xyz_pred_motif = xyz_pred[idx_motif][:, atom_i].reshape(L_motif*n_atoms,3)
+                xyz_des_motif = xyz_des[idx_motif][:, atom_i].reshape(L_motif*n_atoms,3)
+                row['contig_rmsd_af2_des' + suffix] = calc_rmsd(xyz_pred_motif, xyz_des_motif)
+                row['contig_rmsd_af2' + suffix] = calc_rmsd(xyz_pred_motif, xyz_ref_motif)
+                row['contig_rmsd' + suffix] = calc_rmsd(xyz_des_motif, xyz_ref_motif)
 
             if args.subset_res is not None: 
                 idxmap = dict(zip(trb['con_ref_pdb_idx'],trb['con_ref_idx0']))
