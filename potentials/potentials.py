@@ -1,8 +1,12 @@
 import torch
+<<<<<<< HEAD
 from icecream import ic 
 import numpy as np 
+=======
+import numpy as np
+>>>>>>> d0a72f2 (Integrated Anna's potential into the repo, and it seems to be working. Need to clean up piping info to the potential manager)
 from util import generate_Cbeta
-from inference.utils import parse_pdb
+from icecream import ic
 
 class Potential:
     '''
@@ -473,33 +477,40 @@ class substrate_contacts(Potential):
         self.motif_substrate_atoms = None # xyz coordinates of substrate from input motif
 
     def compute(self, seq, xyz):
+        
+        # First, get random set of atoms
+        # This operates on self.xyz_motif, which is assigned to this class in the model runner (for horrible plumbing reasons)
+        self._grab_motif_residues(self.xyz_motif)
+        
+        # for checking affine transformation is corect
+        first_distance = torch.sqrt(torch.sqrt(torch.sum(torch.square(self.motif_substrate_atoms[0] - self.motif_frame[0]), dim=-1))) 
 
         # grab the coordinates of the corresponding atoms in the new frame using mapping
         res = torch.tensor([k[0] for k in self.motif_mapping])
         atoms = torch.tensor([k[1] for k in self.motif_mapping])
-        new_frame = xyz[res,atoms,:]
+        new_frame = xyz[self.diffusion_mask][res,atoms,:]
 
         # calculate affine transformation matrix and translation vector b/w new frame and motif frame
-        A, t = _recover_affine(self.motif_frame, new_frame)
+        A, t = self._recover_affine(self.motif_frame, new_frame)
 
         # apply affine transformation to substrate atoms
-        substrate_atoms = torch.dot(A, self.motif_substrate_atoms) + t
-
+        substrate_atoms = torch.mm(A, self.motif_substrate_atoms.transpose(0,1)).transpose(0,1) + t
+        second_distance = torch.sqrt(torch.sqrt(torch.sum(torch.square(new_frame[0] - substrate_atoms[0]), dim=-1)))
         Ca = xyz[:,1] # [L,3]
 
         #cdist needs a batch dimension - NRB
-        dgram = torch.cdist(Ca[None,...].contiguous(), substrate_atoms, p=2) # [1,Lb,Lb]
+        dgram = torch.cdist(Ca[None,...].contiguous(), substrate_atoms.float(), p=2) # [1,Lb,Lb]
 
         divide_by_r_0 = (dgram - self.d_0) / self.r_0
         numerator = torch.pow(divide_by_r_0,6)
         denominator = torch.pow(divide_by_r_0,12)
-
-        ncontacts = (1 - numerator) / ((1 - denominator))
-
+        
+        assert abs(first_distance - second_distance) < 0.01, "Alignment seems to be bad" 
+        ncontacts = (1 - numerator) / ((1 - denominator)).float()
         #Potential value is the average of both radii of gyration (is avg. the best way to do this?)
         return self.weight * ncontacts.sum()
 
-    def _recover_affine(frame1, frame2):
+    def _recover_affine(self,frame1, frame2):
         """
         Uses Simplex Affine Matrix (SAM) formula to recover affine transform between two sets of 4 xyz coordinates
         See: https://www.researchgate.net/publication/332410209_Beginner%27s_guide_to_mapping_simplexes_affinely
@@ -527,9 +538,26 @@ class substrate_contacts(Potential):
                 # calculate SAM entry
                 M[i][j] = (-1)**j * D * torch.linalg.det(num)
 
-        A, t = np.hsplit(np.array(M), [l-1])
-        t = np.transpose(t)[0]
+        A, t = torch.hsplit(M, [l-1])
+        t = t.transpose(0,1)
         return A, t
+
+    def _grab_motif_residues(self, xyz) -> None:
+        """
+        Grabs 4 atoms in the motif.
+        Currently random subset of Ca atoms if the motif is >= 4 residues, or else 4 random atoms from a single residue
+        """
+        idx = torch.arange(self.diffusion_mask.shape[0])
+        idx = idx[self.diffusion_mask].float()
+        if torch.sum(self.diffusion_mask) >= 4:
+            rand_idx = torch.multinomial(idx, 4).long()
+            # get Ca atoms
+            self.motif_frame = xyz[rand_idx, 1]
+            self.motif_mapping = [(i,1) for i in rand_idx]
+        else:
+            rand_idx = torch.multinomial(idx, 1).long()
+            self.motif_frame = xyz[rand_idx,:4]
+            self.motif_mapping = [(rand_idx, i) for i in range(4)]
 
 class binder_distance_ReLU(Potential):
     '''
@@ -656,7 +684,8 @@ implemented_potentials = { 'monomer_ROG':          monomer_ROG,
                            'interface_ncontacts':  interface_ncontacts,
                            'monomer_contacts':     monomer_contacts,
                            'olig_intra_contacts':  olig_intra_contacts,
-                           'olig_contacts':        olig_contacts}
+                           'olig_contacts':        olig_contacts,
+                           'substrate_contacts':    substrate_contacts}
 
 require_binderlen      = { 'binder_ROG',
                            'binder_distance_ReLU',

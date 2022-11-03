@@ -1061,10 +1061,10 @@ def parse_a3m(filename):
 
 
 
-def process_target(pdb_path):
+def process_target(pdb_path, parse_hetatom=False):
 
     # Read target pdb and extract features.
-    target_struct = parse_pdb(pdb_path)
+    target_struct = parse_pdb(pdb_path, parse_hetatom=parse_hetatom)
 
     # Zero-center positions
     ca_center = target_struct['xyz'][:, :1, :].mean(axis=0, keepdims=True)
@@ -1079,12 +1079,17 @@ def process_target(pdb_path):
 
     mask_27 = torch.full((seq_len, 27), False)
     mask_27[:, :14] = atom_mask
-    return {
-        'xyz_27': xyz_27,
-        'mask_27': mask_27,
-        'seq': seq_orig,
-        'pdb_idx': target_struct['pdb_idx']
-    }
+    out = {
+           'xyz_27': xyz_27,
+            'mask_27': mask_27,
+            'seq': seq_orig,
+            'pdb_idx': target_struct['pdb_idx']
+            } 
+    if parse_hetatom:
+        out['xyz_het'] = target_struct['xyz_het']
+        out['info_het'] = target_struct['info_het']
+    return out
+    
 
 def recycle_schedule(T, rec_sched=None, num_designs=1):
     """  
