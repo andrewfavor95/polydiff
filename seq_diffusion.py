@@ -270,7 +270,7 @@ class DiscreteSeqDiffuser():
 
         seq_stack = torch.stack(seq_stack, dim=0) # [t,L]
 
-        if t_list != None:
+        if t_list is not None:
             t_idx = torch.tensor([t-1 for t in t_list])
             assert(t_idx>=0).all(), 'detected timestep less than 1'
 
@@ -516,9 +516,8 @@ class DiscreteSeqDiffuser():
 class ContinuousSeqDiffuser():
 
     '''
-        Class to do discrete diffusion according to the method reported in [1]. This class will
-        yield a noised sequence and also will return the "true" probability distributions at
-        certain timesteps along the noising trajectory.
+        Class to do analog bit diffusion according to the method reported in [1]. This class will
+        yield a noised sequence at certain timesteps along the noising trajectory.
 
         [1] Chen, Ting, et al. "Analog Bits: Generating Discrete Data using Diffusion Models
         ith Self-Conditioning." arXiv (2022)
@@ -582,7 +581,7 @@ class ContinuousSeqDiffuser():
                          diffusion_mask=None,
                          t_list=None):
         '''
-            Given a sequence, do discrete diffusion of the sequence and return the result at the
+            Given a sequence, do bit diffusion of the sequence and return the result at the
             specified timepoints.
 
             Args:
@@ -626,7 +625,7 @@ class ContinuousSeqDiffuser():
 
         seq_stack = torch.stack(seq_stack, dim=0) # [T,L,K]
 
-        if t_list != None:
+        if t_list is not None:
             t_idx = torch.tensor([t-1 for t in t_list])
             assert(t_idx>=0).all(), 'detected timestep less than 1'
 

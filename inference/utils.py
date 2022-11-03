@@ -812,18 +812,17 @@ class Denoise():
                     fullatom_next[:,diffusion_mask,:14] = xt[None,diffusion_mask]
 
             seq_next = torch.nn.functional.one_hot(
-                    seq_next, num_classes=22)
+                    seq_next, num_classes=22).float()
 
         else:
             # Doing sequence diffusion
 
             # Seq here is one-hot representation
-
             if diffuse_sidechains:
                 raise NotImplementedError()
 
             else:
-                seq_next = self.seq_diffuser.get_next_sequence(seq_t, pseq0, t, seq_diffusion_mask) # [L,20]
+                seq_next = self.seq_diffuser.get_next_sequence(seq_t[:,:20], pseq0, t, seq_diffusion_mask) # [L,20]
 
                 # This is never used so just make it a fudged tensor - NRB
                 torsions_next = torch.zeros(1,1)
