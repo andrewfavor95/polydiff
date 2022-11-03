@@ -19,6 +19,7 @@ def main():
     args, unknown = parser.parse_known_args()
 
     outdir = os.path.dirname(args.out)
+    job_id_tmalign=None
 
     if args.start_step == 'sweep':
         arg_str = ' '.join(['"'+x+'"' if (' ' in x or '|' in x or x=='') else x for x in sys.argv[1:]])
@@ -34,23 +35,24 @@ def main():
     if args.start_step in ['sweep','mpnn']:
         jobid_mpnn = run_pipeline_step(f'{script_dir}mpnn_designs.py --num_seq_per_target {args.num_seq_per_target} --chunk 100 -p cpu --gres "" {outdir}')
 
-    jobid_tmalign = run_pipeline_step(f'{script_dir}pair_tmalign.py {outdir}')
+        jobid_tmalign = run_pipeline_step(f'{script_dir}pair_tmalign.py {outdir}')
 
     if args.start_step in ['sweep','mpnn']:
         print('Waiting for MPNN jobs to finish...')
         wait_for_jobs(jobid_mpnn)
 
-    print('Threading MPNN sequences onto design models...')
-    run_pipeline_step(f'{script_dir}thread_mpnn.py {outdir}')
+        print('Threading MPNN sequences onto design models...')
+        run_pipeline_step(f'{script_dir}thread_mpnn.py {outdir}')
     if args.af2_unmpnned:
         jobid_score = run_pipeline_step(f'{script_dir}score_designs.py --chunk 100 {outdir}/')
     jobid_score_mpnn = run_pipeline_step(f'{script_dir}score_designs.py --chunk 100 {outdir}/mpnn')
 
-    print('Waiting for TM-align jobs to finish...')
-    wait_for_jobs(jobid_tmalign)
+    if job_id_tmalign:
+        print('Waiting for TM-align jobs to finish...')
+        wait_for_jobs(jobid_tmalign)
 
-    print('Clustering by TM-score...')
-    run_pipeline_step(f'{script_dir}parse_tmalign.py {outdir}')
+        print('Clustering by TM-score...')
+        run_pipeline_step(f'{script_dir}parse_tmalign.py {outdir}')
 
     print('Waiting for scoring jobs to finish...')
     if args.af2_unmpnned:
