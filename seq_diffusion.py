@@ -707,13 +707,8 @@ class ContinuousSeqDiffuser():
         '''
 
         loss = torch.square( seq_true - seq_pred )
+
         return torch.mean(loss)
-
-        # loss = torch.mean(loss, dim=-1)
-        # These need to be not diffusion mask since True means NOT diffused and the intention of this was to penalize diffused residues only - NRB
-        #loss = loss * ~diffusion_mask # Zero out entries that are not being diffused
-
-        #return loss.sum() / (~diffusion_mask.sum() + 1e-8)
 
     def sigmoid_loss(self,
                      seq_true,

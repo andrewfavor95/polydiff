@@ -282,7 +282,7 @@ class Sampler:
 
         xyz_27 = target_feats['xyz_27']
         mask_27 = target_feats['mask_27']
-        seq_orig = target_feats['seq'] # [L,22]
+        seq_orig = target_feats['seq']
         L_mapped = len(self.contig_map.ref)
 
         diffusion_mask = self.mask_str

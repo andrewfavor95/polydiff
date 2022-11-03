@@ -851,9 +851,6 @@ def sampler_selector(conf: DictConfig):
         sampler = model_runners.JWStyleSelfCond(conf)
     elif conf.inference.model_runner == 'NRBStyleSelfCond':
         sampler = model_runners.NRBStyleSelfCond(conf)
-    elif conf.inference.model_runner == 'seqdiff':
-        ic('running sequence diffusion')
-        sampler = model_runners.SeqDiffusionSampler(conf)
     else:
         raise ValueError(f'Unrecognized sampler {conf.model_runner}')
     return sampler
