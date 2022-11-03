@@ -781,7 +781,7 @@ class NRBStyleSelfCond(Sampler):
 
         B,N,L = xyz_t.shape[:3]
 
-        if t < self.diffuser.T:
+        if (t < self.diffuser.T) and (t != self.diffuser_conf.partial_T):
             ic('Providing Self Cond')
                 
             zeros = torch.zeros(B,1,L,24,3).float().to(xyz_t.device)
