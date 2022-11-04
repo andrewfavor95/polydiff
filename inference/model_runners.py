@@ -289,7 +289,6 @@ class Sampler:
 
         diffusion_mask = self.mask_str
         self.diffusion_mask = diffusion_mask
-        
         # adjust size of input xt according to residue map 
         if self.diffuser_conf.partial_T:
             assert xyz_27.shape[0] == L_mapped, f"there must be a coordinate in the input PDB for each residue implied by the contig string for partial diffusion.  length of input PDB != length of contig string: {xyz_27.shape[0]} != {L_mapped}"
@@ -302,6 +301,7 @@ class Sampler:
             # adjust size of input xt according to residue map
             xyz_mapped = torch.full((1,1,L_mapped,27,3), np.nan)
             xyz_mapped[:, :, contig_map.hal_idx0, ...] = xyz_27[contig_map.ref_idx0,...]
+            self.motif_com = xyz_27[contig_map.ref_idx0,1].mean(dim=0)
             xyz_mapped = get_init_xyz(xyz_mapped).squeeze()
             # adjust the size of the input atom map
             atom_mask_mapped = torch.full((L_mapped, 27), False)
@@ -383,7 +383,7 @@ class Sampler:
         if self.potential_conf.guiding_potentials is not None:
             if any(list(filter(lambda x: "substrate_contacts" in x, self.potential_conf.guiding_potentials))):
                 assert len(self.target_feats['xyz_het']) > 0, "If you're using the Substrate Contact potential, you need to make sure there's a ligand in the input_pdb file!"
-                xyz_het = torch.from_numpy(self.target_feats['xyz_het']) - self.diffuser.motif_com
+                xyz_het = torch.from_numpy(self.target_feats['xyz_het']) - self.motif_com
                 for pot in self.potential_manager.potentials_to_apply: # fix this
                     pot.motif_substrate_atoms = xyz_het
                     pot.diffusion_mask = self.diffusion_mask.squeeze()

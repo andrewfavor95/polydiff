@@ -916,6 +916,7 @@ class Diffuser():
 
         #Centre unmasked structure at origin, as in training (to prevent information leak)
         if torch.sum(diffusion_mask) != 0:
+            ic(xyz[diffusion_mask,1,:].mean(dim=0))
             self.motif_com=xyz[diffusion_mask,1,:].mean(dim=0) # This is needed for one of the potentials
             xyz = xyz - self.motif_com
         elif torch.sum(diffusion_mask) == 0:

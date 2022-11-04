@@ -489,10 +489,8 @@ class substrate_contacts(Potential):
         res = torch.tensor([k[0] for k in self.motif_mapping])
         atoms = torch.tensor([k[1] for k in self.motif_mapping])
         new_frame = xyz[self.diffusion_mask][res,atoms,:]
-
         # calculate affine transformation matrix and translation vector b/w new frame and motif frame
         A, t = self._recover_affine(self.motif_frame, new_frame)
-
         # apply affine transformation to substrate atoms
         substrate_atoms = torch.mm(A, self.motif_substrate_atoms.transpose(0,1)).transpose(0,1) + t
         second_distance = torch.sqrt(torch.sqrt(torch.sum(torch.square(new_frame[0] - substrate_atoms[0]), dim=-1)))
