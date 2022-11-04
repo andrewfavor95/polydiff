@@ -78,9 +78,9 @@ def get_dih(a, b, c, d):
 
 def get_Cb(xyz):
     '''recreate Cb given N,Ca,C'''
-    N  = xyz[:,:,0]
-    Ca = xyz[:,:,1]
-    C  = xyz[:,:,2]
+    N  = xyz[...,0,:]
+    Ca = xyz[...,1,:]
+    C  = xyz[...,2,:]
     b = Ca - N
     c = C - Ca
     a = torch.cross(b, c, dim=-1)
