@@ -105,6 +105,8 @@ def find_third_contact(contacts):
 
 def get_triple_contact(xyz, full_prop, low_prop, high_prop, broken_prop, xyz_less_than=6, seq_dist_greater_than=10, len_low=1, len_high=3):
     contacts = get_contacts(xyz, xyz_less_than, seq_dist_greater_than)
+    if not contacts.any():
+        return get_diffusion_mask_simple(xyz, full_prop, low_prop, high_prop, broken_prop)
     indices = find_third_contact(contacts)
     if indices is None:
         return get_diffusion_mask_simple(xyz, full_prop, low_prop, high_prop, broken_prop)
