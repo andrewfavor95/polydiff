@@ -16,13 +16,14 @@ def main():
         help="Use sweep_hyperparam_inpaint.py, i.e. command-line arguments are in argparse format")
     parser.add_argument('--af2_unmpnned', action='store_true', default=False)
     parser.add_argument('--num_seq_per_target', default=8,type=int, help='How many mpnn sequences per design? Default = 8')
+    parser.add_argument('--af2_gres', type=str, default='gpu:rtx2080:1',help='--gres argument for alphfold.  If set to the empty string, the arguments used for hyperparameter sweeping are passed to the score_designs.py script')
     args, unknown = parser.parse_known_args()
 
     outdir = os.path.dirname(args.out)
     job_id_tmalign=None
 
+    arg_str = ' '.join(['"'+x+'"' if (' ' in x or '|' in x or x=='') else x for x in sys.argv[1:]])
     if args.start_step == 'sweep':
-        arg_str = ' '.join(['"'+x+'"' if (' ' in x or '|' in x or x=='') else x for x in sys.argv[1:]])
         if args.inpaint:
             script = f'{script_dir}sweep_hyperparam_inpaint.py'
         else:
@@ -43,9 +44,13 @@ def main():
 
         print('Threading MPNN sequences onto design models...')
         run_pipeline_step(f'{script_dir}thread_mpnn.py {outdir}')
+
+    af2_args = arg_str
+    if args.af2_gres:
+        af2_args = f'--gres {args.af2_gres}'
     if args.af2_unmpnned:
-        jobid_score = run_pipeline_step(f'{script_dir}score_designs.py --chunk 100 {outdir}/')
-    jobid_score_mpnn = run_pipeline_step(f'{script_dir}score_designs.py --chunk 100 {outdir}/mpnn')
+        jobid_score = run_pipeline_step(f'{script_dir}score_designs.py --chunk 100 {outdir}/ {arg_str}')
+    jobid_score_mpnn = run_pipeline_step(f'{script_dir}score_designs.py --chunk 100 {outdir}/mpnn {arg_str}')
 
     if job_id_tmalign:
         print('Waiting for TM-align jobs to finish...')
