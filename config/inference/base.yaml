@@ -30,6 +30,8 @@ inference:
   symmetric_self_cond: True
   final_step: 1
   feed_true_xt: False
+  annotate_termini: True
+  deterministic: False
 
 contigmap:
   contigs: ['20', 'A3-23', '30']

@@ -24,16 +24,28 @@ from util import writepdb_multi, writepdb
 from inference import utils as iu
 from icecream import ic
 from hydra.core.hydra_config import HydraConfig
+import numpy as np
+import random
+
+def make_deterministic(seed=0):
+        torch.manual_seed(seed)
+        np.random.seed(seed)
+        random.seed(seed)
+
 
 @hydra.main(version_base=None, config_path='config/inference', config_name='base')
 def main(conf: HydraConfig) -> None:
     log = logging.getLogger(__name__)
+    if conf.inference.deterministic:
+        make_deterministic()
     
     # Initialize sampler and target/contig.
     sampler = iu.sampler_selector(conf)
     
     # Loop over number of designs to sample.
     for i_des in range(sampler.inf_conf.design_startnum, sampler.inf_conf.design_startnum + sampler.inf_conf.num_designs):
+        if conf.inference.deterministic:
+            make_deterministic(i_des)
 
         start_time = time.time()
         out_prefix = f'{sampler.inf_conf.output_prefix}_{i_des}'

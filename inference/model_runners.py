@@ -359,11 +359,17 @@ class Sampler:
         msa_masked = torch.zeros((1,1,L,48))
         msa_masked[:,:,:,:22] = nn.one_hot(seq, num_classes=22)[None, None]
         msa_masked[:,:,:,22:44] = nn.one_hot(seq, num_classes=22)[None, None]
+        if self._conf.inference.annotate_termini:
+            msa_masked[:,:,0,46] = 1.0
+            msa_masked[:,:,-1,47] = 1.0
 
         ### msa_full ###
         ################
         msa_full = torch.zeros((1,1,L,25))
         msa_full[:,:,:,:22] = nn.one_hot(seq, num_classes=22)[None, None]
+        if self._conf.inference.annotate_termini:
+            msa_full[:,:,0,23] = 1.0
+            msa_full[:,:,-1,24] = 1.0
 
         ### t1d ###
         ########### 
