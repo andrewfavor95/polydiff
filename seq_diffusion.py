@@ -681,17 +681,20 @@ class ContinuousSeqDiffuser():
         '''
 
         if self.loss_type == 'l2_loss':
-
             true_bits = self.seq2bits(seq_true, K=21)
 
-            return self.l2_loss(true_bits, seq_pred, diffusion_mask)
+            return self.l2_loss(true_bits, seq_pred)
+
+        if self.loss_type == 'sigmoid':
+            true_bits = self.seq2bits(seq_true, K=21)
+
+            return self.sigmoid_loss(true_bits, seq_pred)
         else:
             raise NotImplementedError()
 
     def l2_loss(self,
                 seq_true,
-                seq_pred,
-                diffusion_mask):
+                seq_pred):
         '''
             Loss described in Equation 2 of Chen et al.
 
@@ -702,8 +705,6 @@ class ContinuousSeqDiffuser():
                 seq_true (torch.tensor, [L,K]): The true sequence in analog bit form
 
                 seq_pred (torch.tensor, [L,K]): The predicted sequence in analog bit form
-
-                diffusion_mask (torch.tensor, [L]): True means NOT diffused at this residue
         '''
 
         loss = torch.square( seq_true - seq_pred )
@@ -715,10 +716,21 @@ class ContinuousSeqDiffuser():
                      seq_pred):
         '''
             Loss described in B.2 of Chen et al.
+            
+            This is the sigmoid cross entropy loss of the predicted bits versus the real bits
+
+            Args:
+                
+                seq_true (torch.tensor, [L,K]): The true sequence in analog bit form
+
+                seq_pred (torch.tensor, [L,K]): The predicted sequence in analog bit form
 
         '''
+        ic('Doing Sigmoid Seq loss')
 
-        raise NotImplementedError()
+        loss = torch.log( torch.sigmoid(seq_true * seq_pred) ) # [L,K]
+
+        return -1 * torch.mean(loss)
 
     def cce_loss(self,
                  seq_true,
@@ -801,6 +813,9 @@ class ContinuousSeqDiffuser():
     
         '''
         t_idx = t-1
+
+        if self.loss_type == 'sigmoid':
+            pseq0 = 2*torch.sigmoid(pseq0) - 1 # Take sigmoid of model output and then rescale to bits
     
         # get noise at timestep t
         mu, sigma = self.get_seq_mu_xt_x0(seq_t=seq_t, pseq_0=pseq0, t_idx=t_idx)

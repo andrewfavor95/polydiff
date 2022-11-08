@@ -109,7 +109,9 @@ class Sampler:
             kwargs = {
                      'T': self._conf.diffuser.T,
                      's_b0': self._conf.seq_diffuser.s_b0,
-                     's_bT': self._conf.seq_diffuser.s_bT
+                     's_bT': self._conf.seq_diffuser.s_bT,
+                     'schedule_type': self._conf.seq_diffuser.schedule_type,
+                     'loss_type': self._conf.seq_diffuser.loss_type
                      }
             self.seq_diffuser = seq_diffusion.ContinuousSeqDiffuser(**kwargs)
 

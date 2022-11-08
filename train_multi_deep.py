@@ -179,10 +179,11 @@ class Trainer():
         # For Sequence Diffusion
         seq_diff_type = diffusion_param['seqdiff']
         self.seq_diff_type = seq_diff_type
-        seqdiff_kwargs = {'T'             : diffusion_param['diff_T'], # Use same T as for str diff
+        seqdiff_kwargs = {'T'              : diffusion_param['diff_T'], # Use same T as for str diff
                           's_b0'           : diffusion_param['seqdiff_b0'],
                           's_bT'           : diffusion_param['seqdiff_bT'],
-                          'schedule_type' : diffusion_param['seqdiff_schedule_type']
+                          'schedule_type'  : diffusion_param['seqdiff_schedule_type'],
+                          'loss_type'      : diffusion_param['seqdiff_loss_type']
                          }
 
         if not seq_diff_type:
@@ -739,7 +740,7 @@ class Trainer():
             wandb.save(os.path.join(os.getcwd(), self.outdir, 'git_diff.txt'))
         gpu = rank % torch.cuda.device_count()
         ic(os.environ['MASTER_ADDR'])
-        dist.init_process_group(backend="nccl", world_size=world_size, rank=rank)
+        dist.init_process_group(backend="gloo", world_size=world_size, rank=rank)
         torch.cuda.set_device("cuda:%d"%gpu)
 
         #define dataset & data loader
@@ -1199,8 +1200,7 @@ class Trainer():
                     t1d[:,:,:,20]  = 0 # Mask token set to zero
                      
                 else:
-                    zeros          = torch.zeros(L,21)
-                    t1d[:,:,:,:21] = zeros # [B,T,L,33]
+                    t1d[:,:,:,:21] = 0 # [B,T,L,33]
 
 
             with torch.no_grad():

@@ -156,6 +156,8 @@ def get_args(in_args=None):
             help='b_T parameter for Sequence diffuser.')
     diff_group.add_argument('-seqdiff_schedule_type', type=str, default='cosine',
             help='Type of schedule for Sequence diffusion')
+    diff_group.add_argument('-seqdiff_loss_type', type=str, default='l2_loss',
+            help='Type of loss to use with sequence diffusion {l2_loss, sigmoid}')
     diff_group.add_argument('-seqdiff', type=str, default=None,
             help='The type of sequence diffuser to use ["uniform", "continuous"]. Default: None (classic autoregressive decoding)')
     diff_group.add_argument('-seqdiff_lambda', type=float, default=1,
@@ -362,6 +364,7 @@ def get_args(in_args=None):
                   'seqdiff_b0',
                   'seqdiff_bT',
                   'seqdiff_schedule_type',
+                  'seqdiff_loss_type',
                   'seqdiff',
                   'seqdiff_lambda',
                   'decode_mask_frac',

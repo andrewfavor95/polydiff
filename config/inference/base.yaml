@@ -102,6 +102,7 @@ seq_diffuser:
   s_b0: null
   s_bT: null
   schedule_type: null
+  loss_type: null
   seqdiff: null
 
 denoiser:
