@@ -549,6 +549,7 @@ class ContinuousSeqDiffuser():
         '''
             This type of sequence diffuser uses a continuous sequence representation so return True
         '''
+
         return True
 
     def seq2bits(self,
