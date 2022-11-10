@@ -88,7 +88,7 @@ def main(conf: HydraConfig) -> None:
         os.makedirs(os.path.dirname(out_prefix), exist_ok=True)
         final_seq = seq_stack[-1]
 
-        if not conf.seq_diffuser.seqdiff is None:
+        if conf.seq_diffuser.seqdiff is not None:
             # When doing sequence diffusion the model does not make predictions beyond category 19
             final_seq = final_seq[:,:20] # [L,20]
 

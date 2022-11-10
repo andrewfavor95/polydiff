@@ -418,6 +418,29 @@ class Denoise():
         
         return mean, variance
 
+    def reveal_residues(self, seq_t, seq_px0, px0, t):
+        '''
+        Reveal some amino acids in the sequence according to schedule and predictions
+
+        seq_t (torch.tensor): [L] Integer sequence
+
+        seq_px0 (torch.tensor): [L] Model prediction of sequence
+
+        px0 (torch.tensor): [L,14,3] Predicted set of full atom crds
+
+        t (int): Current timestep
+
+        '''
+        next_seq = torch.clone(seq_t)
+
+        if t <= self.aa_decode_steps:
+            t_idx = t-1
+            decode_positions           = self.decode_scheduler.get_decode_positions(t_idx, px0)
+            replacement                = seq_px0[decode_positions]
+            replacement                = replacement.to(next_seq.device)
+            next_seq[decode_positions] = replacement
+
+        return next_seq
 
     def get_next_torsions(self, xt, px0, seq_t, seq_logit_px0, t, diffusion_mask=None, noise_scale=1.):
         """
@@ -556,15 +579,8 @@ class Denoise():
         next_torsions_trig = torch.stack([torch.cos(next_torsions),
                                           torch.sin(next_torsions)], dim=-1)
 
-        ## Reveal some amino acids in the sequence according to schedule and predictions
-        next_seq = torch.clone(seq_t)
-        #print(self.aa_decode_steps)
-        if t <= self.aa_decode_steps:
-            t_idx = t-1
-            decode_positions = self.decode_scheduler.get_decode_positions(t_idx, px0)
-            replacement      = seq_px0[decode_positions]
-            replacement = replacement.to(next_seq.device)
-            next_seq[decode_positions] = replacement
+        next_seq = self.reveal_residues(seq_t, seq_px0, px0, t)
+
         return next_torsions_trig, next_seq
 
 
@@ -768,75 +784,49 @@ class Denoise():
         
         # add the delta to the new frames 
         frames_next = torch.from_numpy(frames_next) + ca_deltas[:,None,:]  # translate
-        
-        if self.seq_diffuser is None:
-            # Standard AR sequence decoding
-            # get the next set of amino acid identities and chi angles 
 
-            # Seq here is integer representation
+        if self.seq_diffuser is None and diffuse_sidechains:
             seq_t = torch.argmax(seq_t, dim=-1).cpu() # [L]
             pseq0 = torch.argmax(pseq0, dim=-1).cpu() # [L]
 
-            if diffuse_sidechains:
-                torsions_next, seq_next = self.get_next_torsions(xt, px0, seq_t, pseq0, t, diffusion_mask, noise_scale = self.noise_scale_torsion)       
+            torsions_next, seq_next = self.get_next_torsions(xt, px0, seq_t, pseq0, t, diffusion_mask, noise_scale = self.noise_scale_torsion)       
 
-                # build full atom representation with the new torsions but the current seq 
-                _, fullatom_next =  get_allatom(seq_t[None], frames_next[None], torsions_next[None])
-
-                if include_motif_sidechains:
-                    fullatom_next[:,diffusion_mask,:14] = xt[diffusion_mask]
-                else:
-                    # It makes no sense to not include motif sidechains if you are working with sidechains in the nondiffused region
-                    raise NotImplementedError()
-
-            else:  
-                ## Reveal some amino acids in the sequence according to schedule and predictions
-                # This is the same code used in get_next_torsions but brought out here
-
-                seq_next = torch.clone(seq_t)
-                if t <= self.aa_decode_steps:
-                    t_idx = t-1
-                    decode_positions = self.decode_scheduler.get_decode_positions(t_idx, px0)
-                    replacement      = pseq0[decode_positions]
-                    replacement = replacement.to(seq_next.device)
-                    seq_next[decode_positions] = replacement
-
-                # Torsions next is never used so we are just using a dummy variable for this - NRB
-                torsions_next = torch.zeros(1,1)
-
-                fullatom_next = torch.full_like(xt,float('nan')).unsqueeze(0)
-
-                fullatom_next[:,:,:3] = frames_next[None]
-
-                if include_motif_sidechains:
-                    fullatom_next[:,diffusion_mask,:14] = xt[None,diffusion_mask]
+            # build full atom representation with the new torsions but the current seq 
+            _, fullatom_next =  get_allatom(seq_t[None], frames_next[None], torsions_next[None])
 
             seq_next = torch.nn.functional.one_hot(
                     seq_next, num_classes=22).float()
 
-        else:
-            # Doing sequence diffusion
+        elif not diffuse_sidechains:
 
-            # Seq here is one-hot representation
-            if diffuse_sidechains:
-                raise NotImplementedError()
+            if self.seq_diffuser is None:
+                seq_t = torch.argmax(seq_t, dim=-1).cpu() # [L]
+                pseq0 = torch.argmax(pseq0, dim=-1).cpu() # [L]
+
+                seq_next = self.reveal_residues(seq_t, pseq0, px0, t)
+
+                seq_next = torch.nn.functional.one_hot(
+                        seq_next, num_classes=22).float()
 
             else:
                 seq_next = self.seq_diffuser.get_next_sequence(seq_t[:,:20], pseq0, t, seq_diffusion_mask) # [L,20]
-
-                # This is never used so just make it a fudged tensor - NRB
-                torsions_next = torch.zeros(1,1)
 
                 # Add zeros to make the sequence have 22 classes and match the AR case
                 zeros = torch.zeros(L,2)
                 seq_next = torch.cat((seq_next, zeros), dim=-1) # [L,22]
 
-                fullatom_next = torch.full_like(xt,float('nan')).unsqueeze(0)
+            # This is never used so just make it a fudged tensor - NRB
+            torsions_next = torch.zeros(1,1)
 
-                fullatom_next[:,:,:3] = frames_next[None]
+            fullatom_next = torch.full_like(xt,float('nan')).unsqueeze(0)
 
-                if include_motif_sidechains:
-                    fullatom_next[:,diffusion_mask,:14] = xt[None,diffusion_mask]
+            fullatom_next[:,:,:3] = frames_next[None]
+
+        else:
+            raise NotImplementedError('Sidechain diffusion and sequence diffusion cannot be performed at the same time')
+        
+        if include_motif_sidechains:
+            fullatom_next[:,diffusion_mask,:14] = xt[None,diffusion_mask]
 
         return fullatom_next.squeeze()[:,:14,:], seq_next, torsions_next, px0
 

@@ -941,8 +941,6 @@ class Diffuser():
         #print('Time to diffuse frames: ',time.time()-tick)
 
 
-
-
         ##### Now combine all the diffused quantities to make full atom diffused poses 
         tick = time.time()
         cum_delta = deltas.cumsum(dim=1)
