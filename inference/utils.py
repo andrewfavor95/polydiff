@@ -785,45 +785,36 @@ class Denoise():
         # add the delta to the new frames 
         frames_next = torch.from_numpy(frames_next) + ca_deltas[:,None,:]  # translate
 
-        if self.seq_diffuser is None and diffuse_sidechains:
+        if diffuse_sidechains:
+            if self.seq_diffuser:
+                raise NotImplementedError('Sidechain diffusion and sequence diffusion cannot be performed at the same time')
+
             seq_t = torch.argmax(seq_t, dim=-1).cpu() # [L]
             pseq0 = torch.argmax(pseq0, dim=-1).cpu() # [L]
-
-            torsions_next, seq_next = self.get_next_torsions(xt, px0, seq_t, pseq0, t, diffusion_mask, noise_scale = self.noise_scale_torsion)       
-
-            # build full atom representation with the new torsions but the current seq 
+            torsions_next, seq_next = self.get_next_torsions(xt, px0, seq_t, pseq0, t, diffusion_mask, noise_scale = self.noise_scale_torsion)
+            # build full atom representation with the new torsions but the current seq
             _, fullatom_next =  get_allatom(seq_t[None], frames_next[None], torsions_next[None])
-
             seq_next = torch.nn.functional.one_hot(
                     seq_next, num_classes=22).float()
 
-        elif not diffuse_sidechains:
+        else:
+            fullatom_next = torch.full_like(xt,float('nan')).unsqueeze(0)
+            fullatom_next[:,:,:3] = frames_next[None]
+            # This is never used so just make it a fudged tensor - NRB
+            torsions_next = torch.zeros(1,1)
 
-            if self.seq_diffuser is None:
-                seq_t = torch.argmax(seq_t, dim=-1).cpu() # [L]
-                pseq0 = torch.argmax(pseq0, dim=-1).cpu() # [L]
-
-                seq_next = self.reveal_residues(seq_t, pseq0, px0, t)
-
-                seq_next = torch.nn.functional.one_hot(
-                        seq_next, num_classes=22).float()
-
-            else:
+            if self.seq_diffuser:
                 seq_next = self.seq_diffuser.get_next_sequence(seq_t[:,:20], pseq0, t, seq_diffusion_mask) # [L,20]
 
                 # Add zeros to make the sequence have 22 classes and match the AR case
                 zeros = torch.zeros(L,2)
                 seq_next = torch.cat((seq_next, zeros), dim=-1) # [L,22]
-
-            # This is never used so just make it a fudged tensor - NRB
-            torsions_next = torch.zeros(1,1)
-
-            fullatom_next = torch.full_like(xt,float('nan')).unsqueeze(0)
-
-            fullatom_next[:,:,:3] = frames_next[None]
-
-        else:
-            raise NotImplementedError('Sidechain diffusion and sequence diffusion cannot be performed at the same time')
+            else:
+                seq_t = torch.argmax(seq_t, dim=-1).cpu() # [L]
+                pseq0 = torch.argmax(pseq0, dim=-1).cpu() # [L]
+                seq_next = self.reveal_residues(seq_t, pseq0, px0, t)
+                seq_next = torch.nn.functional.one_hot(
+                        seq_next, num_classes=22).float()
         
         if include_motif_sidechains:
             fullatom_next[:,diffusion_mask,:14] = xt[None,diffusion_mask]
