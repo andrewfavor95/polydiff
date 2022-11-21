@@ -132,7 +132,7 @@ class Sampler:
 
 
         self.allatom = ComputeAllAtomCoords().to(self.device)
-        self.target_feats = iu.process_target(self.inf_conf.input_pdb, parse_hetatom=True)
+        self.target_feats = iu.process_target(self.inf_conf.input_pdb, parse_hetatom=True, center=False)
         self.chain_idx = None
 
         if self.diffuser_conf.partial_T:
@@ -301,6 +301,8 @@ class Sampler:
             # adjust size of input xt according to residue map
             xyz_mapped = torch.full((1,1,L_mapped,27,3), np.nan)
             xyz_mapped[:, :, contig_map.hal_idx0, ...] = xyz_27[contig_map.ref_idx0,...]
+            xyz_motif_prealign = xyz_mapped.clone()
+            motif_prealign_com = xyz_motif_prealign[0,0,:,1].mean(dim=0)
             self.motif_com = xyz_27[contig_map.ref_idx0,1].mean(dim=0)
             xyz_mapped = get_init_xyz(xyz_mapped).squeeze()
             # adjust the size of the input atom map
@@ -383,11 +385,14 @@ class Sampler:
         if self.potential_conf.guiding_potentials is not None:
             if any(list(filter(lambda x: "substrate_contacts" in x, self.potential_conf.guiding_potentials))):
                 assert len(self.target_feats['xyz_het']) > 0, "If you're using the Substrate Contact potential, you need to make sure there's a ligand in the input_pdb file!"
-                xyz_het = torch.from_numpy(self.target_feats['xyz_het']) - self.motif_com
+                xyz_het = torch.from_numpy(self.target_feats['xyz_het'])
+                xyz_motif_prealign = xyz_motif_prealign[0,0][self.diffusion_mask.squeeze()]
+                motif_prealign_com = xyz_motif_prealign[:,1].mean(dim=0)
+                xyz_het_com = xyz_het.mean(dim=0)
                 for pot in self.potential_manager.potentials_to_apply: # fix this
                     pot.motif_substrate_atoms = xyz_het
                     pot.diffusion_mask = self.diffusion_mask.squeeze()
-                    pot.xyz_motif = xyz_mapped[self.diffusion_mask.squeeze()]
+                    pot.xyz_motif = xyz_motif_prealign
                     pot.diffuser = self.diffuser
         return xt, seq_t
 

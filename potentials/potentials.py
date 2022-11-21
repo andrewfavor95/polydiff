@@ -1,10 +1,6 @@
 import torch
-<<<<<<< HEAD
 from icecream import ic 
 import numpy as np 
-=======
-import numpy as np
->>>>>>> d0a72f2 (Integrated Anna's potential into the repo, and it seems to be working. Need to clean up piping info to the potential manager)
 from util import generate_Cbeta
 from icecream import ic
 
@@ -455,6 +451,48 @@ class olig_intra_contacts(Potential):
 
         return self.weight * all_contacts
 
+def get_damped_lj(r_min, r_lin,p1=6,p2=12):
+    
+    y_at_r_lin = lj(r_lin, r_min, p1, p2)
+    ydot_at_r_lin = lj_grad(r_lin, r_min,p1,p2)
+    
+    def inner(dgram):
+        return (dgram < r_lin) * (ydot_at_r_lin * (dgram - r_lin) + y_at_r_lin) + (dgram >= r_lin) * lj(dgram, r_min, p1, p2)
+    return inner
+
+def lj(dgram, r_min,p1=6, p2=12):
+    return 4 * ((r_min / (2**(1/p1) * dgram))**p2 - (r_min / (2**(1/p1) * dgram))**p1)
+
+def lj_grad(dgram, r_min,p1=6,p2=12):
+    return -p2 * r_min**p1*(r_min**p1-dgram**p1) / (dgram**(p2+1))
+
+def mask_expand(mask, n=1):
+    mask_out = mask.clone()
+    assert mask.ndim == 1
+    for i in torch.where(mask)[0]:
+        for j in range(i-n, i+n+1):
+            if j >= 0 and j < len(mask):
+                mask_out[j] = True
+    return mask_out
+
+def contact_energy(dgram, d_0, r_0):
+    divide_by_r_0 = (dgram - d_0) / r_0
+    numerator = torch.pow(divide_by_r_0,6)
+    denominator = torch.pow(divide_by_r_0,12)
+    
+    ncontacts = (1 - numerator) / ((1 - denominator)).float()
+    return - ncontacts
+
+def poly_repulse(dgram, r, slope, p=1):
+    a = slope / (p * r**(p-1))
+
+    #ic(a)
+    #ic(torch.abs(r - dgram)**p * slope)
+    return (dgram < r) * a * torch.abs(r - dgram)**p * slope
+
+#def only_top_n(dgram
+
+
 class substrate_contacts(Potential):
     '''
         Differentiable way to maximise number of contacts to substrate
@@ -463,18 +501,24 @@ class substrate_contacts(Potential):
         Author: AL
     '''
 
-    def __init__(self, weight=1, r_0=8, d_0=2, eps=1e-6):
+    def __init__(self, weight=1, r_0=10, d_0=2, eps=1e-6, rep_r_0=3, rep_s=1):
 
         self.r_0       = r_0
         self.weight    = weight
         self.d_0       = d_0
         self.eps       = eps
+        ic(rep_r_0, rep_s)
         
         # motif frame coordinates
         # NOTE: these probably need to be set after sample_init() call, because the motif sequence position in design must be known
         self.motif_frame = None # [4,3] xyz coordinates from 4 atoms of input motif
         self.motif_mapping = None # list of tuples giving positions of above atoms in design [(resi, atom_idx)]
         self.motif_substrate_atoms = None # xyz coordinates of substrate from input motif
+        r_min = 2
+        self.energies = []
+        self.energies.append(lambda dgram: contact_energy(dgram, d_0, r_0))
+        self.energies.append(lambda dgram: poly_repulse(dgram, rep_r_0, rep_s, p=1.5))
+
 
     def compute(self, seq, xyz):
         
@@ -494,17 +538,20 @@ class substrate_contacts(Potential):
         # apply affine transformation to substrate atoms
         substrate_atoms = torch.mm(A, self.motif_substrate_atoms.transpose(0,1)).transpose(0,1) + t
         second_distance = torch.sqrt(torch.sqrt(torch.sum(torch.square(new_frame[0] - substrate_atoms[0]), dim=-1)))
-        Ca = xyz[:,1] # [L,3]
+        assert abs(first_distance - second_distance) < 0.01, "Alignment seems to be bad" 
+        diffusion_mask = mask_expand(self.diffusion_mask, 2)
+        Ca = xyz[~diffusion_mask, 1]
 
         #cdist needs a batch dimension - NRB
         dgram = torch.cdist(Ca[None,...].contiguous(), substrate_atoms.float(), p=2) # [1,Lb,Lb]
 
-        divide_by_r_0 = (dgram - self.d_0) / self.r_0
-        numerator = torch.pow(divide_by_r_0,6)
-        denominator = torch.pow(divide_by_r_0,12)
-        
-        assert abs(first_distance - second_distance) < 0.01, "Alignment seems to be bad" 
-        ncontacts = (1 - numerator) / ((1 - denominator)).float()
+        all_energies = []
+        for i, energy_fn in enumerate(self.energies):
+            energy = energy_fn(dgram)
+            ic(i, energy.sum(), energy.min(), energy.max())
+            all_energies.append(energy.sum())
+        return - self.weight * sum(all_energies)
+
         #Potential value is the average of both radii of gyration (is avg. the best way to do this?)
         return self.weight * ncontacts.sum()
 

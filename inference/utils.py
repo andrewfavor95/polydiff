@@ -1061,13 +1061,15 @@ def parse_a3m(filename):
 
 
 
-def process_target(pdb_path, parse_hetatom=False):
+def process_target(pdb_path, parse_hetatom=False, center=True):
 
     # Read target pdb and extract features.
     target_struct = parse_pdb(pdb_path, parse_hetatom=parse_hetatom)
 
     # Zero-center positions
     ca_center = target_struct['xyz'][:, :1, :].mean(axis=0, keepdims=True)
+    if not center:
+        ca_center = 0
     xyz = torch.from_numpy(target_struct['xyz'] - ca_center)
     seq_orig = torch.from_numpy(target_struct['seq'])
     atom_mask = torch.from_numpy(target_struct['mask'])
