@@ -23,6 +23,7 @@ def get_args():
     parser.add_argument('--cautious', action="store_true", default=False, help='Skip design if output file exists')
     parser.add_argument('--no_logs', dest='keep_logs', action="store_false", default=True, help='Don\'t keep slurm logs.')
     parser.add_argument('--num_seq_per_target', default=8,type=int, help='How many mpnn sequences per design? Default = 8')
+    parser.add_argument('--in_proc', dest='in_proc', action="store_true", default=False, help='Do not submit slurm array job, run on current node.')
     args, unknown = parser.parse_known_args()
     if len(unknown)>0:
         print(f'WARNING: Unknown arguments {unknown}')
@@ -66,7 +67,7 @@ def main():
 
     # submit to slurm
     if args.submit:
-        slurm_job, proc = slurm_tools.array_submit(job_fn, p='cpu', gres=None, J='mpnn_pre', log=args.keep_logs)
+        slurm_job, proc = slurm_tools.array_submit(job_fn, p='cpu', gres=None, J='mpnn_pre', log=args.keep_logs, in_proc=args.in_proc)
         print(f'Submitted array job {slurm_job} with {int(np.ceil(len(filenames)/args.chunk))} jobs to preprocess {len(filenames)} designs for MPNN')
 
         prev_job = slurm_job
@@ -94,7 +95,7 @@ def main():
             job_name = args.J
         else:
             job_name = 'mpnn_'+os.path.basename(args.datadir.strip('/'))
-        slurm_job, proc = slurm_tools.array_submit(job_fn, p = args.p, gres=args.gres, log=args.keep_logs, J=job_name, wait_for=[prev_job])
+        slurm_job, proc = slurm_tools.array_submit(job_fn, p = args.p, gres=args.gres, log=args.keep_logs, J=job_name, wait_for=[prev_job], in_proc=args.in_proc)
         print(f'Submitted array job {slurm_job} with {int(np.ceil(len(filenames)/args.chunk))} jobs to MPNN {len(filenames)} designs')
 
 if __name__ == "__main__":

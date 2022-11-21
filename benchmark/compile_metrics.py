@@ -64,6 +64,7 @@ def main():
         df_s = [ pd.read_csv(fn,index_col=0) for fn in glob.glob(path) ]
         tmp = pd.concat(df_s) if len(df_s)>0 else pd.DataFrame(dict(name=[]))
         df_mpnn = df_mpnn.merge(tmp, on='name', how='outer')
+        print(df_mpnn['contig_rmsd_af2'])
 
     if os.path.exists(args.datadir+'/mpnn/'):
         mpnn_scores = load_mpnn_scores(args.datadir+'/mpnn/')

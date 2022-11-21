@@ -17,7 +17,9 @@ def main():
     parser.add_argument('--af2_unmpnned', action='store_true', default=False)
     parser.add_argument('--num_seq_per_target', default=8,type=int, help='How many mpnn sequences per design? Default = 8')
     parser.add_argument('--af2_gres', type=str, default='gpu:rtx2080:1',help='--gres argument for alphfold.  If set to the empty string, the arguments used for hyperparameter sweeping are passed to the score_designs.py script')
+    parser.add_argument('--in_proc', dest='in_proc', action="store_true", default=False, help='Do not submit slurm array job, run on current node.')
     args, unknown = parser.parse_known_args()
+    passed_on_args = '--in_proc' if args.in_proc else ''
 
     outdir = os.path.dirname(args.out)
     job_id_tmalign=None
@@ -34,7 +36,7 @@ def main():
         wait_for_jobs(jobid_sweep)
 
     if args.start_step in ['sweep','mpnn']:
-        jobid_mpnn = run_pipeline_step(f'{script_dir}mpnn_designs.py --num_seq_per_target {args.num_seq_per_target} --chunk 100 -p cpu --gres "" {outdir}')
+        jobid_mpnn = run_pipeline_step(f'{script_dir}mpnn_designs.py --num_seq_per_target {args.num_seq_per_target} --chunk 100 -p cpu --gres "" {outdir} {passed_on_args}')
 
         jobid_tmalign = run_pipeline_step(f'{script_dir}pair_tmalign.py {outdir}')
 
@@ -45,12 +47,14 @@ def main():
         print('Threading MPNN sequences onto design models...')
         run_pipeline_step(f'{script_dir}thread_mpnn.py {outdir}')
 
+    print('Initiating scoring')
     af2_args = arg_str
     if args.af2_gres:
         af2_args = f'--gres {args.af2_gres}'
+    af2_args += ' {passed_on_args}'
     if args.af2_unmpnned:
-        jobid_score = run_pipeline_step(f'{script_dir}score_designs.py --chunk 100 {outdir}/ {arg_str}')
-    jobid_score_mpnn = run_pipeline_step(f'{script_dir}score_designs.py --chunk 100 {outdir}/mpnn {arg_str}')
+        jobid_score = run_pipeline_step(f'{script_dir}score_designs.py --chunk 100 {outdir}/ {af2_args}')
+    jobid_score_mpnn = run_pipeline_step(f'{script_dir}score_designs.py --chunk 500 {outdir}/mpnn {af2_args}')
 
     if job_id_tmalign:
         print('Waiting for TM-align jobs to finish...')
@@ -73,9 +77,13 @@ def run_pipeline_step(cmd):
     '''Runs a script in shell, prints its output, quits if there's an error,
     and returns list of slurm ids that appear in its output'''
 
+    #print('A')
+    #print(f'cmd:{cmd}')
     proc = subprocess.run(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    #print('B')
 
     out = proc.stdout.decode()
+    #print('C')
     print(out)
 
     if proc.returncode != 0: 
@@ -97,7 +105,7 @@ def is_running(job_ids):
     out = [False]*len(job_ids)
     for line in stdout.split('\n'):
         for i,id_ in enumerate(job_ids):
-            if line.startswith(str(id_)):
+            if id_ == -1 or line.startswith(str(id_)):
                 out[i] = True
 
     return out

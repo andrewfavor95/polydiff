@@ -20,7 +20,15 @@ def slurm_submit(cmd, p='cpu', c=1, mem=2, gres=None, J=None, wait_for=[], hold_
 
     return slurm_job, proc
 
-def array_submit(job_list_file, p='gpu', gres='gpu:rtx2080:1', wait_for=None, log=False, **kwargs):
+def array_submit(job_list_file, p='gpu', gres='gpu:rtx2080:1', wait_for=None, log=False, in_proc=False, **kwargs):
+    print(f'array_submit: in_proc: {in_proc}')
+    if in_proc:
+        with open(job_list_file) as f:
+            jobs = f.readlines()
+        for job in jobs:
+            print(f'running job: {job}')
+            subprocess.run(job, shell=True)
+        return -1, None
     return slurm_submit(
         cmd = 'eval \\`sed -n \\${SLURM_ARRAY_TASK_ID}p '+job_list_file+'\\`',
         a = f'1-$(cat {job_list_file} | wc -l)',

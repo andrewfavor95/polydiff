@@ -26,6 +26,7 @@ def main():
     parser.add_argument('-J', type=str, help='name of slurm job')
     parser.add_argument('--gres', type=str, default='gpu:rtx2080:1',help='--gres argument for slurm, e.g. gpu:rtx2080:1')
     parser.add_argument('--no_submit', dest='submit', action="store_false", default=True, help='Do not submit slurm array job, only generate job list.')
+    parser.add_argument('--in_proc', dest='in_proc', action="store_true", default=False, help='Do not submit slurm array job, only generate job list.')
     parser.add_argument('--no_logs', dest='keep_logs', action="store_false", default=True, help='Don\'t keep slurm logs.')
     parser.add_argument('--out', type=str, default='out/out',help='Path prefix for output files')
     parser.add_argument('--benchmark_json', type=str, default='benchmarks.json', help='Path to non-standard custom json file of benchmarks')
@@ -103,7 +104,8 @@ def main():
     # output commands with all combos of argument values
     job_fn = os.path.dirname(args.out) + '/jobs.list'
     ic(args.submit)
-    job_list_file = open(job_fn, 'w') if args.submit else sys.stdout
+    #job_list_file = open(job_fn, 'w') if (args.submit) else sys.stdout
+    job_list_file = open(job_fn, 'w') if (args.submit or args.in_proc) else sys.stdout
     for icond, arglist in enumerate(arg_combos):
         # log prefix is output prefix
         log_pre = arglist[0].replace('inference.output_prefix=','')
@@ -129,9 +131,10 @@ def main():
                 if not os.path.exists(outfn):
                     shutil.copyfile(fn, outfn)
 
+    if args.submit or args.in_proc:
+        job_list_file.close()
     # submit job
     if args.submit:
-        job_list_file.close()
 
         if args.J is not None:
             job_name = args.J

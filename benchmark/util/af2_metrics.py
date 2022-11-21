@@ -368,7 +368,7 @@ def main():
             print(f'Output already exists for {name}. Skipping AF2 prediction and calculating '\
                    'RMSD from existing pdb.')
             pdb_af2 = parse_pdb(os.path.join(args.outdir, name+'.pdb'))
-            xyz_pred = pdb_af2['xyz'][:,:3] # BB atoms
+            xyz_pred = pdb_af2['xyz']
 
             npz = np.load(os.path.join(args.outdir, name+'.npz'))
             row['af2_plddt'] = np.mean(npz['plddt'][:L])
@@ -385,7 +385,6 @@ def main():
             inputs_padded = make_fixed_size(inputs, model2crop_feats, msa_cluster_size=0, extra_msa_size=0, num_res=Lmax, num_templates=0)
 
             outputs = model_runner.predict(inputs_padded)
-            xyz_pred = np.array(outputs['structure_module']['final_atom_positions'][:L,:3]) # N, Ca, C
             row['af2_plddt'] = np.mean(outputs['plddt'][:L])
             pae = outputs.get('predicted_aligned_error')
             if pae is not None: pae = pae[:L,:L]
@@ -412,10 +411,12 @@ def main():
                  pae=pae,
                  ptm=outputs.get('ptm')
             )
+        pdb_af2 = parse_pdb(os.path.join(args.outdir, name+'.pdb'))
+        xyz_pred = pdb_af2['xyz']
 
         # load designed pdb
         pdb_des = parse_pdb(fn)
-        xyz_des = pdb_des['xyz'][:,:3] # extract N,CA,C coords
+        xyz_des = pdb_des['xyz']
 
         # load trb (has motif residue numbers)
         if args.trb_dir is not None: 
@@ -442,10 +443,10 @@ def main():
             if not os.path.exists(refpdb_fn):
                 refpdb_fn = os.path.dirname(fn)+'/../input/'+os.path.basename(refpdb_fn)
             pdb_ref = parse_pdb(refpdb_fn)
-            xyz_ref = pdb_ref['xyz'][:,:3]
+            xyz_ref = pdb_ref['xyz']
         if args.template_dir is not None and os.path.exists(trbname):
             pdb_ref = parse_pdb(args.template_dir+trb['settings']['pdb'].split('/')[-1])
-            xyz_ref = pdb_ref['xyz'][:,:3]
+            xyz_ref = pdb_ref['xyz']
 
         # calculate 0-indexed motif residue positions (ignore the ones from the trb)
         if os.path.exists(trbname):
@@ -455,7 +456,7 @@ def main():
             trb['con_hal_idx0'] = np.array([idxmap[i] for i in trb['con_hal_pdb_idx']])
 
         # calculate rmsds
-        row['rmsd_af2_des'] = calc_rmsd(xyz_pred.reshape(L*3,3), xyz_des.reshape(L*3,3))
+        row['rmsd_af2_des'] = calc_rmsd(xyz_pred[:,:3].reshape(L*3,3), xyz_des[:,:3].reshape(L*3,3))
  
         # load contig position
         if os.path.exists(trbname):
@@ -466,17 +467,27 @@ def main():
 
             idx_motif_ref = [i for i,idx in zip(trb['con_ref_idx0'],trb['con_ref_pdb_idx']) 
                              if idx[0]!='R']
-            for suffix, atom_i in [
-                    ('', np.array([0,1,2])),
-                    ('_c_alpha', np.array([1]))
+
+            atom_exists = pdb_ref['mask'][idx_motif_ref]
+            bb_mask = np.zeros_like(atom_exists).astype(bool)
+            bb_mask[:,:3] = True
+            ca_mask = np.zeros_like(atom_exists).astype(bool)
+            ca_mask[:,1] = True
+            for suffix, has_atom in [
+                    ('', bb_mask),
+                    ('_c_alpha', ca_mask),
+                    ('_full_atom', atom_exists),
                         ]:
-                n_atoms = len(atom_i)
-                xyz_ref_motif = xyz_ref[idx_motif_ref][:, atom_i].reshape(L_motif*n_atoms,3)
-                xyz_pred_motif = xyz_pred[idx_motif][:, atom_i].reshape(L_motif*n_atoms,3)
-                xyz_des_motif = xyz_des[idx_motif][:, atom_i].reshape(L_motif*n_atoms,3)
+                xyz_ref_motif = xyz_ref[idx_motif_ref][has_atom].reshape(-1,3)
+                xyz_pred_motif = xyz_pred[idx_motif][has_atom].reshape(-1,3)
+                xyz_des_motif = xyz_des[idx_motif][has_atom].reshape(-1,3)
                 row['contig_rmsd_af2_des' + suffix] = calc_rmsd(xyz_pred_motif, xyz_des_motif)
                 row['contig_rmsd_af2' + suffix] = calc_rmsd(xyz_pred_motif, xyz_ref_motif)
                 row['contig_rmsd' + suffix] = calc_rmsd(xyz_des_motif, xyz_ref_motif)
+
+            xyz_ref = xyz_ref[:,:3]
+            xyz_des = xyz_des[:,:3]
+            xyz_pred = xyz_pred[:,:3]
 
             if args.subset_res is not None: 
                 idxmap = dict(zip(trb['con_ref_pdb_idx'],trb['con_ref_idx0']))
