@@ -29,7 +29,7 @@ In this section we will demonstrate how to run diffusion
 
 ### The python environment
 Any time you're running inpainting, be sure to `source activate XYZ` because the code has dependencies located in that python environment. For now, use this environment:
-`/home/dimaio/.conda/envs/SE3nv`
+`/software/conda/envs/SE3nv`
 
 You will need to also pip install a few modules:
 `pip install icecream`

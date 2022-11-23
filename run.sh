@@ -1,4 +1,4 @@
-#source activate /home/dimaio/.conda/envs/SE3nv
+#source activate /mnt/net/software/conda/envs/SE3nv
 crop=384
 max_len=384
 max_complex_chain=250

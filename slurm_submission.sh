@@ -10,7 +10,7 @@
 #SBATCH --time=24:00:00
 
 source ~/.bashrc
-conda activate /home/nrbennet/miniconda3/envs/SE3nv
+conda activate /software/conda/envs/SE3nv
 
 ### change 5-digit MASTER_PORT as you wish, slurm will raise Error if duplicated with others
 ### change WORLD_SIZE as gpus/node * num_nodes

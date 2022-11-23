@@ -42,7 +42,7 @@ def main():
         with open(tmp_fn,'w') as outf:
             for j in np.arange(i,min(i+args.chunk, len(filenames))):
                 print(filenames[j], file=outf)
-        print(f'source activate /home/jue/.conda/envs/ampere; python {script_dir}/util/af2_metrics.py --use_ptm '\
+        print(f'source activate /software/conda/envs/PPI_design; python {script_dir}/util/af2_metrics.py --use_ptm '\
               f'--outcsv {args.datadir}/af2_metrics.csv.{i} '\
               f'{tmp_fn}', file=job_list_file)
 

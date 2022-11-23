@@ -1,4 +1,4 @@
-#!/home/dimaio/.conda/envs/SE3nv/bin/python
+#!/software/conda/envs/SE3nv
 import diffusion
 import torch 
 import numpy as np 
