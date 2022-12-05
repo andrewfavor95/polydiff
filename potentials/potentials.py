@@ -495,10 +495,7 @@ def poly_repulse(dgram, r, slope, p=1):
 
 class substrate_contacts(Potential):
     '''
-        Differentiable way to maximise number of contacts to substrate
-
-        Motivation is given here: https://www.plumed.org/doc-v2.7/user-doc/html/_c_o_o_r_d_i_n_a_t_i_o_n.html
-        Author: AL
+    Implicitly models a ligand with an attractive-repulsive potential.
     '''
 
     def __init__(self, weight=1, r_0=8, d_0=2, s=1, eps=1e-6, rep_r_0=5, rep_s=2, rep_r_min=1):

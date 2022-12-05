@@ -381,7 +381,7 @@ class Sampler:
         self.msa_prev = None
         self.pair_prev = None
         self.state_prev = None
-        # For Anna's ligand potential
+        # For the implicit ligand potential
         if self.potential_conf.guiding_potentials is not None:
             if any(list(filter(lambda x: "substrate_contacts" in x, self.potential_conf.guiding_potentials))):
                 assert len(self.target_feats['xyz_het']) > 0, "If you're using the Substrate Contact potential, you need to make sure there's a ligand in the input_pdb file!"

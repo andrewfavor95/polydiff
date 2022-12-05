@@ -104,7 +104,6 @@ def main():
     # output commands with all combos of argument values
     job_fn = os.path.dirname(args.out) + '/jobs.list'
     ic(args.submit)
-    #job_list_file = open(job_fn, 'w') if (args.submit) else sys.stdout
     job_list_file = open(job_fn, 'w') if (args.submit or args.in_proc) else sys.stdout
     for icond, arglist in enumerate(arg_combos):
         # log prefix is output prefix

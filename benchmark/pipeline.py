@@ -80,13 +80,9 @@ def run_pipeline_step(cmd):
     '''Runs a script in shell, prints its output, quits if there's an error,
     and returns list of slurm ids that appear in its output'''
 
-    #print('A')
-    #print(f'cmd:{cmd}')
     proc = subprocess.run(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    #print('B')
 
     out = proc.stdout.decode()
-    #print('C')
     print(out)
 
     if proc.returncode != 0: 
