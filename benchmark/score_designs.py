@@ -7,6 +7,7 @@
 
 import sys, os, argparse, itertools, json, glob
 import numpy as np
+from icecream import ic
 
 script_dir = os.path.dirname(os.path.realpath(__file__))
 sys.path.append(os.path.join(script_dir, 'util'))
@@ -24,6 +25,7 @@ def main():
     parser.add_argument('--in_proc', dest='in_proc', action="store_true", default=False, help='Do not submit slurm array job, only generate job list.')
     parser.add_argument('--no_logs', dest='keep_logs', action="store_false", default=True, help='Don\'t keep slurm logs.')
     parser.add_argument('--pipeline', '-P', action='store_true', default=False, help='Pipeline mode: submit the next script to slurm with a dependency on jobs from this script.')
+    parser.add_argument('--skip_rosetta', dest='rosetta', action='store_false', default=True, help='Don\'t score with rosetta')
 
     args, unknown = parser.parse_known_args()
     if len(unknown)>0:
@@ -54,30 +56,31 @@ def main():
             job_name = args.J 
         else:
             job_name = 'af2_'+os.path.basename(args.datadir.strip('/'))
-        af2_job, proc = slurm_tools.array_submit(job_fn, p = args.p, gres=args.gres, log=args.keep_logs, J=job_name, in_proc=args.in_proc)
+        af2_job, proc = slurm_tools.array_submit(job_fn, p = args.p, gres=None if args.p=='cpu' else args.gres, log=args.keep_logs, J=job_name, in_proc=args.in_proc)
         print(f'Submitted array job {af2_job} with {int(np.ceil(len(filenames)/args.chunk))} jobs to AF2-predict {len(filenames)} designs')
 
-    # pyrosetta metrics (rog, SS)
-    job_fn = args.datadir + '/jobs.score.pyr.list'
-    job_list_file = open(job_fn, 'w') if args.submit else sys.stdout
-    for i in np.arange(0,len(filenames),args.chunk):
-        tmp_fn = f'{args.datadir}/{args.tmp_pre}.pyr.{i}'
-        with open(tmp_fn,'w') as outf:
-            for j in np.arange(i,min(i+args.chunk, len(filenames))):
-                print(filenames[j], file=outf)
-        print(f'{script_dir}/util/pyrosetta_metrics.py '\
-              f'--outcsv {args.datadir}/pyrosetta_metrics.csv.{i} '\
-              f'{tmp_fn}', file=job_list_file)
+    if args.rosetta:
+        # pyrosetta metrics (rog, SS)
+        job_fn = args.datadir + '/jobs.score.pyr.list'
+        job_list_file = open(job_fn, 'w') if args.submit else sys.stdout
+        for i in np.arange(0,len(filenames),args.chunk):
+            tmp_fn = f'{args.datadir}/{args.tmp_pre}.pyr.{i}'
+            with open(tmp_fn,'w') as outf:
+                for j in np.arange(i,min(i+args.chunk, len(filenames))):
+                    print(filenames[j], file=outf)
+            print(f'{script_dir}/util/pyrosetta_metrics.py '\
+                  f'--outcsv {args.datadir}/pyrosetta_metrics.csv.{i} '\
+                  f'{tmp_fn}', file=job_list_file)
 
-    # submit job
-    if args.submit: 
-        job_list_file.close()
-        if args.J is not None:
-            job_name = args.J 
-        else:
-            job_name = 'pyr_'+os.path.basename(args.datadir.strip('/'))
-        pyr_job, proc = slurm_tools.array_submit(job_fn, p = 'cpu', gres=None, log=args.keep_logs, J=job_name, in_proc=args.in_proc)
-        print(f'Submitted array job {pyr_job} with {int(np.ceil(len(filenames)/args.chunk))} jobs to get PyRosetta metrics for {len(filenames)} designs')
+        # submit job
+        if args.submit: 
+            job_list_file.close()
+            if args.J is not None:
+                job_name = args.J 
+            else:
+                job_name = 'pyr_'+os.path.basename(args.datadir.strip('/'))
+            pyr_job, proc = slurm_tools.array_submit(job_fn, p = 'cpu', gres=None, log=args.keep_logs, J=job_name, in_proc=args.in_proc)
+            print(f'Submitted array job {pyr_job} with {int(np.ceil(len(filenames)/args.chunk))} jobs to get PyRosetta metrics for {len(filenames)} designs')
 
 
 if __name__ == "__main__":

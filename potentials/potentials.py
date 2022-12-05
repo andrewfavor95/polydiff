@@ -501,7 +501,7 @@ class substrate_contacts(Potential):
         Author: AL
     '''
 
-    def __init__(self, weight=1, r_0=10, d_0=2, eps=1e-6, rep_r_0=3, rep_s=1):
+    def __init__(self, weight=1, r_0=10, d_0=2, s=1, eps=1e-6, rep_r_0=3, rep_s=1, rep_r_min=1):
 
         self.r_0       = r_0
         self.weight    = weight
@@ -516,8 +516,11 @@ class substrate_contacts(Potential):
         self.motif_substrate_atoms = None # xyz coordinates of substrate from input motif
         r_min = 2
         self.energies = []
-        self.energies.append(lambda dgram: contact_energy(dgram, d_0, r_0))
-        self.energies.append(lambda dgram: poly_repulse(dgram, rep_r_0, rep_s, p=1.5))
+        self.energies.append(lambda dgram: s * contact_energy(torch.min(dgram, dim=-1)[0], d_0, r_0))
+        if rep_r_min:
+            self.energies.append(lambda dgram: poly_repulse(torch.min(dgram, dim=-1)[0], rep_r_0, rep_s, p=1.5))
+        else:
+            self.energies.append(lambda dgram: poly_repulse(dgram, rep_r_0, rep_s, p=1.5))
 
 
     def compute(self, seq, xyz):
@@ -601,7 +604,7 @@ class substrate_contacts(Potential):
             self.motif_mapping = [(i,1) for i in rand_idx]
         else:
             rand_idx = torch.multinomial(idx, 1).long()
-            self.motif_frame = xyz[rand_idx,:4]
+            self.motif_frame = xyz[rand_idx[0],:4]
             self.motif_mapping = [(rand_idx, i) for i in range(4)]
 
 class binder_distance_ReLU(Potential):

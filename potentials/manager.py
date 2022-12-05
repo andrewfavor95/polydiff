@@ -149,7 +149,7 @@ class PotentialManager:
         to_apply = []
 
         for potential_dict in setting_list:
-            assert(potential_dict['type'] in potentials.implemented_potentials), f'potential with name: {potential_dict["type"]} is not one of the implemented potentials: {potentials.implemented_potentials}'
+            assert(potential_dict['type'] in potentials.implemented_potentials), f'potential with name: {potential_dict["type"]} is not one of the implemented potentials: {potentials.implemented_potentials.keys()}'
 
             kwargs = {k: potential_dict[k] for k in potential_dict.keys() - {'type'}}
 

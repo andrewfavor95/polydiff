@@ -4,6 +4,8 @@
 
 import sys, os, argparse, glob
 import numpy as np
+from tqdm import tqdm
+from icecream import ic
 
 def get_args():
     parser = argparse.ArgumentParser()
@@ -120,7 +122,7 @@ def parse_pdb_lines(lines, parse_hetatom=False, ignore_het_h=True):
 
     return out
 
-def write_pdb_string(xyz, res, pdb_idx=None):
+def write_pdb_string(xyz, res, pdb_idx=None, use_o=False):
     # xyz: (L, 3, 3)
 
     if pdb_idx is None:
@@ -131,7 +133,9 @@ def write_pdb_string(xyz, res, pdb_idx=None):
     wrt = ""
     atmNo = 0
     for i_res, (ch,i_pdb), aa in zip(idx, pdb_idx, res):
-        for i_atm, atm in enumerate(["N", "CA", "C"]):
+        for i_atm, atm in enumerate(["N", "CA", "C", "O"]):
+            if atm == "O" and not use_o:
+                continue
             atmNo += 1
             wrt += "ATOM  %5d %4s %3s %s%4d    %8.3f%8.3f%8.3f%6.2f%6.2f\n"%(
                 atmNo, atm, aa123[aa], ch, i_pdb, xyz[i_res,i_atm,0],
@@ -140,12 +144,12 @@ def write_pdb_string(xyz, res, pdb_idx=None):
     return wrt
 
 
-def write_pdb(xyz, prefix, res, pdb_idx=None, comments=None, sc=False, Bfacts=None, h=None):
+def write_pdb(xyz, prefix, res, pdb_idx=None, comments=None, sc=False, Bfacts=None, h=None, **kwargs):
 
     if sc:
         wrt = write_pdb_str_sc(res, xyz, Bfacts=Bfacts, pdb_idx=pdb_idx,h=h)
     else:
-        wrt = write_pdb_string(xyz, res, pdb_idx)
+        wrt = write_pdb_string(xyz, res, pdb_idx, **kwargs)
 
     with open("%s.pdb"%prefix, 'wt') as fp:
         fp.write(wrt)
@@ -160,7 +164,7 @@ def write_pdb(xyz, prefix, res, pdb_idx=None, comments=None, sc=False, Bfacts=No
 def main():
     args = get_args()
 
-    for fn in glob.glob(args.datadir+'/*.pdb'):
+    for fn in tqdm(glob.glob(args.datadir+'/*.pdb')):
         name = os.path.basename(fn).replace('.pdb','')
         pdb = parse_pdb(fn)
 
@@ -171,10 +175,11 @@ def main():
                 seq = lines[2*i + 3].strip() # 2nd seq is 1st design
                 prefix = args.outdir+name+f"_{i}"
                 pdbstr = write_pdb(
-                    xyz = pdb['xyz'][:,:3], # don't output sidechains
+                    xyz = pdb['xyz'][:,:4], # don't output sidechains
                     prefix = prefix,
                     res = seq,
-                    pdb_idx = pdb['pdb_idx'])
+                    pdb_idx = pdb['pdb_idx'],
+                    use_o=True)
     
                 if n_designs == 1:
                    dest = args.datadir+'/mpnn/'+name+'.trb'

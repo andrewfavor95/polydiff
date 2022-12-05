@@ -63,14 +63,18 @@ def main():
     ]:
         df_s = [ pd.read_csv(fn,index_col=0) for fn in glob.glob(path) ]
         tmp = pd.concat(df_s) if len(df_s)>0 else pd.DataFrame(dict(name=[]))
+        n_unique_names = len(set(tmp['name']))
+        n_names = len(tmp)
+        if n_unique_names < n_names:
+            print('Dropping {n_names - n_unique_names}/{n_names} duplicates from {path}')
+            tmp.drop_duplicates('name', inplace=True)
         df_mpnn = df_mpnn.merge(tmp, on='name', how='outer')
-        print(df_mpnn['contig_rmsd_af2'])
 
     if os.path.exists(args.datadir+'/mpnn/'):
         mpnn_scores = load_mpnn_scores(args.datadir+'/mpnn/')
         df_mpnn = df_mpnn.merge(mpnn_scores, on='name', how='outer')
         df_mpnn['mpnn_index'] = df_mpnn.name.map(lambda x: int(x.split('_')[-1]))
-        df_mpnn.name = df_mpnn.name.map(lambda x: '_'.join(x.split('_')[:-1]))
+        df_mpnn['name'] = df_mpnn.name.map(lambda x: '_'.join(x.split('_')[:-1]))
         df_mpnn = df_mpnn.merge(df, on='name', how='outer')
         print(df_mpnn['contig_rmsd_af2'])
 

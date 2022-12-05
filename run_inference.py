@@ -15,6 +15,7 @@ See https://hydra.cc/docs/advanced/hydra-command-line-flags/ for more options.
 
 """
 
+import re
 import os, time, pickle
 import torch 
 from omegaconf import DictConfig, OmegaConf
@@ -26,6 +27,7 @@ from icecream import ic
 from hydra.core.hydra_config import HydraConfig
 import numpy as np
 import random
+import glob
 
 def make_deterministic(seed=0):
         torch.manual_seed(seed)
@@ -43,7 +45,22 @@ def main(conf: HydraConfig) -> None:
     sampler = iu.sampler_selector(conf)
     
     # Loop over number of designs to sample.
-    for i_des in range(sampler.inf_conf.design_startnum, sampler.inf_conf.design_startnum + sampler.inf_conf.num_designs):
+    design_startnum = sampler.inf_conf.design_startnum
+    if sampler.inf_conf.design_startnum == -1:
+        existing = glob.glob(sampler.inf_conf.output_prefix + '*.pdb')
+        indices = [-1]
+        for e in existing:
+            print(e)
+            m = re.match('.*_(\d+)\.pdb$', e)
+            print(m)
+            if not m:
+                continue
+            m = m.groups()[0]
+            indices.append(int(m))
+        design_startnum = max(indices) + 1
+        
+
+    for i_des in range(design_startnum, design_startnum + sampler.inf_conf.num_designs):
         if conf.inference.deterministic:
             make_deterministic(i_des)
 

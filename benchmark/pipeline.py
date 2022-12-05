@@ -4,20 +4,22 @@
 #
 
 import sys, os, re, subprocess, time, argparse
+from icecream import ic
 script_dir = os.path.dirname(os.path.realpath(__file__))+'/'
     
 def main():
     # parse --out argument for this script
     parser = argparse.ArgumentParser()
     parser.add_argument('--out', type=str, default='out/out',help='Path prefix for output files')
-    parser.add_argument('--start_step', type=str, default='sweep', choices=['sweep','mpnn','score'],
+    parser.add_argument('--start_step', type=str, default='sweep', choices=['sweep','mpnn','thread_mpnn', 'score'],
         help='Step of pipeline to start at')
     parser.add_argument('--inpaint', action='store_true', default=False, 
         help="Use sweep_hyperparam_inpaint.py, i.e. command-line arguments are in argparse format")
     parser.add_argument('--af2_unmpnned', action='store_true', default=False)
     parser.add_argument('--num_seq_per_target', default=8,type=int, help='How many mpnn sequences per design? Default = 8')
-    parser.add_argument('--af2_gres', type=str, default='gpu:rtx2080:1',help='--gres argument for alphfold.  If set to the empty string, the arguments used for hyperparameter sweeping are passed to the score_designs.py script')
+    parser.add_argument('--af2_gres', type=str, default='',help='--gres argument for alphfold.  If set to the empty string, the arguments used for hyperparameter sweeping are passed to the score_designs.py script')
     parser.add_argument('--in_proc', dest='in_proc', action="store_true", default=False, help='Do not submit slurm array job, run on current node.')
+    parser.add_argument('--af2_chunk', dest='af2_chunk', default=100, type=int, help='Do not submit slurm array job, run on current node.')
     args, unknown = parser.parse_known_args()
     passed_on_args = '--in_proc' if args.in_proc else ''
 
@@ -44,17 +46,18 @@ def main():
         print('Waiting for MPNN jobs to finish...')
         wait_for_jobs(jobid_mpnn)
 
+    if args.start_step in ['sweep', 'mpnn', 'thread_mpnn']:
         print('Threading MPNN sequences onto design models...')
         run_pipeline_step(f'{script_dir}thread_mpnn.py {outdir}')
 
     print('Initiating scoring')
     af2_args = arg_str
     if args.af2_gres:
-        af2_args = f'--gres {args.af2_gres}'
-    af2_args += ' {passed_on_args}'
+        af2_args = f' --gres {args.af2_gres}'
+    af2_args += f' {passed_on_args}'
     if args.af2_unmpnned:
-        jobid_score = run_pipeline_step(f'{script_dir}score_designs.py --chunk 100 {outdir}/ {af2_args}')
-    jobid_score_mpnn = run_pipeline_step(f'{script_dir}score_designs.py --chunk 500 {outdir}/mpnn {af2_args}')
+        jobid_score = run_pipeline_step(f'{script_dir}score_designs.py --chunk {args.af2_chunk} {outdir}/ {af2_args}')
+    jobid_score_mpnn = run_pipeline_step(f'{script_dir}score_designs.py --chunk {args.af2_chunk} {outdir}/mpnn {af2_args}')
 
     if job_id_tmalign:
         print('Waiting for TM-align jobs to finish...')

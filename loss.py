@@ -20,6 +20,7 @@ def frame_distance_loss(R_pred, R_true, eps=1e-8, gamma=0.99):
     """
     Calculates squared L2 loss on frames
     """
+    ic(R_pred.shape)
     I,B,L = R_pred.shape[:3]
     assert len(R_true.shape) == 3
     assert B == 1
@@ -175,6 +176,7 @@ def calc_displacement_loss(pred, true, gamma=0.99, d_clamp=None):
     true - (  B,L,27,3)
     diffusion_mask - (L, dtype=bool)
     """
+    ic(pred.shape)
     I = pred.shape[0]
     B = pred.shape[1]
 
@@ -192,6 +194,7 @@ def calc_displacement_loss(pred, true, gamma=0.99, d_clamp=None):
     w_loss = w_loss / w_loss.sum()
 
     err = torch.sum(torch.square(pred_ca - true_ca[None,...]), dim=-1) # (I, L)
+    ic(err.shape)
 
     if d_clamp is not None:
         # set squared distance clamp to d_clamp**2
