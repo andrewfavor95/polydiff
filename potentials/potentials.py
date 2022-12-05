@@ -501,7 +501,7 @@ class substrate_contacts(Potential):
         Author: AL
     '''
 
-    def __init__(self, weight=1, r_0=10, d_0=2, s=1, eps=1e-6, rep_r_0=3, rep_s=1, rep_r_min=1):
+    def __init__(self, weight=1, r_0=8, d_0=2, s=1, eps=1e-6, rep_r_0=5, rep_s=2, rep_r_min=1):
 
         self.r_0       = r_0
         self.weight    = weight
