@@ -26,6 +26,8 @@ import time
 
 from icecream import ic  
 
+import rf2aa.chemical
+
 torch.set_printoptions(sci_mode=False)
 
 def cosine_interp(T, eta_max, eta_min):
@@ -883,7 +885,7 @@ class Diffuser():
 
         print('Successful diffuser __init__')
     
-    def diffuse_pose(self, xyz, seq, atom_mask, diffuse_sidechains=False, include_motif_sidechains=True, diffusion_mask=None, t_list=None):
+    def diffuse_pose(self, xyz, seq, atom_mask, is_sm, diffuse_sidechains=False, include_motif_sidechains=True, diffusion_mask=None, t_list=None):
         """
         Given full atom xyz, sequence and atom mask, diffuse the protein 
         translations, rotations, and chi angles
@@ -916,6 +918,7 @@ class Diffuser():
 
         #Centre unmasked structure at origin, as in training (to prevent information leak)
         if torch.sum(diffusion_mask) != 0:
+            ic(xyz.shape, diffusion_mask.shape)
             self.motif_com=xyz[diffusion_mask,1,:].mean(dim=0) # This is needed for one of the potentials
             xyz = xyz - self.motif_com
         elif torch.sum(diffusion_mask) == 0:
@@ -936,6 +939,8 @@ class Diffuser():
 
 
         # 2 get  frames
+        is_motif = diffusion_mask
+        assert is_motif[is_sm].all(), 'small molecules are not currently diffused, needs checking'
         tick = time.time()
         diffused_frame_crds, diffused_frames = self.so3_diffuser.diffuse_frames(xyz[:,:3,:].clone(), diffusion_mask=diffusion_mask.numpy(), t_list=None)
         diffused_frame_crds /= self.crd_scale 
@@ -995,7 +1000,8 @@ class Diffuser():
             # diffused_BB is [t_steps,L,3,3]
             t_steps, L  = diffused_BB.shape[:2]
 
-            diffused_fa = torch.zeros(t_steps,L,27,3)
+            diffused_fa = torch.zeros(t_steps,L,rf2aa.chemical.NTOTAL,3)
+            diffused_BB = diffused_BB.float()
             diffused_fa[:,:,:3,:] = diffused_BB
 
             # Add in sidechains from motif

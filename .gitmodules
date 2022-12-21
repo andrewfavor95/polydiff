@@ -1,0 +1,3 @@
+[submodule "RF2-allatom"]
+	path = RF2-allatom
+	url = https://git.ipd.uw.edu/jue/RF2-allatom.git

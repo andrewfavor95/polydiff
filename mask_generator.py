@@ -103,6 +103,51 @@ def find_third_contact(contacts):
                 return torch.tensor([i,j,k])
     return None
 
+def get_sm_contacts(xyz, is_atom, is_sm,
+    d_beyond_closest = 1.5,
+    n_beyond_closest = 2,
+    n_sample_low = 1,
+    n_sample_high = 8):
+
+    assert len(xyz.shape) == 3
+    assert is_sm.any()
+
+    L = xyz.shape[0]
+    L_prot = (~is_sm).sum()
+    n_sample = np.random.randint(n_sample_low, n_sample_high)
+
+    crds = torch.clone(xyz)
+    crds[~is_atom] = torch.nan
+    prot_crds = crds[~is_sm]
+    sm_crds = crds[is_sm]
+    dist = (prot_crds[:, None] - sm_crds[ None]).pow(2).sum(dim=-1).sqrt()
+    dist = dist.nan_to_num(99999)
+    dist = dist.min(dim=-1)[0].min(dim=-1)[0]
+    dist_cutoff = dist.min() + d_beyond_closest
+
+    is_sampled = torch.zeros(L_prot).bool()
+    _, closest_idx = torch.topk(dist, n_sample + n_beyond_closest, largest=False)
+    is_sampled[closest_idx] = True
+    is_sampled[dist < dist_cutoff] = True
+
+    is_sampled_het = torch.zeros(L).bool()
+    is_sampled_het[~is_sm] = is_sampled
+
+    candidate_indices = is_sampled_het.nonzero().flatten()
+    indices = np.random.choice(candidate_indices, n_sample, replace=False)
+    is_motif = torch.zeros(L).bool()
+    is_motif[is_sm] = True
+    is_motif[indices] = True
+
+    # Verification
+    picked = crds[is_motif]
+    dist_conf = (picked[:, None] - sm_crds[ None]).pow(2).sum(dim=-1).sqrt()
+    dist_conf = dist_conf.nan_to_num(9999)
+    picked_distances = dist_conf.min(-1)[0].min(-1)[0]
+    ic(is_motif, n_sample, picked_distances, dist_cutoff, indices)
+
+    return is_motif
+
 def get_triple_contact(xyz, full_prop, low_prop, high_prop, broken_prop, xyz_less_than=6, seq_dist_greater_than=10, len_low=1, len_high=3):
     contacts = get_contacts(xyz, xyz_less_than, seq_dist_greater_than)
     if not contacts.any():
@@ -139,26 +184,78 @@ def get_diffusion_mask_simple(xyz, full_prop, low_prop, high_prop, broken_prop):
         diffusion_mask[-(mask_length-split):] = False
     return diffusion_mask
 
+regular_to_sm = {
+    get_triple_contact: get_sm_contacts,
+}
+
 def get_diffusion_mask(
-        xyz, full_prop, low_prop, high_prop, broken_prop,
+        xyz, is_atom, is_sm, full_prop, low_prop, high_prop, broken_prop,
         diff_mask_probs):
     
     L = xyz.shape[0]
     if random.uniform(0,1) < full_prop:
-        return torch.zeros(L).bool()
+        is_motif = torch.zeros(L).bool()
+        is_motif[is_sm] = True
+        return is_motif
+
 
     mask_probs = list(diff_mask_probs.items())
     masks = [m for m, _ in mask_probs]
     props = [p for _, p in mask_probs]
     get_mask = np.random.choice(masks, p=props)
+    if is_sm.any():
+        if get_mask in regular_to_sm:
+            get_mask = regular_to_sm[get_mask]
+            return get_mask(xyz, is_atom, is_sm)
+
+        # xyz_prot = true_crds[~is_sm]
+        # msa_prot = msa[:, :, ~is_sm]
+        diffusion_mask = torch.ones(L).bool()
+        diffusion_mask_prot = get_mask(xyz[~is_sm], full_prop, low_prop, high_prop, broken_prop)
+        diffusion_mask[~is_sm] = diffusion_mask_prot
+        return diffusion_mask
+
     return get_mask(xyz, full_prop, low_prop, high_prop, broken_prop)
 
+def generate_sm_mask(prot_masks, is_sm):
+    # Not currently used, but may become part of a better way to do this
+    L = is_sm.shape[0]
+    input_seq_mask = torch.ones(L).bool()
+    input_str_mask = torch.ones(L).bool()
+    input_floating_mask = -1
+    input_t1d_str_conf_mask = torch.ones(L)
+    input_t1d_seq_conf_mask = torch.ones(L)
+    loss_seq_mask = torch.ones(L).bool()
+    loss_str_mask = torch.ones(L).bool()
+    loss_str_mask_2d = torch.ones(L,L).bool()
+
+    mask_dict = {'input_seq_mask':input_seq_mask,
+                'input_str_mask':input_str_mask,
+                'input_floating_mask':input_floating_mask,
+                'input_t1d_str_conf_mask':input_t1d_str_conf_mask,
+                'input_t1d_seq_conf_mask':input_t1d_seq_conf_mask,
+                'loss_seq_mask':loss_seq_mask,
+                'loss_str_mask':loss_str_mask,
+                'loss_str_mask_2d':loss_str_mask_2d}
+    #is_motif = torch.ones(L).bool()
+    #is_motif_prot = mask_dict['input_str_mask']
+    for k, v in mask_dict.items():
+        if type(v) is not torch.Tensor:
+            continue
+        if k == 'loss_str_mask_2d':
+            continue
+        ic(k, v.shape, prot_masks[k].shape, is_sm.shape)
+        v[~is_sm] = prot_masks[k]
+        mask_dict[k] = v
+    mask_dict['input_seq_mask']
+    
+    return mask_dict
 
 #####################################
 # Main mask generator function
 #####################################
 
-def generate_masks(msa, task, loader_params, chosen_dataset, full_chain=None, xyz=None): #full_chain is for complexes, to signify which chain is complete
+def generate_masks(msa, task, loader_params, chosen_dataset, full_chain=None, xyz=None, is_atom=None, is_sm=None): #full_chain is for complexes, to signify which chain is complete
     '''
     Slimmed down function that outputs 1D masks for inputs and loss calculations.
     Input masks are defined as True=(unmasked)/False=masked (except for input_t1dconf, which is a scalar value, and seq2str_mask which is the msa mask for the seq2str task)
@@ -222,6 +319,8 @@ def generate_masks(msa, task, loader_params, chosen_dataset, full_chain=None, xy
         #MADE A NEW FUNCTION
         diffusion_mask = get_diffusion_mask(
             xyz,
+            is_atom,
+            is_sm,
             full_prop=loader_params['P_UNCOND'],
             low_prop=loader_params['MASK_MIN_PROPORTION'],
             high_prop=loader_params['MASK_MAX_PROPORTION'],

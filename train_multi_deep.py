@@ -1,28 +1,42 @@
 import sys, os
+# Insert the se3 transformer version packaged with RF2-allatom before anything else, so it doesn't end up in the python module cache.
+script_dir = os.path.dirname(os.path.realpath(__file__))
+aa_se3_path = os.path.join(script_dir, 'RF2-allatom/rf2aa/SE3Transformer')
+sys.path.insert(0, aa_se3_path)
+
 import time
 import pickle 
 import numpy as np
 from copy import deepcopy
 from collections import OrderedDict
-from datetime import date 
+from datetime import date
+from contextlib import ExitStack
 import time 
 import torch
 import torch.nn as nn
 from torch.utils import data
 from data_loader import (
-    get_train_valid_set, loader_pdb, loader_fb, loader_complex, loader_pdb_fixbb, loader_fb_fixbb, loader_complex_fixbb, loader_cn_fixbb,
+    get_train_valid_set, loader_pdb, loader_fb, loader_complex, loader_pdb_fixbb, loader_fb_fixbb, loader_complex_fixbb, loader_cn_fixbb, default_dataset_configs, get_t2d,
     Dataset, DatasetComplex, DistilledDataset, DistributedWeightedSampler
 )
 
 from kinematics import xyz_to_c6d, c6d_to_bins2, xyz_to_t2d, xyz_to_bbtor, get_init_xyz
-from RoseTTAFoldModel  import RoseTTAFoldModule
 import loss 
 from loss import *
-from util import *
-from util_module import ComputeAllAtomCoords
+import util
 from scheduler import get_stepwise_decay_schedule_with_warmup
 
 import rotation_conversions as rot_conv
+
+#rf2_allatom = __import__('RF2-allatom')
+sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'RF2-allatom'))
+import rf2aa.chemical
+import rf2aa.data_loader
+import rf2aa.util
+import rf2aa.loss
+import rf2aa.tensor_util
+from rf2aa.util_module import ComputeAllAtomCoords
+from rf2aa.RoseTTAFoldModel import RoseTTAFoldModule
 
 #added for inpainting training
 from icecream import ic
@@ -46,6 +60,9 @@ torch.backends.cudnn.deterministic = True
 
 #torch.autograd.set_detect_anomaly(True)
 
+global N_EXAMPLE_PER_EPOCH
+global DEBUG 
+global WANDB
 USE_AMP = False
 
 N_PRINT_TRAIN = 1 
@@ -97,7 +114,8 @@ class EMA(nn.Module):
         for name, param in model_params.items():
             # see https://www.tensorflow.org/api_docs/python/tf/train/ExponentialMovingAverage
             # shadow_variable -= (1 - decay) * (shadow_variable - variable)
-            shadow_params[name].sub_((1. - self.decay) * (shadow_params[name] - param))
+            if param.requires_grad:
+                shadow_params[name].sub_((1. - self.decay) * (shadow_params[name] - param))
 
         model_buffers = OrderedDict(self.model.named_buffers())
         shadow_buffers = OrderedDict(self.shadow.named_buffers())
@@ -123,7 +141,7 @@ class Trainer():
                  n_epoch=100, lr=1.0e-4, l2_coeff=1.0e-2, port=None, interactive=False,
                  model_param={}, loader_param={}, loss_param={}, batch_size=1, accum_step=1, 
                  maxcycle=4, diffusion_param={}, preprocess_param={}, outdir=f'./train_session{get_datetime()}', wandb_prefix='',
-                 metrics=None, zero_weights=False, log_inputs=False):
+                 metrics=None, zero_weights=False, log_inputs=False, n_write_pdb=100):
 
         self.model_name = model_name #"BFF"
         self.ckpt_load_path = ckpt_load_path
@@ -136,7 +154,9 @@ class Trainer():
         self.zero_weights=zero_weights
         self.metrics=metrics or []
         self.log_inputs=log_inputs
+        self.n_write_pdb = n_write_pdb
 
+        ic(self.outdir)
         if not os.path.isdir(self.outdir):
             os.makedirs(self.outdir, exist_ok=True)
         else:
@@ -207,14 +227,14 @@ class Trainer():
             raise NotImplementedError()
 
         # for all-atom str loss
-        self.ti_dev = torsion_indices
-        self.ti_flip = torsion_can_flip
-        self.ang_ref = reference_angles
-        self.l2a = long2alt
-        self.aamask = allatom_mask
-        self.num_bonds = num_bonds
-        self.ljlk_parameters = ljlk_parameters
-        self.lj_correction_parameters = lj_correction_parameters
+        self.ti_dev = rf2aa.util.torsion_indices
+        self.ti_flip = rf2aa.util.torsion_can_flip
+        self.ang_ref = rf2aa.util.reference_angles
+        self.l2a = rf2aa.util.long2alt
+        self.aamask = rf2aa.util.allatom_mask
+        self.num_bonds = rf2aa.util.num_bonds
+        self.ljlk_parameters = rf2aa.util.ljlk_parameters
+        self.lj_correction_parameters = rf2aa.util.lj_correction_parameters
         
         # create a loss schedule - sigmoid (default) if use tschedule, else empty dict
         constant_schedule = not loss_param['use_tschedule']
@@ -229,9 +249,9 @@ class Trainer():
         print('These are the loss names which have t_scheduling activated')
         print(self.loss_schedules.keys())
 
-        self.hbtypes = hbtypes
-        self.hbbaseatoms = hbbaseatoms
-        self.hbpolys = hbpolys
+        self.hbtypes = rf2aa.util.hbtypes
+        self.hbbaseatoms = rf2aa.util.hbbaseatoms
+        self.hbpolys = rf2aa.util.hbpolys
 
         # module torsion -> allatom
         self.compute_allatom_coords = ComputeAllAtomCoords()
@@ -399,8 +419,8 @@ class Trainer():
 
         loss_dict['aa_cce'] = float(loss.detach())
 
-        loss = nn.BCEWithLogitsLoss()(logit_exp, mask_BB.float())
-        tot_loss += w_exp*loss*exp_tscale
+        # loss = nn.BCEWithLogitsLoss()(logit_exp, mask_BB.float())
+        # tot_loss += w_exp*loss*exp_tscale
 
         loss_s.append(loss[None].detach())
 
@@ -463,132 +483,134 @@ class Trainer():
         #loss_dict['str_loss'] = float(str_loss.detach())
         loss_dict['tot_str'] = float(tot_str.detach())
 
-        # AllAtom loss
-        # get ground-truth torsion angles
-        true_tors, true_tors_alt, tors_mask, tors_planar = get_torsions(true, seq, self.ti_dev, self.ti_flip, self.ang_ref, mask_in=mask_crds)
-        # masking missing residues as well
-        tors_mask *= mask_BB[...,None] # (B, L, 10)
+        # tot_loss += 0.0 * (pred_tors.mean() + pred_lddt.mean())
 
-        # get alternative coordinates for ground-truth
-        true_alt = torch.zeros_like(true)
-        true_alt.scatter_(2, self.l2a[seq,:,None].repeat(1,1,1,3), true)
+        # # AllAtom loss
+        # # get ground-truth torsion angles
+        # true_tors, true_tors_alt, tors_mask, tors_planar = util.get_torsions(true, seq, self.ti_dev, self.ti_flip, self.ang_ref, mask_in=mask_crds)
+        # # masking missing residues as well
+        # tors_mask *= mask_BB[...,None] # (B, L, 10)
+
+        # # get alternative coordinates for ground-truth
+        # true_alt = torch.zeros_like(true)
+        # true_alt.scatter_(2, self.l2a[seq,:,None].repeat(1,1,1,3), true)
         
-        natRs_all, _n0 = self.compute_allatom_coords(seq, true[...,:3,:], true_tors)
-        natRs_all_alt, _n1 = self.compute_allatom_coords(seq, true_alt[...,:3,:], true_tors_alt)
-        predTs = pred[-1,...]
-        predRs_all, pred_all = self.compute_allatom_coords(seq, predTs, pred_tors[-1]) 
+        # natRs_all, _n0 = self.compute_allatom_coords(seq, true[...,:3,:], true_tors)
+        # natRs_all_alt, _n1 = self.compute_allatom_coords(seq, true_alt[...,:3,:], true_tors_alt)
+        # predTs = pred[-1,...]
+        # predRs_all, pred_all = self.compute_allatom_coords(seq, predTs, pred_tors[-1]) 
 
-        #  - resolve symmetry
-        xs_mask = self.aamask[seq] # (B, L, 27)
-        xs_mask[0,:,14:]=False # (ignore hydrogens except lj loss)
-        xs_mask *= mask_crds # mask missing atoms & residues as well
-        natRs_all_symm, nat_symm = resolve_symmetry(pred_all[0], natRs_all[0], true[0], natRs_all_alt[0], true_alt[0], xs_mask[0])
-        #frame_mask = torch.cat( [torch.ones((L,1),dtype=torch.bool,device=tors_mask.device), tors_mask[0]], dim=-1 )
-        frame_mask = torch.cat( [mask_BB[0][:,None], tors_mask[0,:,:8]], dim=-1 ) # only first 8 torsions have unique frames
+        # #  - resolve symmetry
+        # xs_mask = self.aamask[seq] # (B, L, 27)
+        # xs_mask[0,:,14:]=False # (ignore hydrogens except lj loss)
+        # xs_mask *= mask_crds # mask missing atoms & residues as well
+        # natRs_all_symm, nat_symm = resolve_symmetry(pred_all[0], natRs_all[0], true[0], natRs_all_alt[0], true_alt[0], xs_mask[0])
+        # #frame_mask = torch.cat( [torch.ones((L,1),dtype=torch.bool,device=tors_mask.device), tors_mask[0]], dim=-1 )
+        # frame_mask = torch.cat( [mask_BB[0][:,None], tors_mask[0,:,:8]], dim=-1 ) # only first 8 torsions have unique frames
 
-        # allatom fape and torsion angle loss
-        if negative: # inter-chain fapes should be ignored for negative cases
-            L1 = same_chain[0,0,:].sum()
-            frame_maskA = frame_mask.clone()
-            frame_maskA[L1:] = False
-            xs_maskA = xs_mask.clone()
-            xs_maskA[0, L1:] = False
-            l_fape_A = compute_FAPE(
-                predRs_all[0,frame_maskA][...,:3,:3], 
-                predRs_all[0,frame_maskA][...,:3,3], 
-                pred_all[xs_maskA][...,:3], 
-                natRs_all_symm[frame_maskA][...,:3,:3], 
-                natRs_all_symm[frame_maskA][...,:3,3], 
-                nat_symm[xs_maskA[0]][...,:3],
-                eps=1e-4)
-            frame_maskB = frame_mask.clone()
-            frame_maskB[:L1] = False
-            xs_maskB = xs_mask.clone()
-            xs_maskB[0,:L1] = False
-            l_fape_B = compute_FAPE(
-                predRs_all[0,frame_maskB][...,:3,:3], 
-                predRs_all[0,frame_maskB][...,:3,3], 
-                pred_all[xs_maskB][...,:3], 
-                natRs_all_symm[frame_maskB][...,:3,:3], 
-                natRs_all_symm[frame_maskB][...,:3,3], 
-                nat_symm[xs_maskB[0]][...,:3],
-                eps=1e-4)
-            fracA = float(L1)/len(same_chain[0,0])
-            l_fape = fracA*l_fape_A + (1.0-fracA)*l_fape_B
-        else:
-            l_fape = compute_FAPE(
-                predRs_all[0,frame_mask][...,:3,:3], 
-                predRs_all[0,frame_mask][...,:3,3], 
-                pred_all[xs_mask][...,:3], 
-                natRs_all_symm[frame_mask][...,:3,:3], 
-                natRs_all_symm[frame_mask][...,:3,3], 
-                nat_symm[xs_mask[0]][...,:3],
-                eps=1e-4)
-        l_tors = torsionAngleLoss(
-            pred_tors,
-            true_tors,
-            true_tors_alt,
-            tors_mask,
-            tors_planar,
-            eps = 1e-10)
+        # # allatom fape and torsion angle loss
+        # if negative: # inter-chain fapes should be ignored for negative cases
+        #     L1 = same_chain[0,0,:].sum()
+        #     frame_maskA = frame_mask.clone()
+        #     frame_maskA[L1:] = False
+        #     xs_maskA = xs_mask.clone()
+        #     xs_maskA[0, L1:] = False
+        #     l_fape_A = compute_FAPE(
+        #         predRs_all[0,frame_maskA][...,:3,:3], 
+        #         predRs_all[0,frame_maskA][...,:3,3], 
+        #         pred_all[xs_maskA][...,:3], 
+        #         natRs_all_symm[frame_maskA][...,:3,:3], 
+        #         natRs_all_symm[frame_maskA][...,:3,3], 
+        #         nat_symm[xs_maskA[0]][...,:3],
+        #         eps=1e-4)
+        #     frame_maskB = frame_mask.clone()
+        #     frame_maskB[:L1] = False
+        #     xs_maskB = xs_mask.clone()
+        #     xs_maskB[0,:L1] = False
+        #     l_fape_B = compute_FAPE(
+        #         predRs_all[0,frame_maskB][...,:3,:3], 
+        #         predRs_all[0,frame_maskB][...,:3,3], 
+        #         pred_all[xs_maskB][...,:3], 
+        #         natRs_all_symm[frame_maskB][...,:3,:3], 
+        #         natRs_all_symm[frame_maskB][...,:3,3], 
+        #         nat_symm[xs_maskB[0]][...,:3],
+        #         eps=1e-4)
+        #     fracA = float(L1)/len(same_chain[0,0])
+        #     l_fape = fracA*l_fape_A + (1.0-fracA)*l_fape_B
+        # else:
+        #     l_fape = compute_FAPE(
+        #         predRs_all[0,frame_mask][...,:3,:3], 
+        #         predRs_all[0,frame_mask][...,:3,3], 
+        #         pred_all[xs_mask][...,:3], 
+        #         natRs_all_symm[frame_mask][...,:3,:3], 
+        #         natRs_all_symm[frame_mask][...,:3,3], 
+        #         nat_symm[xs_mask[0]][...,:3],
+        #         eps=1e-4)
+        # l_tors = torsionAngleLoss(
+        #     pred_tors,
+        #     true_tors,
+        #     true_tors_alt,
+        #     tors_mask,
+        #     tors_planar,
+        #     eps = 1e-10)
         
-        # torsion timestep scheduling taken care of by w_all scheduling 
-        tot_loss += w_all*w_str*(l_fape+l_tors)
-        loss_s.append(l_fape[None].detach())
-        loss_s.append(l_tors[None].detach())
+        # # torsion timestep scheduling taken care of by w_all scheduling 
+        # tot_loss += w_all*w_str*(l_fape+l_tors)
+        # loss_s.append(l_fape[None].detach())
+        # loss_s.append(l_tors[None].detach())
 
-        loss_dict['fape'] = float(l_fape.detach())
-        loss_dict['tors'] = float(l_tors.detach())
+        # loss_dict['fape'] = float(l_fape.detach())
+        # loss_dict['tors'] = float(l_tors.detach())
 
         # predicted lddt loss
 
-        lddt_loss, ca_lddt = calc_lddt_loss(pred[:,:,:,1].detach(), true[:,:,1], pred_lddt, idx, mask_BB, mask_2d, same_chain, negative=negative)
-        tot_loss += w_lddt*lddt_loss*lddt_loss_tscale
-        loss_s.append(lddt_loss.detach()[None])
-        loss_s.append(ca_lddt.detach())
+        # lddt_loss, ca_lddt = calc_lddt_loss(pred[:,:,:,1].detach(), true[:,:,1], pred_lddt, idx, mask_BB, mask_2d, same_chain, negative=negative)
+        # tot_loss += w_lddt*lddt_loss*lddt_loss_tscale
+        # loss_s.append(lddt_loss.detach()[None])
+        # loss_s.append(ca_lddt.detach())
     
-        loss_dict['ca_lddt'] = float(ca_lddt[-1].detach())
-        loss_dict['lddt_loss'] = float(lddt_loss.detach())
+        # loss_dict['ca_lddt'] = float(ca_lddt[-1].detach())
+        # loss_dict['lddt_loss'] = float(lddt_loss.detach())
         
-        # allatom lddt loss
-        true_lddt = calc_allatom_lddt(pred_all[0,...,:14,:3], nat_symm[...,:14,:3], xs_mask[0,...,:14], idx[0], same_chain[0], negative=negative)
-        loss_s.append(true_lddt[None].detach())
-        loss_dict['allatom_lddt'] = float(true_lddt.detach())
-        #loss_s.append(true_lddt.mean()[None].detach())
+        # # allatom lddt loss
+        # true_lddt = calc_allatom_lddt(pred_all[0,...,:14,:3], nat_symm[...,:14,:3], xs_mask[0,...,:14], idx[0], same_chain[0], negative=negative)
+        # loss_s.append(true_lddt[None].detach())
+        # loss_dict['allatom_lddt'] = float(true_lddt.detach())
+        # #loss_s.append(true_lddt.mean()[None].detach())
         
-        # bond geometry
+        # # bond geometry
 
-        blen_loss, bang_loss = calc_BB_bond_geom(pred[-1], true, mask_BB)
-        if w_blen > 0.0:
-            tot_loss += w_blen*blen_loss*blen_tscale
-        if w_bang > 0.0:
-            tot_loss += w_bang*bang_loss*bang_tscale
+        # blen_loss, bang_loss = calc_BB_bond_geom(pred[-1], true, mask_BB)
+        # if w_blen > 0.0:
+        #     tot_loss += w_blen*blen_loss*blen_tscale
+        # if w_bang > 0.0:
+        #     tot_loss += w_bang*bang_loss*bang_tscale
 
-        loss_dict['blen'] = float(blen_loss.detach())
-        loss_dict['bang'] = float(bang_loss.detach())
+        # loss_dict['blen'] = float(blen_loss.detach())
+        # loss_dict['bang'] = float(bang_loss.detach())
 
-        # lj potential
-        lj_loss = calc_lj(
-            seq[0], pred_all[0,...,:3], 
-            self.aamask, same_chain[0], 
-            self.ljlk_parameters, self.lj_correction_parameters, self.num_bonds,
-            lj_lin=lj_lin, use_H=use_H, negative=negative)
+        # # lj potential
+        # lj_loss = calc_lj(
+        #     seq[0], pred_all[0,...,:3], 
+        #     self.aamask, same_chain[0], 
+        #     self.ljlk_parameters, self.lj_correction_parameters, self.num_bonds,
+        #     lj_lin=lj_lin, use_H=use_H, negative=negative)
 
-        if w_lj > 0.0:
-            tot_loss += w_lj*lj_loss*lj_tscale
+        # if w_lj > 0.0:
+        #     tot_loss += w_lj*lj_loss*lj_tscale
 
-        loss_dict['lj'] = float(lj_loss.detach())
+        # loss_dict['lj'] = float(lj_loss.detach())
 
-        # hbond [use all atoms not just those in native]
-        hb_loss = calc_hb(
-            seq[0], pred_all[0,...,:3], 
-            self.aamask, self.hbtypes, self.hbbaseatoms, self.hbpolys)
-        if w_hb > 0.0:
-            tot_loss += w_hb*hb_loss*hb_tscale
+        # # hbond [use all atoms not just those in native]
+        # hb_loss = calc_hb(
+        #     seq[0], pred_all[0,...,:3], 
+        #     self.aamask, self.hbtypes, self.hbbaseatoms, self.hbpolys)
+        # if w_hb > 0.0:
+        #     tot_loss += w_hb*hb_loss*hb_tscale
 
-        loss_s.append(torch.stack((blen_loss, bang_loss, lj_loss, hb_loss)).detach())
+        # loss_s.append(torch.stack((blen_loss, bang_loss, lj_loss, hb_loss)).detach())
 
-        loss_dict['hb'] = float(hb_loss.detach())
+        # loss_dict['hb'] = float(hb_loss.detach())
         
         loss_dict['total_loss'] = float(tot_loss.detach())
 
@@ -709,7 +731,7 @@ class Trainer():
             print ("Launched from interactive")
             world_size = torch.cuda.device_count()
             ic(world_size)
-            if world_size == 1:
+            if world_size <= 1:
                 self.train_model(0, 1)
             else:
                 mp.spawn(self.train_model, args=(world_size,), nprocs=world_size, join=True)
@@ -738,109 +760,34 @@ class Trainer():
 
             wandb.config = all_param
             wandb.save(os.path.join(os.getcwd(), self.outdir, 'git_diff.txt'))
+        ic(os.environ['MASTER_ADDR'], rank, world_size, torch.cuda.device_count())
         gpu = rank % torch.cuda.device_count()
-        ic(os.environ['MASTER_ADDR'])
         dist.init_process_group(backend="gloo", world_size=world_size, rank=rank)
         torch.cuda.set_device("cuda:%d"%gpu)
-
-        #define dataset & data loader
-        print('Getting train/valid set...')
-        pdb_items, fb_items, compl_items, neg_items, cn_items, valid_pdb, valid_homo, valid_compl, valid_neg, valid_cn, homo = get_train_valid_set(self.loader_param)
-        pdb_IDs, pdb_weights, pdb_dict = pdb_items
-        fb_IDs, fb_weights, fb_dict = fb_items
-        compl_IDs, compl_weights, compl_dict = compl_items
-        neg_IDs, neg_weights, neg_dict = neg_items
-        cn_IDs, cn_weights, cn_dict = cn_items
         
         self.n_train = N_EXAMPLE_PER_EPOCH
-        self.n_valid_pdb = len(valid_pdb.keys())
-        self.n_valid_pdb = (self.n_valid_pdb // world_size)*world_size
-        self.n_valid_homo = len(valid_homo.keys())
-        self.n_valid_homo = (self.n_valid_homo // world_size)*world_size
-        self.n_valid_compl = len(valid_compl.keys())
-        self.n_valid_compl = (self.n_valid_compl // world_size)*world_size
-        self.n_valid_neg = len(valid_neg.keys())
-        self.n_valid_neg = (self.n_valid_neg // world_size)*world_size
-        self.n_valid_cn = len(valid_cn.keys())
-        self.n_valid_neg = (self.n_valid_neg // world_size)*world_size
 
-        # ic(type(pdb_items))
-        # ic(type(fb_items))
-        # ic(type(compl_items))
-        # ic(type(neg_items))
-
-        # ic(type(pdb_dict))
-        # ic(type(fb_dict))
-        # ic(type(compl_dict))
-        # ic(type(neg_dict))
-
-        # ic(type(pdb_IDs))
-        # ic(type(fb_IDs))
-        # ic(type(compl_IDs))
-        # ic(type(neg_IDs))
-
-
-
-        if (rank==0):
-            print ('Loaded',
-                len(valid_pdb.keys()),'monomers,',
-                len(valid_homo.keys()),'homomers,',
-                len(valid_compl.keys()),'heteromers, and',
-                len(valid_neg.keys()),'negative heteromer'
-            )
-            print ('Using',
-                self.n_valid_pdb,'monomers,',
-                self.n_valid_homo,'homomers,',
-                self.n_valid_compl,'heteromers, and',
-                self.n_valid_neg,'negative heteromers',
-            )
+        dataset_configs = default_dataset_configs(self.loader_param, debug=DEBUG)
         
         print('Making train sets')
-        train_set = DistilledDataset(pdb_IDs, loader_pdb, loader_pdb_fixbb, pdb_dict,
-                                     compl_IDs, loader_complex, loader_complex_fixbb, compl_dict,
-                                     neg_IDs, loader_complex, neg_dict,
-                                     fb_IDs, loader_fb, loader_fb_fixbb, fb_dict,
-                                     cn_IDs, None, loader_cn_fixbb, cn_dict, # None is a placeholder as we don't currently have a loader_cn
-                                     homo, self.loader_param, self.diffuser, self.seq_diffuser, self.ti_dev, self.ti_flip, self.ang_ref, 
+        train_set = DistilledDataset(dataset_configs, 
+                                     self.loader_param, self.diffuser, self.seq_diffuser, self.ti_dev, self.ti_flip, self.ang_ref, 
                                      self.diffusion_param, self.preprocess_param, self.model_param)
-
-        valid_pdb_set = Dataset(list(valid_pdb.keys())[:self.n_valid_pdb],
-                                loader_pdb, valid_pdb,
-                                self.loader_param, homo, p_homo_cut=-1.0)
-        valid_homo_set = Dataset(list(valid_homo.keys())[:self.n_valid_homo],
-                                loader_pdb, valid_homo,
-                                self.loader_param, homo, p_homo_cut=2.0)
-        valid_compl_set = DatasetComplex(list(valid_compl.keys())[:self.n_valid_compl],
-                                         loader_complex, valid_compl,
-                                         self.loader_param, negative=False)
-        valid_neg_set = DatasetComplex(list(valid_neg.keys())[:self.n_valid_neg],
-                                        loader_complex, valid_neg,
-                                        self.loader_param, negative=True)
- 
         #get proportion of seq2str examples
         if 'seq2str' in self.loader_param['TASK_NAMES']:
             p_seq2str = self.loader_param['TASK_P'][self.loader_param['TASK_NAMES'].index('seq2str')]
         else:
             p_seq2str = 0
 
-        train_sampler = DistributedWeightedSampler(train_set, pdb_weights, compl_weights, neg_weights, fb_weights, cn_weights, p_seq2str,
+        train_sampler = DistributedWeightedSampler(dataset_configs,
                                                    dataset_options=self.loader_param['DATASETS'],
                                                    dataset_prob=self.loader_param['DATASET_PROB'],
                                                    num_example_per_epoch=N_EXAMPLE_PER_EPOCH,
                                                    num_replicas=world_size, rank=rank, replacement=True)
-
-        valid_pdb_sampler = data.distributed.DistributedSampler(valid_pdb_set, num_replicas=world_size, rank=rank)
-        valid_homo_sampler = data.distributed.DistributedSampler(valid_homo_set, num_replicas=world_size, rank=rank)
-        valid_compl_sampler = data.distributed.DistributedSampler(valid_compl_set, num_replicas=world_size, rank=rank)
-        valid_neg_sampler = data.distributed.DistributedSampler(valid_neg_set, num_replicas=world_size, rank=rank)
         
         print('THIS IS LOAD PARAM GOING INTO DataLoader inits')
         print(LOAD_PARAM)
         train_loader = data.DataLoader(train_set, sampler=train_sampler, batch_size=self.batch_size, **LOAD_PARAM)
-        valid_pdb_loader = data.DataLoader(valid_pdb_set, sampler=valid_pdb_sampler, **LOAD_PARAM)
-        valid_homo_loader = data.DataLoader(valid_homo_set, sampler=valid_homo_sampler, **LOAD_PARAM2)
-        valid_compl_loader = data.DataLoader(valid_compl_set, sampler=valid_compl_sampler, **LOAD_PARAM)
-        valid_neg_loader = data.DataLoader(valid_neg_set, sampler=valid_neg_sampler, **LOAD_PARAM)
 
         # move some global data to cuda device
         self.ti_dev = self.ti_dev.to(gpu)
@@ -866,7 +813,62 @@ class Trainer():
         
         # define model
         print('Making model...')
-        model = RoseTTAFoldModule(**self.model_param, d_t1d=self.preprocess_param['d_t1d'], d_t2d=self.preprocess_param['d_t2d'], T=self.diffusion_param['diff_T']).to(gpu)
+        ic(self.model_param)
+        # Set to zero in rf_diffusion
+        # model_param.pop('d_time_emb')
+        # model_param.pop('d_time_emb_proj')
+        # Unused
+        # model_param.pop('use_motif_timestep')
+
+        # for all-atom str loss
+        self.ti_dev = rf2aa.util.torsion_indices
+        self.ti_flip = rf2aa.util.torsion_can_flip
+        self.ang_ref = rf2aa.util.reference_angles
+        self.fi_dev = rf2aa.util.frame_indices
+        self.l2a = rf2aa.util.long2alt
+        self.aamask = rf2aa.util.allatom_mask
+        self.num_bonds = rf2aa.util.num_bonds
+        self.atom_type_index = rf2aa.util.atom_type_index
+        self.ljlk_parameters = rf2aa.util.ljlk_parameters
+        self.lj_correction_parameters = rf2aa.util.lj_correction_parameters
+        self.hbtypes = rf2aa.util.hbtypes
+        self.hbbaseatoms = rf2aa.util.hbbaseatoms
+        self.hbpolys = rf2aa.util.hbpolys
+        self.cb_len = rf2aa.util.cb_length_t
+        self.cb_ang = rf2aa.util.cb_angle_t
+        self.cb_tor = rf2aa.util.cb_torsion_t
+
+        # model_param.
+        self.ti_dev = self.ti_dev.to(gpu)
+        self.ti_flip = self.ti_flip.to(gpu)
+        self.ang_ref = self.ang_ref.to(gpu)
+        self.fi_dev = self.fi_dev.to(gpu)
+        self.l2a = self.l2a.to(gpu)
+        self.aamask = self.aamask.to(gpu)
+        self.compute_allatom_coords = self.compute_allatom_coords.to(gpu)
+        self.num_bonds = self.num_bonds.to(gpu)
+        self.atom_type_index = self.atom_type_index.to(gpu)
+        self.ljlk_parameters = self.ljlk_parameters.to(gpu)
+        self.lj_correction_parameters = self.lj_correction_parameters.to(gpu)
+        self.hbtypes = self.hbtypes.to(gpu)
+        self.hbbaseatoms = self.hbbaseatoms.to(gpu)
+        self.hbpolys = self.hbpolys.to(gpu)
+        self.cb_len = self.cb_len.to(gpu)
+        self.cb_ang = self.cb_ang.to(gpu)
+        self.cb_tor = self.cb_tor.to(gpu)
+
+        model = RoseTTAFoldModule(
+            **self.model_param,
+            aamask=self.aamask,
+            atom_type_index=self.atom_type_index,
+            ljlk_parameters=self.ljlk_parameters,
+            lj_correction_parameters=self.lj_correction_parameters,
+            num_bonds=self.num_bonds,
+            cb_len = self.cb_len,
+            cb_ang = self.cb_ang,
+            cb_tor = self.cb_tor,
+            lj_lin=self.loss_param['lj_lin']
+            ).to(gpu)
         if self.log_inputs:
             pickle_dir = pickle_function_call(model, 'forward', 'training')
             print(f'pickle_dir: {pickle_dir}')
@@ -909,10 +911,6 @@ class Trainer():
         #_, _, _ = self.valid_ppi_cycle(ddp_model, valid_compl_loader, valid_neg_loader, rank, gpu, world_size, loaded_epoch)
         for epoch in range(loaded_epoch+1, self.n_epoch):
             train_sampler.set_epoch(epoch)
-            valid_pdb_sampler.set_epoch(epoch)
-            valid_homo_sampler.set_epoch(epoch)
-            valid_compl_sampler.set_epoch(epoch)
-            valid_neg_sampler.set_epoch(epoch)
             
             print('Just before calling train cycle...')
             train_tot, train_loss, train_acc = self.train_cycle(ddp_model, train_loader, optimizer, scheduler, scaler, rank, gpu, world_size, epoch)
@@ -940,6 +938,8 @@ class Trainer():
                                 self.checkpoint_fn(self.model_name, 'best'))
                 """
                 #save every epoch     
+                model_path = self.checkpoint_fn(self.model_name, str(epoch))
+                ic(f'saving model to {model_path}')
                 torch.save({'epoch': epoch,
                             #'model_state_dict': ddp_model.state_dict(),
                             'model_state_dict': ddp_model.module.shadow.state_dict(),
@@ -954,7 +954,7 @@ class Trainer():
                             'best_loss': 999.9,
                             'config_dict':self.config_dict,
                             'training_arguments': self.training_arguments},
-                            self.checkpoint_fn(self.model_name, str(epoch)))
+                            model_path)
                 
         dist.destroy_process_group()
 
@@ -1001,7 +1001,15 @@ class Trainer():
             masks_1d,\
             chosen_task,\
             chosen_dataset,\
-            little_t = loader_out
+            little_t,\
+            mask_t, mask_prev, atom_frames, bond_feats, chirals, mask_t_2d, dataset_name, item = loader_out
+            ic(gpu, dataset_name, item)
+
+            # Save trues for writing pdbs later.
+            xyz_prev_orig = xyz_prev.clone()
+            seq_unmasked = msa[:, 0, 0, :] # (B, L)
+            # Not relevant since we pop the residues this would be filtering
+            #res_mask = ~((atom_mask_[:,:,:3].sum(dim=-1) < 3.0) * ~(is_atom(msa[:,i_cycle,0])))
 
             '''
                 Current Dimensions:
@@ -1067,7 +1075,7 @@ class Trainer():
             # torch.save(torch.clone(atom_mask), 'atom_mask.pt')
 
 
-
+            is_motif = masks_1d['input_str_mask'].squeeze()
             # for saving pdbs
             seq_original = torch.clone(seq)
 
@@ -1096,6 +1104,7 @@ class Trainer():
             msa_full = msa_full.to(gpu, non_blocking=True)
             mask_msa = mask_msa.to(gpu, non_blocking=True)
             xyz_prev = xyz_prev.to(gpu, non_blocking=True)
+            alpha_prev = torch.zeros((B,L,rf2aa.chemical.NTOTALDOFS,2)).to(gpu, non_blocking=True)
 
             counter += 1 
 
@@ -1113,8 +1122,8 @@ class Trainer():
 
             # Some percentage of the time, provide the model with the model's prediction of x_0 | x_t+1
             # When little_t[0] == little_t[1] we are at t == T so we should not unroll
-            if not (little_t[0] == little_t[1]) and (torch.tensor(self.preprocess_param['prob_self_cond']) > torch.rand(1)):
-
+            step_back = not (little_t[0] == little_t[1]) and (torch.tensor(self.preprocess_param['prob_self_cond']) > torch.rand(1))
+            if step_back:
                 unroll_performed = True
 
                 # Take 1 step back in time to get the training example to feed to the model
@@ -1133,24 +1142,46 @@ class Trainer():
                             use_t2d        = t2d[:,0] # May want to make this zero for self cond
                             use_xyz_t      = xyz_t[:,0]
                             use_alpha_t    = alpha_t[:,0]
+                            seq_scalar = torch.argmax(use_seq[0], dim=-1)
+                            # use_t2d, mask_t_2d = rf2aa.data_loader.get_t2d(
+                            #     xyz_t[i], mask_t, use_msa_masked[0,0], same_chain, atom_frames)
+                            # This is new
+                            use_t2d = torch.zeros_like(use_t2d)
+                            use_xyz_t = torch.zeros_like(use_xyz_t)
 
-                            _, sequence_logits, _, px0_xyz, _, _ = ddp_model(
+                            _, sequence_logits, _, _, px0_xyz, _, px0_allatom, _, _, _, _ = ddp_model(
                                                                        use_msa_masked[:,0],
                                                                        use_msa_full[:,0],
-                                                                       use_seq[:,0],
+                                                                       seq_scalar,
+                                                                       seq_scalar, # msa
                                                                        use_xyz_prev,
+                                                                       alpha_prev,
                                                                        idx_pdb,
-                                                                       t=little_t[0],
+                                                                       bond_feats=bond_feats,
+                                                                       chirals=chirals,
+                                                                       atom_frames=atom_frames,
                                                                        t1d=use_t1d,
                                                                        t2d=use_t2d,
-                                                                       xyz_t=use_xyz_t,
+                                                                       xyz_t=use_xyz_t[...,1,:],
                                                                        alpha_t=use_alpha_t,
+                                                                       mask_t=mask_t_2d,
+                                                                       same_chain=same_chain,
                                                                        msa_prev=None,
                                                                        pair_prev=None,
                                                                        state_prev=None,
                                                                        return_raw=False,
-                                                                       motif_mask=diffusion_mask
+                                                                       is_motif=is_motif,
+                                                                       use_checkpoint=False
                                                                        )
+
+            # Since we are not sequence self-conditioning, much of 2-terminal index is redundant.
+            # Let's assert that it's the same.
+            rf2aa.tensor_util.assert_equal(seq[:,0],seq[:,1])
+            # rf2aa.tensor_util.assert_equal(t1d[:,0],t1d[:,1]) # Last idx unequal due to confidence
+            # rf2aa.tensor_util.assert_equal(alpha_t[:,0],alpha_t[:,1]) # Unequal due to coming from different xyz_t
+            rf2aa.tensor_util.assert_equal(msa_masked[:,0],msa_masked[:,1])
+            rf2aa.tensor_util.assert_equal(msa_full[:,0],msa_full[:,1])
+            rf2aa.tensor_util.assert_equal(mask_msa[:,0],mask_msa[:,1])
 
             # From here on out we will operate with t = t
             seq        = seq[:,1]
@@ -1161,6 +1192,7 @@ class Trainer():
             msa_masked = msa_masked[:,1]
             msa_full   = msa_full[:,1]
             mask_msa   = mask_msa[:,1]
+            seq_scalar = torch.argmax(seq[0], dim=-1)
 
             # Only provide previous xyz - NRB
             msa_prev   = None
@@ -1177,9 +1209,11 @@ class Trainer():
 
                     px0_xyz = px0_xyz[-1] # Only grab final prediction
                     
-                    zeros = torch.zeros(B,1,L,24,3).float().to(px0_xyz.device)
+                    zeros = torch.zeros(B,1,L,36-3,3).float().to(px0_xyz.device)
                     xyz_t = torch.cat((px0_xyz.unsqueeze(1),zeros), dim=-2) # [B,T,L,27,3]
-                    t2d   = xyz_to_t2d(xyz_t) # [B,T,L,L,44]
+                    t2d, mask_t_2d_remade = get_t2d(
+                        xyz_t[0], mask_t[0], seq_scalar[0], same_chain[0], atom_frames[0])
+                    t2d = t2d[None] # Add batch dimension # [B,T,L,L,44]
                 else:
                     xyz_t = torch.zeros_like(xyz_t[:,1])
                     t2d   = torch.zeros_like(t2d[:,1])
@@ -1207,6 +1241,7 @@ class Trainer():
                 for i_cycle in range(N_cycle-1):
                     with ddp_model.no_sync():
                         with torch.cuda.amp.autocast(enabled=USE_AMP):
+                            raise Exception('cycling not implemented yet')
                             msa_prev, pair_prev, xyz_prev, state_prev, alpha = ddp_model(
                                                                       msa_masked[:,0],
                                                                       msa_full[:,0],
@@ -1216,7 +1251,7 @@ class Trainer():
                                                                       t=little_t,
                                                                       t1d=t1d,
                                                                       t2d=t2d,
-                                                                      xyz_t=xyz_t,
+                                                                      xyz_t=xyz_t[...,1,:],
                                                                       alpha_t=alpha_t,
                                                                       msa_prev=msa_prev,
                                                                       pair_prev=pair_prev,
@@ -1227,70 +1262,42 @@ class Trainer():
                                                                       n_cycle=N_cycle,
                                                                       )
 
+
                             #_, xyz_prev = self.compute_allatom_coords(seq[:,i_cycle], xyz_prev, alpha)
 
+            xyz_prev_orig = xyz_prev.clone()
             i_cycle = N_cycle-1
 
-            if counter%self.ACCUM_STEP != 0:
-                with ddp_model.no_sync():
-                    with torch.cuda.amp.autocast(enabled=USE_AMP):
-                        logit_s, logit_aa_s, logit_exp, pred_crds, alphas, pred_lddts = ddp_model(msa_masked[:,0],
-                                                                   msa_full[:,0],
-                                                                   seq[:,0], xyz_prev,
-                                                                   idx_pdb,
-                                                                   t=little_t,
-                                                                   t1d=t1d, t2d=t2d,
-                                                                   xyz_t=xyz_t, alpha_t=alpha_t,
-                                                                   msa_prev=msa_prev,
-                                                                   pair_prev=pair_prev,
-                                                                   state_prev=state_prev,
-                                                                   use_checkpoint=True,
-                                                                   motif_mask=diffusion_mask,
-                                                                   i_cycle=i_cycle,
-                                                                   n_cycle=N_cycle,
-                                                                   )
 
-                        # find closest homo-oligomer pairs
-                        true_crds, mask_crds = resolve_equiv_natives(pred_crds[-1], true_crds, mask_crds)
-                        mask_crds[:,~masks_1d['loss_str_mask'][0],:] = False
-                        # processing labels for distogram orientograms
-                        mask_BB = ~(mask_crds[:,:,:3].sum(dim=-1) < 3.0) # ignore residues having missing BB atoms for loss calculation
-                        mask_2d = mask_BB[:,None,:] * mask_BB[:,:,None] # ignore pairs having missing residues
-                        mask_2d = mask_2d*masks_1d['loss_str_mask_2d'].to(mask_2d.device)
-                        assert torch.sum(mask_2d) > 0, "mask_2d is blank"
-                        c6d, _ = xyz_to_c6d(true_crds)
-                        c6d = c6d_to_bins2(c6d, same_chain, negative=negative)
-
-                        prob = self.active_fn(logit_s[0]) # distogram
-                        acc_s = self.calc_acc(prob, c6d[...,0], idx_pdb, mask_2d)
-
-                        loss, loss_s, loss_dict = self.calc_loss(logit_s, c6d,
-                                logit_aa_s, msa[:, i_cycle], mask_msa[:,i_cycle], logit_exp,
-                                pred_crds, alphas, true_crds, mask_crds,
-                                mask_BB, mask_2d, same_chain,
-                                pred_lddts, idx_pdb, chosen_dataset[0], chosen_task[0], diffusion_mask=diffusion_mask,
-                                seq_diffusion_mask=seq_diffusion_mask, seq_t=seq[:,0], xyz_in=xyz_t, unclamp=unclamp, 
-                                negative=negative, t=int(little_t), **self.loss_param)
-                    loss = loss / self.ACCUM_STEP
-
-                    if not torch.isnan(loss):
-
-                        scaler.scale(loss).backward()
-            else:
+            with ExitStack() as stack:
+                if counter%self.ACCUM_STEP != 0:
+                    stack.enter_context(ddp_model.no_sync())
                 with torch.cuda.amp.autocast(enabled=USE_AMP):
-                    logit_s, logit_aa_s, logit_exp, pred_crds, alphas, pred_lddts = ddp_model(msa_masked[:,0],
-                                                               msa_full[:,0],
-                                                               seq[:,0], xyz_prev,
-                                                               idx_pdb,
-                                                               t=little_t,
-                                                               t1d=t1d, t2d=t2d,
-                                                               xyz_t=xyz_t, alpha_t=alpha_t,
-                                                               msa_prev=msa_prev,
-                                                               pair_prev=pair_prev,
-                                                               state_prev=state_prev,
-                                                               use_checkpoint=True,
-                                                               motif_mask=diffusion_mask)
-                        
+
+                    logit_s, logit_aa_s, logits_pae, logits_pde, pred_crds, alphas, px0_allatom, pred_lddts, _, _, _ = ddp_model(
+                                                                msa_masked[:,0],
+                                                                msa_full[:,0],
+                                                                seq_scalar,
+                                                                seq_scalar, # msa
+                                                                xyz_prev,
+                                                                alpha_prev,
+                                                                idx_pdb,
+                                                                bond_feats=bond_feats,
+                                                                chirals=chirals,
+                                                                atom_frames=atom_frames,
+                                                                t1d=t1d,
+                                                                t2d=t2d,
+                                                                xyz_t=xyz_t[...,1,:],
+                                                                alpha_t=alpha_t,
+                                                                mask_t=mask_t_2d,
+                                                                same_chain=same_chain,
+                                                                msa_prev=None,
+                                                                pair_prev=None,
+                                                                state_prev=None,
+                                                                is_motif=is_motif,
+                                                                use_checkpoint=True
+                                                                )
+
                     # find closest homo-oligomer pairs
                     true_crds, mask_crds = resolve_equiv_natives(pred_crds[-1], true_crds, mask_crds)
                     mask_crds[:,~masks_1d['loss_str_mask'][0],:] = False
@@ -1298,6 +1305,7 @@ class Trainer():
                     mask_BB = ~(mask_crds[:,:,:3].sum(dim=-1) < 3.0) # ignore residues having missing BB atoms for loss calculation
                     mask_2d = mask_BB[:,None,:] * mask_BB[:,:,None] # ignore pairs having missing residues
                     mask_2d = mask_2d*masks_1d['loss_str_mask_2d'].to(mask_2d.device)
+                    assert torch.sum(mask_2d) > 0, "mask_2d is blank"
                     c6d, _ = xyz_to_c6d(true_crds)
                     c6d = c6d_to_bins2(c6d, same_chain, negative=negative)
 
@@ -1305,27 +1313,32 @@ class Trainer():
                     acc_s = self.calc_acc(prob, c6d[...,0], idx_pdb, mask_2d)
 
                     loss, loss_s, loss_dict = self.calc_loss(logit_s, c6d,
-                                logit_aa_s, msa[:, i_cycle], mask_msa[:,i_cycle], logit_exp,
-                                pred_crds, alphas, true_crds, mask_crds,
-                                mask_BB, mask_2d, same_chain,
-                                pred_lddts, idx_pdb, chosen_dataset[0], chosen_task[0], diffusion_mask=diffusion_mask,
-                                seq_diffusion_mask=seq_diffusion_mask, seq_t=seq[:,0], xyz_in=xyz_t, unclamp=unclamp,
-                                t=int(little_t), negative=negative, **self.loss_param)
+                            logit_aa_s, msa[:, i_cycle], mask_msa[:,i_cycle], None,
+                            pred_crds, alphas, true_crds, mask_crds,
+                            mask_BB, mask_2d, same_chain,
+                            pred_lddts, idx_pdb, chosen_dataset[0], chosen_task[0], diffusion_mask=diffusion_mask,
+                            seq_diffusion_mask=seq_diffusion_mask, seq_t=seq[:,0], xyz_in=xyz_t, unclamp=unclamp, 
+                            negative=negative, t=int(little_t), **self.loss_param)
+                    # Force all model parameters to participate in loss. Truly a cursed workaround.
+                    loss += 0.0 * (logits_pae.mean() + logits_pde.mean() + alphas.mean() + pred_lddts.mean())
                 loss = loss / self.ACCUM_STEP
+
                 if not torch.isnan(loss):
                     scaler.scale(loss).backward()
-                    
-                # gradient clipping
-                scaler.unscale_(optimizer)
-                torch.nn.utils.clip_grad_norm_(ddp_model.parameters(), 0.2)
-                scaler.step(optimizer)
-                scale = scaler.get_scale()
-                scaler.update()
-                skip_lr_sched = (scale != scaler.get_scale())
-                optimizer.zero_grad()
-                if not skip_lr_sched:
-                    scheduler.step()
-                ddp_model.module.update() # apply EMA
+                else:
+                    print('NaN loss encountered, skipping')
+                if counter%self.ACCUM_STEP == 0:
+                    # gradient clipping
+                    scaler.unscale_(optimizer)
+                    torch.nn.utils.clip_grad_norm_(ddp_model.parameters(), 0.2)
+                    scaler.step(optimizer)
+                    scale = scaler.get_scale()
+                    scaler.update()
+                    skip_lr_sched = (scale != scaler.get_scale())
+                    optimizer.zero_grad()
+                    if not skip_lr_sched:
+                        scheduler.step()
+                    ddp_model.module.update() # apply EMA
             
             ## check parameters with no grad
             #if rank == 0:
@@ -1379,6 +1392,7 @@ class Trainer():
                         metrics = {}
                         for m in self.metrics:
                             with torch.no_grad():
+                                logit_exp = 0
                                 metrics.update(m(logit_s, c6d,
                                     logit_aa_s, msa[:, i_cycle], mask_msa[:,i_cycle], logit_exp,
                                     pred_crds, alphas, true_crds, mask_crds,
@@ -1398,7 +1412,7 @@ class Trainer():
             top1_sequence = (logits_argsort[:, :1])
             top1_sequence = torch.clamp(top1_sequence, 0,19)
 
-            if diffusion_param['seqdiff'] == 'continuous':
+            if self.diffusion_param['seqdiff'] == 'continuous':
                 top1_sequence = torch.argmax(logit_aa_s[:,:20,:], dim=1)
 
             # Also changed to allow for one-hot sequence input
@@ -1407,16 +1421,34 @@ class Trainer():
 
             clamped = top1_sequence
 
-            if chosen_task[0] != 'seq2str' and np.random.randint(0,100) == 0:
-                if not os.path.isdir(f'./{self.outdir}/training_pdbs/'):
-                    os.makedirs(f'./{self.outdir}/training_pdbs')
-                writepdb(f'{self.outdir}/training_pdbs/test_epoch_{epoch}_{counter}_{chosen_task[0]}_{chosen_dataset[0]}_t_{int( little_t )}pred.pdb',pred_crds[-1,0,:,:3,:],top1_sequence[0,:])
-                writepdb(f'{self.outdir}/training_pdbs/test_epoch_{epoch}_{counter}_{chosen_task[0]}_{chosen_dataset[0]}_t_{int( little_t )}true.pdb',true_crds[0,:,:3,:],torch.clamp(seq_original[0,0,:],0,19))
-                writepdb(f'{self.outdir}/training_pdbs/test_epoch_{epoch}_{counter}_{chosen_task[0]}_{chosen_dataset[0]}_t_{int( little_t )}input.pdb',xyz_t[0,:,:,:3,:],torch.clamp(seq_masked[0,0,:],0,19))
-                with open(f'{self.outdir}/training_pdbs/test_epoch_{epoch}_{counter}_{chosen_task[0]}_{chosen_dataset[0]}_t_{int( little_t )}pred_input.txt','w') as f:
-                    f.write(str(masks_1d['input_str_mask'][0].cpu().detach().numpy())+'\n')
-                    f.write(str(masks_1d['input_seq_mask'][0].cpu().detach().numpy())+'\n') 
-                    f.write(str(t1d[:,:,:,-1].cpu().detach().numpy()))
+            save_pdb = np.random.randint(0,self.n_write_pdb) == 0
+            if save_pdb:
+                _,_,L,_ = seq.shape
+                res_mask = torch.ones((1, L)).bool()
+                pdb_dir = os.path.join(self.outdir, 'training_pdbs')
+                os.makedirs(pdb_dir, exist_ok=True)
+                rf2aa.util.writepdb(f'{pdb_dir}/test_epoch_{epoch}_{counter}_{chosen_task[0]}_{chosen_dataset[0]}_t_{int( little_t )}_input.pdb',
+                    torch.nan_to_num(xyz_prev_orig[res_mask][:,:23]), seq_unmasked[res_mask],
+                    bond_feats=bond_feats[:, res_mask[0]][:, :, res_mask[0]])
+                rf2aa.util.writepdb(f'{pdb_dir}/test_epoch_{epoch}_{counter}_{chosen_task[0]}_{chosen_dataset[0]}_t_{int( little_t )}_true.pdb',
+                    torch.nan_to_num(true_crds[res_mask][:,:23]), seq_unmasked[res_mask],
+                    bond_feats=bond_feats[:, res_mask[0]][:, :, res_mask[0]])
+                rf2aa.util.writepdb(f'{pdb_dir}/test_epoch_{epoch}_{counter}_{chosen_task[0]}_{chosen_dataset[0]}_t_{int( little_t )}_pred.pdb',
+                    torch.nan_to_num(pred_crds[-1][res_mask][:,:23]), seq_unmasked[res_mask],
+                    bond_feats=bond_feats[:, res_mask[0]][:, :, res_mask[0]])
+
+            #     res_mask = 
+            #     rf2aa.utils.writepdb(f'{self.outdir}/training_pdbs/test_epoch_{epoch}_{counter}_{chosen_task[0]}_{chosen_dataset[0]}_t_{int( little_t )}pred.pdb',
+            #         torch.nan_to_num(xyz_prev_orig[res_mask][:,:23]), seq_unmasked[res_mask],
+            #         bond_feats=bond_feats[:, res_mask[0]][:, :, res_mask[0]])
+            #     rf2aa.utils.writepdb(f'{self.outdir}/training_pdbs/test_epoch_{epoch}_{counter}_{chosen_task[0]}_{chosen_dataset[0]}_t_{int( little_t )}pred.pdb',
+            #         pred_crds[-1,0,:,:3,:],top1_sequence[0,:])
+            #     writepdb(f'{self.outdir}/training_pdbs/test_epoch_{epoch}_{counter}_{chosen_task[0]}_{chosen_dataset[0]}_t_{int( little_t )}true.pdb',true_crds[0,:,:3,:],torch.clamp(seq_original[0,0,:],0,19))
+            #     writepdb(f'{self.outdir}/training_pdbs/test_epoch_{epoch}_{counter}_{chosen_task[0]}_{chosen_dataset[0]}_t_{int( little_t )}input.pdb',xyz_t[0,:,:,:3,:],torch.clamp(seq_masked[0,0,:],0,19))
+            #     with open(f'{self.outdir}/training_pdbs/test_epoch_{epoch}_{counter}_{chosen_task[0]}_{chosen_dataset[0]}_t_{int( little_t )}pred_input.txt','w') as f:
+            #         f.write(str(masks_1d['input_str_mask'][0].cpu().detach().numpy())+'\n')
+            #         f.write(str(masks_1d['input_seq_mask'][0].cpu().detach().numpy())+'\n') 
+            #         f.write(str(t1d[:,:,:,-1].cpu().detach().numpy()))
 
         # write total train loss
         train_tot /= float(counter * world_size)
@@ -1477,7 +1509,7 @@ class Trainer():
                 t2d = xyz_to_t2d(xyz_t)
                 # get torsion angles from templates
                 seq_tmp = t1d[...,:-1].argmax(dim=-1).reshape(-1,L)
-                alpha, _, alpha_mask, _ = get_torsions(xyz_t.reshape(-1,L,27,3), seq_tmp, self.ti_dev, self.ti_flip, self.ang_ref)
+                alpha, _, alpha_mask, _ = util.get_torsions(xyz_t.reshape(-1,L,27,3), seq_tmp, self.ti_dev, self.ti_flip, self.ang_ref)
                 alpha_mask = torch.logical_and(alpha_mask, ~torch.isnan(alpha[...,0]))
                 alpha[torch.isnan(alpha)] = 0.0
                 alpha = alpha.reshape(B,-1,L,10,2)
@@ -1887,24 +1919,28 @@ class Trainer():
         return valid_tot, valid_loss, valid_acc
     
 
-if __name__ == "__main__":
-    from arguments import get_args
-    args, model_param, loader_param, loss_param, diffusion_param, preprocess_param = get_args()
-    
-    # set epoch size 
-    global N_EXAMPLE_PER_EPOCH
-    N_EXAMPLE_PER_EPOCH = args.epoch_size 
 
-    # set global debug and wandb params 
+def make_trainer(args, model_param, loader_param, loss_param, diffusion_param, preprocess_param):
+    
+    global N_EXAMPLE_PER_EPOCH
     global DEBUG 
     global WANDB
+    global LOAD_PARAM
+    global LOAD_PARAM2
+    # set epoch size 
+    N_EXAMPLE_PER_EPOCH = args.epoch_size 
+    ic(N_EXAMPLE_PER_EPOCH)
+
+    # set global debug and wandb params 
     if args.debug:
         DEBUG = True 
         WANDB = False 
+        # loader_param['DATAPKL'] = 'subsampled_dataset.pkl'
+        # loader_param['DATAPKL_AA'] = 'subsampled_all-atom-dataset.pkl'
+        os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
     else:
         DEBUG = False 
         WANDB = True 
-        import wandb
     
     # set load params based on debug
     global LOAD_PARAM
@@ -1939,5 +1975,14 @@ if __name__ == "__main__":
                     wandb_prefix=args.wandb_prefix,
                     metrics=args.metric,
                     zero_weights=args.zero_weights,
-                    log_inputs=args.log_inputs)
+                    log_inputs=args.log_inputs,
+                    n_write_pdb=args.n_write_pdb)
+    return train
+
+if __name__ == "__main__":
+    from arguments import get_args
+    all_args = get_args()
+    if not all_args[0].debug:
+        import wandb
+    train = make_trainer(*all_args)
     train.run_model_training(torch.cuda.device_count())

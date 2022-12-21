@@ -6,10 +6,22 @@ from blosum62 import p_j_given_i as P_JGI
 import numpy as np
 from diffusion import get_beta_schedule
 from inference.utils import get_next_ca, get_next_frames
+import rf2aa.tensor_util
+import rf2aa.chemical
 
 ic.configureOutput(includeContext=True)
 
-def sample_blosum_mutations(seq, p_blosum, p_uni, p_mask):
+def sample_blosum_mutations(seq, *args, **kwargs):
+    assert len(seq.shape) == 1
+    L = len(seq)
+    is_sm = rf2aa.util.is_atom(seq) # (L)
+    sampled_seq = sample_blosum_mutations_protein(seq[~is_sm], *args, **kwargs)
+    out_seq = torch.clone(seq)
+    out_seq[~is_sm] = sampled_seq
+    return out_seq
+
+
+def sample_blosum_mutations_protein(seq, p_blosum, p_uni, p_mask):
     """
     Given a sequence,
     """
@@ -51,6 +63,7 @@ def mask_inputs(seq,
                 t1d, 
                 mask_msa, 
                 atom_mask,
+                is_sm,
                 preprocess_param,
                 diffusion_param,
                 model_param,
@@ -149,14 +162,15 @@ def mask_inputs(seq,
         assert(seq.shape[0] == 1), "Number of repeats of seq must be 1"
         L = seq.shape[-1]
 
+        assert xyz_t.shape[0] == 1, 'multiple xyz_t templates not supported'
         kwargs = {'xyz'                     :xyz_t.squeeze(),
                   'seq'                     :seq.squeeze(0),
                   'atom_mask'               :atom_mask.squeeze(),
                   'diffusion_mask'          :input_str_mask.squeeze(),
                   't_list'                  :t_list,
                   'diffuse_sidechains'      :preprocess_param['sidechain_input'],
-                  'include_motif_sidechains':preprocess_param['motif_sidechain_input']}
-        
+                  'include_motif_sidechains':preprocess_param['motif_sidechain_input'],
+                  'is_sm': is_sm}
         diffused_fullatoms, aa_masks, true_crds = diffuser.diffuse_pose(**kwargs)
 
         ############################################
@@ -205,7 +219,7 @@ def mask_inputs(seq,
             tmp_x_t[:,:3] = frames_next
             
             if preprocess_param['motif_sidechain_input']:
-                tmp_x_t[input_str_mask.squeeze(),:27] = tmp_x_t_plus1[input_str_mask.squeeze()]
+                tmp_x_t[input_str_mask.squeeze(),:] = tmp_x_t_plus1[input_str_mask.squeeze()]
             
             diffused_fullatoms[1] = tmp_x_t
             
@@ -321,7 +335,9 @@ def mask_inputs(seq,
         # TODO NRB make this work for sinusoidal embedding + sequence diffusion
         input_t1d_str_conf_mask = torch.stack([input_t1d_str_conf_mask,input_t1d_str_conf_mask], dim=0) # [n,L]
 
-        if model_param['d_time_emb'] > 0:
+        #if model_param['d_time_emb'] > 0:
+        # d_time_emb == 0 in paper args
+        if False:
             if not (seq_diffuser is None):
                 raise NotImplementedError("Sinuisoidal timestep embedding isn't implemented for sequence diffusion yet, because sequence diffusion has both sequence & structure timestep")
             # sinusoidal embedding
@@ -352,7 +368,7 @@ def mask_inputs(seq,
 
     else:
         assert len(blosum_replacement[0]) == decoded_non_motif[0].sum() and len(blosum_replacement[1]) == decoded_non_motif[1].sum()
-        seq = torch.nn.functional.one_hot(seq, num_classes=22).float() # [n,I,L,22]
+        seq = torch.nn.functional.one_hot(seq, num_classes=rf2aa.chemical.NAATOKENS).float() # [n,I,L,22]
         seq[0,:,~seq_mask[0],:21] = 0
         seq[1,:,~seq_mask[1],:21] = 0 
 
@@ -483,4 +499,4 @@ def mask_inputs(seq,
     # str_mask = input_str_mask[0]
     # xyz_t[:,:,~str_mask,:,:] = float('nan') # NOTE: not using this because diffusion is effectively the mask 
     
-    return seq, msa_masked, msa_full, xyz_t, t1d, mask_msa, t_list[:2], true_crds 
+    return seq, msa_masked, msa_full, xyz_t, t1d, mask_msa, t_list[:2], true_crds

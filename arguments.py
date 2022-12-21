@@ -7,16 +7,20 @@ import os
 import metrics
 from icecream import ic
 
-TRUNK_PARAMS = ['n_extra_block', 'n_main_block', 'n_ref_block',\
-                'd_msa', 'd_msa_full', 'd_pair', 'd_templ',\
-                'n_head_msa', 'n_head_pair', 'n_head_templ', 'd_hidden', 'd_hidden_templ', 'p_drop',\
-                'd_time_emb', 'd_time_emb_proj', 'freeze_track_motif']
-
-SE3_PARAMS = ['num_layers_full', 'num_layers_topk', 'num_channels', 'num_degrees', 'n_heads', 'div', 
-              'l0_in_features_full', 'l0_in_features_topk', 'l0_out_features_full', 'l0_out_features_topk',
-              'l1_in_features', 'l1_out_features', 'num_edge_features_full', 'num_edge_features_topk']
 
 
+
+TRUNK_PARAMS = [
+    'n_extra_block', 'n_main_block', 'n_ref_block', 'n_finetune_block',
+    'd_msa', 'd_msa_full', 'd_pair', 'd_templ', 'n_head_msa', 'n_head_pair',
+    'n_head_templ', 'd_hidden', 'd_hidden_templ', 'p_drop',
+    'use_extra_l1', 'use_atom_frames', 'freeze_track_motif'
+]
+SE3_PARAMS = [
+    'num_layers', 'num_channels', 'num_degrees', 'n_heads', 'div',
+    'l0_in_features', 'l0_out_features', 'l1_in_features', 'l1_out_features',
+    'num_edge_features'
+]
 
 def get_args(in_args=None):
     parser = argparse.ArgumentParser()
@@ -108,7 +112,10 @@ def get_args(in_args=None):
             help = 'When doing motif scaffolding, what proportion of the time do you want the motif to be "broken" into two (mask in the middle), vs the mask being split over the termini. Default = 0.5')
     data_group.add_argument('-data_pkl', type=str, default='./dataset.pkl', 
             help='Path to pickled dataset to load for training on. If path doesn\'t exist, will write new pickle with that name.')
-
+    data_group.add_argument('-data_pkl_aa', type=str, default='./all-atom-dataset.pkl', 
+            help='Path to pickled dataset to load for training on. If path doesn\'t exist, will write new pickle with that name.')
+    data_group.add_argument('-spoof_item', type=str, default='', 
+            help='Path to pickled dataset to load for training on. If path doesn\'t exist, will write new pickle with that name.')
 
     # Diffusion args 
     diff_group = parser.add_argument_group("diffusion parameters")
@@ -175,10 +182,12 @@ def get_args(in_args=None):
     trunk_group = parser.add_argument_group("Trunk module parameters")
     trunk_group.add_argument('-n_extra_block', type=int, default=4,
             help="Number of iteration blocks for extra sequences [4]")
-    trunk_group.add_argument('-n_main_block', type=int, default=32,
-            help="Number of iteration blocks for main sequences [32]")
+    trunk_group.add_argument('-n_main_block', type=int, default=8,
+            help="Number of iteration blocks for main sequences [8]")
     trunk_group.add_argument('-n_ref_block', type=int, default=4,
-            help="Number of refinement layers [4]")
+            help="Number of refinement layers")
+    trunk_group.add_argument('-n_finetune_block', type=int, default=0,
+            help="Number of finetune layers" [0])
     trunk_group.add_argument('-d_msa', type=int, default=256,
             help="Number of MSA features [256]")
     trunk_group.add_argument('-d_msa_full', type=int, default=64,
@@ -195,50 +204,45 @@ def get_args(in_args=None):
             help="Number of attention heads for template [4]")
     trunk_group.add_argument("-d_hidden", type=int, default=32,
             help="Number of hidden features [32]")
-    trunk_group.add_argument("-d_hidden_templ", type=int, default=32,
-            help="Number of hidden features for templates [32]")
+    trunk_group.add_argument("-d_hidden_templ", type=int, default=64,
+            help="Number of hidden features for templates [64]")
     trunk_group.add_argument("-p_drop", type=float, default=0.15,
             help="Dropout ratio [0.15]")
-    trunk_group.add_argument('-d_time_emb', type=int, default=0, 
-            help='Dimension of timestep embeddings before projections [0]. If zero, doesn\'t use any timestep embeddings.')
-    trunk_group.add_argument('-d_time_emb_proj', type=int, default=10, 
-            help='Dimension of the projected timestep features going onto t1d [10]')
-    trunk_group.add_argument('-no_motif_timestep', default=False, action='store_true',
-            help='If True, do NOT use a separate timestep encoding for the motif [False]')
+    trunk_group.add_argument("-no_extra_l1", dest='use_extra_l1', default='True', action='store_false',
+            help="Turn off chirality and LJ grad inputs to SE3 layers (for backwards compatibility).")
+    trunk_group.add_argument("-no_atom_frames", dest='use_atom_frames', default='True', action='store_false',
+            help="Turn off l1 features from atom frames in SE3 layers (for backwards compatibility).")
     trunk_group.add_argument('-freeze_track_motif', default=False, action='store_true',
             help='If True, manually freezes updates to the motif structure in track module')
-
+    trunk_group.add_argument('-assert_single_sequence_input', default=False, action='store_true',
+            help='If True, assert expected shapes for single sequence input')
 
     # Structure module properties
     str_group = parser.add_argument_group("structure module parameters")
-    str_group.add_argument('-num_layers_full', type=int, default=1,
-            help="Number of equivariant layers in fully-connected structure module block [1]")
-    str_group.add_argument('-num_layers_topk', type=int, default=1,
-            help="Number of equivariant layers in top-k structure module block [1]")
+    str_group.add_argument('-num_layers', type=int, default=1,
+            help="Number of equivariant layers in structure module block [1]")
     str_group.add_argument('-num_channels', type=int, default=32,
-            help="Number of channels in structure module block [32]")
+            help="Number of channels [32]")
     str_group.add_argument('-num_degrees', type=int, default=2,
             help="Number of degrees for SE(3) network [2]")
-    str_group.add_argument('-l0_in_features_full', type=int, default=8,
-            help="Number of type 0 input features for full-connected graph [8]")
-    str_group.add_argument('-l0_out_features_full', type=int, default=8,
-            help="Number of type 0 output features for full-connected graph [8]")
-    str_group.add_argument('-l0_in_features_topk', type=int, default=64,
-            help="Number of type 0 input features for top-k graph [64]")
-    str_group.add_argument('-l0_out_features_topk', type=int, default=64,
-            help="Number of type 0 output features for top-k graph [64]")
+    str_group.add_argument('-l0_in_features', type=int, default=64,
+            help="Number of type 0 input features [64]")
+    str_group.add_argument('-l0_out_features', type=int, default=64,
+            help="Number of type 0 output features [64]")
     str_group.add_argument('-l1_in_features', type=int, default=3,
             help="Number of type 1 input features [3]")
     str_group.add_argument('-l1_out_features', type=int, default=2,
             help="Number of type 1 output features [2]")
-    str_group.add_argument('-num_edge_features_full', type=int, default=32,
-            help="Number of edge features for full-connected graph [32]")
-    str_group.add_argument('-num_edge_features_topk', type=int, default=64,
-            help="Number of edge features for top-k graph [64]")
+    str_group.add_argument('-num_edge_features', type=int, default=64,
+            help="Number of edge features [64]")
     str_group.add_argument('-n_heads', type=int, default=4,
             help="Number of attention heads for SE3-Transformer [4]")
     str_group.add_argument("-div", type=int, default=4,
             help="Div parameter for SE3-Transformer [4]")
+    str_group.add_argument('-ref_num_layers', type=int, default=1,
+            help="Number of equivariant layers in structure module block [1]")
+    str_group.add_argument('-ref_num_channels', type=int, default=32,
+            help="Number of channels [32]")
 
     # Loss function parameters
     loss_group = parser.add_argument_group("loss parameters")
@@ -301,6 +305,7 @@ def get_args(in_args=None):
             help='Prefix for name of session on wandb. This MUST be specified - make it clear what general parameters were used')
     parser.add_argument('-metric', type=lambda m: getattr(metrics, m), action='append')
     parser.add_argument('-log_inputs', action='store_true', default=False)
+    parser.add_argument('-n_write_pdb', type=int, default=100)
     
     # Preprocessing parameters
     preprocess_group = parser.add_argument_group("preprocess parameters")
@@ -385,22 +390,20 @@ def get_args(in_args=None):
     trunk_param = {}
     for param in TRUNK_PARAMS:
         trunk_param[param] = getattr(args, param)
-    trunk_param['use_motif_timestep'] = not args.no_motif_timestep 
-    # 
-    SE3_param_full = {}
-    SE3_param_topk = {}
+    SE3_param = {}
     for param in SE3_PARAMS:
         if hasattr(args, param):
-            if "full" in param:
-                SE3_param_full[param[:-5]] = getattr(args, param)
-            elif "topk" in param:
-                SE3_param_topk[param[:-5]] = getattr(args, param)
-            else: # common arguments
-                SE3_param_full[param] = getattr(args, param)
-                SE3_param_topk[param] = getattr(args, param)
-    trunk_param['SE3_param_full'] = SE3_param_full
-    trunk_param['SE3_param_topk'] = SE3_param_topk
-    
+            SE3_param[param] = getattr(args, param)
+
+    SE3_ref_param = SE3_param.copy()
+
+    for param in SE3_PARAMS:
+        if hasattr(args, 'ref_'+param):
+            SE3_ref_param[param] = getattr(args, 'ref_'+param)
+
+    trunk_param['SE3_param'] = SE3_param 
+    trunk_param['SE3_ref_param'] = SE3_ref_param
+
     # Set loss params 
     loss_param = {}
     for param in ['w_frame_dist',\
