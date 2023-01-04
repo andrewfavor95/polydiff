@@ -1,0 +1,12 @@
+defaults:
+  - aa
+
+inference:
+  num_designs: 1
+  output_prefix: test_deterministic/run1
+  model_runner: NRBStyleSelfCond
+  input_pdb: /home/ahern/projects/rf_diffusion/benchmark/input/5kax.pdb
+
+contigmap:
+  contigs: ['60']
+
