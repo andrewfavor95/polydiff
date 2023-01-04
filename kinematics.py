@@ -1,5 +1,6 @@
 import numpy as np
 import torch
+from icecream import ic
 from chemical import INIT_CRDS
 
 PARAMS = {
@@ -282,15 +283,26 @@ def c6d_to_bins2(c6d, same_chain, negative=False, params=PARAMS):
     
     return torch.stack([db,ob,tb,pb],axis=-1).long()
 
-def get_init_xyz(xyz_t):
+def get_init_xyz(xyz_t, is_sm):
     # input: xyz_t (B, T, L, 14, 3)
     # ouput: xyz (B, T, L, 14, 3)
     B, T, L = xyz_t.shape[:3]
-    init = INIT_CRDS.to(xyz_t.device).reshape(1,1,1,27,3).repeat(B,T,L,1,1)
+    #init = INIT_CRDS.to(xyz_t.device).reshape(1,1,1,36,3).repeat(B,T,L,1,1)
+    ic(INIT_CRDS.shape)
+    init = INIT_CRDS.to(xyz_t.device).reshape(1,1,1,36,3)
+    init = init.repeat(B,T,L,1,1)
+    # replace small mol N and C coords with nans
+    init[:,:,is_sm, 0] = torch.nan
+    init[:,:,is_sm, 2] = torch.nan
     if torch.isnan(xyz_t).all():
         return init
 
-    mask = torch.isnan(xyz_t[:,:,:,:3]).any(dim=-1).any(dim=-1) # (B, T, L)
+    missing_prot_coord = torch.isnan(xyz_t[:,:,:,:3]).any(dim=-1).any(dim=-1) # (B, T, L)
+    missing_sm_coord = torch.isnan(xyz_t[:,:,:,1:2]).any(dim=-1).any(dim=-1) # (B, T, L)
+    mask = torch.zeros(B, T, L)
+    mask[is_sm] = missing_sm_coord
+    mask[~is_sm] = missing_prot_coord
+
     #
     center_CA = ((~mask[:,:,:,None]) * torch.nan_to_num(xyz_t[:,:,:,1,:])).sum(dim=2) / ((~mask[:,:,:,None]).sum(dim=2)+1e-4) # (B, T, 3)
     xyz_t = xyz_t - center_CA.view(B,T,1,1,3)

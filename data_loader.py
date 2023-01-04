@@ -1771,14 +1771,15 @@ class DistilledDataset(data.Dataset):
             # TODO check this is correct - NRB
             assert torch.mean(xyz_prev[:,masks_1d['input_str_mask'],1] - true_crds[None,masks_1d['input_str_mask'],1]) < 0.001
         
-        t2d_arr = []
-        for i in [0,1]:
-            t2d, mask_t_2d = get_t2d(xyz_t[i], mask_t, msa[0,0], same_chain, atom_frames)
-            t2d_arr.append(torch.clone(t2d))
-        t2d = torch.stack(t2d_arr)
-        return seq, msa, msa_masked, msa_full, mask_msa, true_crds, atom_mask, idx_pdb, xyz_t, t1d, t2d, alpha_t, xyz_prev, same_chain, unclamp, negative, masks_1d, task, chosen_dataset, little_t, mask_t, mask_prev, atom_frames, bond_feats, chirals, mask_t_2d, dataset_name, item
+        # t2d_arr = []
+        # for i in [0,1]:
+        #     t2d, mask_t_2d = get_t2d(xyz_t[i], mask_t, msa[0,0], same_chain, atom_frames)
+        #     t2d_arr.append(torch.clone(t2d))
+        # t2d = torch.stack(t2d_arr)
+        t2d = None
+        return seq, msa, msa_masked, msa_full, mask_msa, true_crds, atom_mask, idx_pdb, xyz_t, t1d, t2d, alpha_t, xyz_prev, same_chain, unclamp, negative, masks_1d, task, chosen_dataset, little_t, mask_t, mask_prev, atom_frames, bond_feats, chirals, mask_t_2d, dataset_name, item, is_sm
 
-def get_t2d(xyz_t, mask_t, seq_cat, same_chain, atom_frames):
+def get_t2d(xyz_t, is_sm, atom_frames):
     '''
     Returns t2d for a template.
 
@@ -1794,11 +1795,13 @@ def get_t2d(xyz_t, mask_t, seq_cat, same_chain, atom_frames):
     L = seq_cat.shape[0]
     seq_cat = seq_cat[None]
 
-    mask_t_2d = rf2aa.util.get_prot_sm_mask(mask_t, seq_cat).to(same_chain.device) # (T, L)
-    mask_t_2d = mask_t_2d[:,None]*mask_t_2d[:,:,None] # (T, L, L)
-    mask_t_2d = mask_t_2d.float() * same_chain.float()[None] # (ignore inter-chain region)
-    # TODO(Look into atom_frames)
-    xyz_t_frames = rf2aa.util.xyz_t_to_frame_xyz(xyz_t[None], seq_cat, atom_frames[None])
+    # # This will be all True because of the above
+    # mask_t_2d = rf2aa.util.get_prot_sm_mask(mask_t, seq_cat).to(same_chain.device) # (T, L)
+    # mask_t_2d = mask_t_2d[:,None]*mask_t_2d[:,:,None] # (T, L, L)
+
+    # mask_t_2d = mask_t_2d.float() * same_chain.float()[None] # (ignore inter-chain region)
+    xyz_t_frames = rf2aa.util.xyz_t_to_frame_xyz(xyz_t[None], is_sm, atom_frames[None])
+    mask_t_2d = torch.ones(1,L,L).bool()
     t2d = rf2aa.kinematics.xyz_to_t2d(xyz_t_frames, mask_t_2d[None])
     # Strip batch dimension
     t2d = t2d[0]

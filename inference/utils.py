@@ -21,8 +21,8 @@ import util
 import random
 import logging
 import string 
-from inference import model_runners
 import hydra
+import rf2aa.chemical
 
 ###########################################################
 #### Functions which can be called outside of Denoiser ####
@@ -640,6 +640,7 @@ class Denoise():
         rB = B@R
 
         # calculate rmsd
+        ic(A.shape, rB.shape)
         rms = rmsd(A,rB)
         self._log.info(f'Sampled motif RMSD: {rms:.2f}')
 
@@ -795,7 +796,7 @@ class Denoise():
             # build full atom representation with the new torsions but the current seq
             _, fullatom_next =  get_allatom(seq_t[None], frames_next[None], torsions_next[None])
             seq_next = torch.nn.functional.one_hot(
-                    seq_next, num_classes=22).float()
+                    seq_next, num_classes=rf2aa.chemical.NAATOKENS).float()
 
         else:
             fullatom_next = torch.full_like(xt,float('nan')).unsqueeze(0)
@@ -814,27 +815,13 @@ class Denoise():
                 pseq0 = torch.argmax(pseq0, dim=-1).cpu() # [L]
                 seq_next = self.reveal_residues(seq_t, pseq0, px0, t)
                 seq_next = torch.nn.functional.one_hot(
-                        seq_next, num_classes=22).float()
+                        seq_next, num_classes=rf2aa.chemical.NAATOKENS).float()
         
         if include_motif_sidechains:
             fullatom_next[:,diffusion_mask,:14] = xt[None,diffusion_mask]
 
         return fullatom_next.squeeze()[:,:14,:], seq_next, torsions_next, px0
 
-def sampler_selector(conf: DictConfig):
-    if conf.inference.model_runner == 'default':
-        sampler = model_runners.Sampler(conf)
-    elif conf.inference.model_runner == 'legacy':
-        sampler = model_runners.T1d28T2d45Sampler(conf)
-    elif conf.inference.model_runner == 'seq2str':
-        sampler = model_runners.Seq2StrSampler(conf)
-    elif conf.inference.model_runner == 'JWStyleSelfCond':
-        sampler = model_runners.JWStyleSelfCond(conf)
-    elif conf.inference.model_runner == 'NRBStyleSelfCond':
-        sampler = model_runners.NRBStyleSelfCond(conf)
-    else:
-        raise ValueError(f'Unrecognized sampler {conf.model_runner}')
-    return sampler
 
 def preprocess(seq, xyz_t, t, T, ppi_design, binderlen, target_res, device):
     """

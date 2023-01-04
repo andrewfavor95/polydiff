@@ -8,6 +8,9 @@ import scipy.sparse
 from chemical import *
 from scoring import *
 
+import rf2aa.kinematics
+import rf2aa.util
+
 def generate_Cbeta(N,Ca,C):
     # recreate Cb given N,Ca,C
     b = Ca - N 
@@ -563,3 +566,37 @@ def get_mu_xt_x0(xt, px0, t, schedule, alphabar_schedule, eps=1e-6):
     mu = a + b
 
     return mu, sigma
+
+def get_t2d(xyz_t, is_sm, atom_frames):
+    '''
+    Returns t2d for a template.
+
+    Parameters:
+        xyz_t: [T, L, 36, 3]
+        mask_t: [T, L, 36]
+        seq_cat: [L]
+        same_chain: [L, L]
+        atom_frames: [1, L]?
+
+    Why they are needed:
+    seq_cat: to determine small molecule or amino acid
+    mask_t: 
+    '''
+
+    # assert seq_cat.ndim == 1
+    # L = seq_cat.shape[0]
+    # seq_cat = seq_cat[None]
+    L = xyz_t.shape[1]
+
+    # # This will be all True because of the above
+    # mask_t_2d = rf2aa.util.get_prot_sm_mask(mask_t, seq_cat).to(same_chain.device) # (T, L)
+    # mask_t_2d = mask_t_2d[:,None]*mask_t_2d[:,:,None] # (T, L, L)
+
+    # mask_t_2d = mask_t_2d.float() * same_chain.float()[None] # (ignore inter-chain region)
+    # TODO(Look into atom_frames)
+    xyz_t_frames = rf2aa.util.xyz_t_to_frame_xyz(xyz_t[None], is_sm, atom_frames[None])
+    mask_t_2d = torch.ones(1,L,L).bool().to(xyz_t_frames.device)
+    t2d = rf2aa.kinematics.xyz_to_t2d(xyz_t_frames, mask_t_2d[None])
+    # Strip batch dimension
+    t2d = t2d[0]
+    return t2d, mask_t_2d

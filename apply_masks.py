@@ -361,15 +361,20 @@ def mask_inputs(seq,
     #seq_mask = input_seq_mask[0] # DJ - old, commenting out bc using seq mask from diffuser 
     seq = torch.stack([seq,seq], dim=0) # [n,I,L]
     if not seq_diffuser is None:
-
-        alldim_diffused_seq = diffused_seq_bits[:,None,:,:] # [n,I,L,20]
-        zeros = torch.zeros(2,1,L,2)
-        seq   = torch.cat((alldim_diffused_seq, zeros), dim=-1) # [n,I,L,22]
+        raise Exception('not implemented')
+        # alldim_diffused_seq = diffused_seq_bits[:,None,:,:] # [n,I,L,20]
+        # zeros = torch.zeros(2,1,L,2)
+        # seq   = torch.cat((alldim_diffused_seq, zeros), dim=-1) # [n,I,L,22]
 
     else:
+        N_SEQ_PROT = 22
+        # N_SEQ_AA = 80
+        # N_CHAR = 80
+        MASK_TOKEN = N_CHAR-1
+        # raise Exception('needs to be adapted to aa')
         assert len(blosum_replacement[0]) == decoded_non_motif[0].sum() and len(blosum_replacement[1]) == decoded_non_motif[1].sum()
         seq = torch.nn.functional.one_hot(seq, num_classes=rf2aa.chemical.NAATOKENS).float() # [n,I,L,22]
-        seq[0,:,~seq_mask[0],:21] = 0
+        # seq[0,:,~seq_mask[0],:N_TOKEN-1] = 0
         seq[1,:,~seq_mask[1],:21] = 0 
 
         seq[0,:,~seq_mask[0],21] = 1 # mask token categorical value
@@ -382,6 +387,7 @@ def mask_inputs(seq,
     ################## 
     msa_masked = torch.stack([msa_masked,msa_masked], dim=0) # [n,I,N_short,L,48]
     if not seq_diffuser is None:
+        raise Exception('not implemented')
         msa_masked[...,:20]   = diffused_seq_bits[:,None,None,:,:]
         msa_masked[...,22:42] = diffused_seq_bits[:,None,None,:,:]
 

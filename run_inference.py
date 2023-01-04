@@ -14,6 +14,12 @@ where symmetry can be the filename of any other config (without .yaml extension)
 See https://hydra.cc/docs/advanced/hydra-command-line-flags/ for more options.
 
 """
+import os
+import sys
+script_dir = os.path.dirname(os.path.realpath(__file__))
+aa_se3_path = os.path.join(script_dir, 'RF2-allatom/rf2aa/SE3Transformer')
+sys.path.insert(0, aa_se3_path)
+sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'RF2-allatom'))
 
 import re
 import os, time, pickle
@@ -28,6 +34,8 @@ from hydra.core.hydra_config import HydraConfig
 import numpy as np
 import random
 import glob
+import inference.model_runners
+ic.configureOutput(includeContext=True)
 
 def make_deterministic(seed=0):
         torch.manual_seed(seed)
@@ -42,7 +50,7 @@ def main(conf: HydraConfig) -> None:
         make_deterministic()
     
     # Initialize sampler and target/contig.
-    sampler = iu.sampler_selector(conf)
+    sampler = inference.model_runners.sampler_selector(conf)
     
     # Loop over number of designs to sample.
     design_startnum = sampler.inf_conf.design_startnum
