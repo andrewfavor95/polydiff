@@ -8,6 +8,7 @@ from diffusion import get_beta_schedule
 from inference.utils import get_next_ca, get_next_frames
 import rf2aa.tensor_util
 import rf2aa.chemical
+from rf2aa.chemical import NAATOKENS
 
 ic.configureOutput(includeContext=True)
 
@@ -367,10 +368,17 @@ def mask_inputs(seq,
         # seq   = torch.cat((alldim_diffused_seq, zeros), dim=-1) # [n,I,L,22]
 
     else:
-        N_SEQ_PROT = 22
+        # This may not need to be changed for non-small-molecule
+        # N_SEQ_PROT = 22
         # N_SEQ_AA = 80
         # N_CHAR = 80
-        MASK_TOKEN = N_CHAR-1
+        # MASK_TOKEN = rf2aa.chemical.MASK_INDEX
+        '''
+        msa_full:   NSEQ,NINDEL,NTERMINUS,
+        msa_masked: NSEQ,NSEQ,NINDEL,NINDEL,NTERMINUS
+        '''
+        NINDEL = 1
+
         # raise Exception('needs to be adapted to aa')
         assert len(blosum_replacement[0]) == decoded_non_motif[0].sum() and len(blosum_replacement[1]) == decoded_non_motif[1].sum()
         seq = torch.nn.functional.one_hot(seq, num_classes=rf2aa.chemical.NAATOKENS).float() # [n,I,L,22]
@@ -400,24 +408,24 @@ def mask_inputs(seq,
         
     else:
         # Standard autoregressive masking
-        msa_masked[0,:,:,~seq_mask[0],:21] = 0
-        msa_masked[1,:,:,~seq_mask[0],:21] = 0
+        msa_masked[0,:,:,~seq_mask[0],:NAATOKENS-1] = 0
+        msa_masked[1,:,:,~seq_mask[0],:NAATOKENS-1] = 0
 
-        msa_masked[0,:,:,~seq_mask[0],21]  = 1 # set to mask token
-        msa_masked[1,:,:,~seq_mask[1],21]  = 1 # set to mask token
+        msa_masked[0,:,:,~seq_mask[0],NAATOKENS-1]  = 1 # set to mask token
+        msa_masked[1,:,:,~seq_mask[1],NAATOKENS-1]  = 1 # set to mask token
 
         # index 44/45 is insertion/deletion
         # index 43 is the masked token NOTE check this
         # index 42 is the unknown token 
-        msa_masked[0,:,:,~seq_mask[0],22:43] = 0
-        msa_masked[1,:,:,~seq_mask[1],22:43] = 0
+        msa_masked[0,:,:,~seq_mask[0],NAATOKENS:2*NAATOKENS-1] = 0
+        msa_masked[1,:,:,~seq_mask[1],NAATOKENS:2*NAATOKENS-1] = 0
 
-        msa_masked[0,:,:,~seq_mask[0],43]    = 1
-        msa_masked[1,:,:,~seq_mask[1],43]    = 1 
+        msa_masked[0,:,:,~seq_mask[0],2*NAATOKENS-1]    = 1
+        msa_masked[1,:,:,~seq_mask[1],2*NAATOKENS-1]    = 1 
 
         # insertion/deletion stuff 
-        msa_masked[0,:,:,~seq_mask[0],44:46] = 0
-        msa_masked[1,:,:,~seq_mask[1],44:46] = 0
+        msa_masked[0,:,:,~seq_mask[0],2*NAATOKENS:2*NAATOKENS+2*NINDEL] = 0
+        msa_masked[1,:,:,~seq_mask[1],2*NAATOKENS:2*NAATOKENS+2*NINDEL] = 0
 
         # blosum mutations 
         msa_masked[0,:,:,decoded_non_motif[0],:] = 0
@@ -426,11 +434,11 @@ def mask_inputs(seq,
         msa_masked[0,:,:,decoded_non_motif[0],blosum_replacement[0]]  = 1
         msa_masked[1,:,:,decoded_non_motif[1],blosum_replacement[1]]  = 1
 
-        msa_masked[0,:,:,decoded_non_motif[0],22:44] = 0                  
-        msa_masked[1,:,:,decoded_non_motif[1],22:44] = 0                  
+        msa_masked[0,:,:,decoded_non_motif[0],NAATOKENS:2*NAATOKENS] = 0                  
+        msa_masked[1,:,:,decoded_non_motif[1],NAATOKENS:2*NAATOKENS] = 0                  
 
-        msa_masked[0,:,:,decoded_non_motif[0],22+blosum_replacement[0]] = 1
-        msa_masked[1,:,:,decoded_non_motif[1],22+blosum_replacement[1]] = 1
+        msa_masked[0,:,:,decoded_non_motif[0],NAATOKENS+blosum_replacement[0]] = 1
+        msa_masked[1,:,:,decoded_non_motif[1],NAATOKENS+blosum_replacement[1]] = 1
 
     ### msa_full ### 
     ################
@@ -447,11 +455,11 @@ def mask_inputs(seq,
         
     else:
         # Standard autoregressive masking
-        msa_full[0,:,:,~seq_mask[0],:21] = 0
-        msa_full[1,:,:,~seq_mask[1],:21] = 0
+        msa_full[0,:,:,~seq_mask[0],:NAATOKENS-1] = 0
+        msa_full[1,:,:,~seq_mask[1],:NAATOKENS-1] = 0
 
-        msa_full[0,:,:,~seq_mask[0],21]  = 1
-        msa_full[1,:,:,~seq_mask[1],21]  = 1
+        msa_full[0,:,:,~seq_mask[0],NAATOKENS-1]  = 1
+        msa_full[1,:,:,~seq_mask[1],NAATOKENS-1]  = 1
 
         msa_full[0,:,:,~seq_mask[0],-3:] = 0   
         msa_full[1,:,:,~seq_mask[1],-3:] = 0   #NOTE: double check this is insertions/deletions and 0 makes sense 
@@ -479,6 +487,7 @@ def mask_inputs(seq,
         t1d[:,:,:,21] = input_t1d_str_conf_mask[:,None,:]
         t1d[:,:,:,22] = input_t1d_seq_conf_mask[:,None,:]
     else:
+        # TODO: adapt this for small molecules using t1d shift
         t1d[0,:,~seq_mask[0],:20] = 0 
         t1d[1,:,~seq_mask[1],:20] = 0 
 

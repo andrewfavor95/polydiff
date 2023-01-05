@@ -15,6 +15,19 @@ import time
 import torch
 import torch.nn as nn
 from torch.utils import data
+
+
+
+
+#rf2_allatom = __import__('RF2-allatom')
+sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'RF2-allatom'))
+import rf2aa.chemical
+import rf2aa.data_loader
+import rf2aa.util
+import rf2aa.loss
+import rf2aa.tensor_util
+from rf2aa.util_module import ComputeAllAtomCoords
+from rf2aa.RoseTTAFoldModel import RoseTTAFoldModule
 from data_loader import (
     get_train_valid_set, loader_pdb, loader_fb, loader_complex, loader_pdb_fixbb, loader_fb_fixbb, loader_complex_fixbb, loader_cn_fixbb, default_dataset_configs,
     Dataset, DatasetComplex, DistilledDataset, DistributedWeightedSampler
@@ -27,16 +40,6 @@ import util
 from scheduler import get_stepwise_decay_schedule_with_warmup
 
 import rotation_conversions as rot_conv
-
-#rf2_allatom = __import__('RF2-allatom')
-sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'RF2-allatom'))
-import rf2aa.chemical
-import rf2aa.data_loader
-import rf2aa.util
-import rf2aa.loss
-import rf2aa.tensor_util
-from rf2aa.util_module import ComputeAllAtomCoords
-from rf2aa.RoseTTAFoldModel import RoseTTAFoldModule
 
 #added for inpainting training
 from icecream import ic
@@ -655,12 +658,9 @@ class Trainer():
         #assert not (self.ckpt_load_path is None )
         chk_fn = self.ckpt_load_path
 
-        if DEBUG:
-            chk_fn='debug'
-
         loaded_epoch = -1
         best_valid_loss = 999999.9
-        if not os.path.exists(chk_fn):
+        if DEBUG or not os.path.exists(chk_fn):
             if self.zero_weights:
                 return -1, best_valid_loss
             raise Exception(f'no model found at path: {chk_fn}, pass -zero_weights if you intend to train the model with no initialization and no starting weights')
@@ -1105,6 +1105,7 @@ class Trainer():
             mask_msa = mask_msa.to(gpu, non_blocking=True)
             xyz_prev = xyz_prev.to(gpu, non_blocking=True)
             alpha_prev = torch.zeros((B,L,rf2aa.chemical.NTOTALDOFS,2)).to(gpu, non_blocking=True)
+            mask_t_2d = mask_t_2d.to(gpu, non_blocking=True)
 
             counter += 1 
 
@@ -1139,14 +1140,15 @@ class Trainer():
                             use_msa_full   = msa_full[:,0]
                             use_xyz_prev   = xyz_prev[:,0] # grab t entry, could also make this None when not self conditioning
                             use_t1d        = t1d[:,0]
-                            use_t2d        = t2d[:,0] # May want to make this zero for self cond
+                            # use_t2d        = t2d[:,0] # May want to make this zero for self cond
                             use_xyz_t      = xyz_t[:,0]
                             use_alpha_t    = alpha_t[:,0]
                             seq_scalar = torch.argmax(use_seq[0], dim=-1)
                             # use_t2d, mask_t_2d = rf2aa.data_loader.get_t2d(
                             #     xyz_t[i], mask_t, use_msa_masked[0,0], same_chain, atom_frames)
                             # This is new
-                            use_t2d = torch.zeros_like(use_t2d)
+                            # use_t2d = torch.zeros_like(use_t2d)
+                            use_t2d = torch.zeros(B,1,L,L,68)
                             use_xyz_t = torch.zeros_like(use_xyz_t)
 
                             _, sequence_logits, _, _, px0_xyz, _, px0_allatom, _, _, _, _ = ddp_model(
@@ -1176,12 +1178,13 @@ class Trainer():
 
             # Since we are not sequence self-conditioning, much of 2-terminal index is redundant.
             # Let's assert that it's the same.
-            rf2aa.tensor_util.assert_equal(seq[:,0],seq[:,1])
-            # rf2aa.tensor_util.assert_equal(t1d[:,0],t1d[:,1]) # Last idx unequal due to confidence
-            # rf2aa.tensor_util.assert_equal(alpha_t[:,0],alpha_t[:,1]) # Unequal due to coming from different xyz_t
-            rf2aa.tensor_util.assert_equal(msa_masked[:,0],msa_masked[:,1])
-            rf2aa.tensor_util.assert_equal(msa_full[:,0],msa_full[:,1])
-            rf2aa.tensor_util.assert_equal(mask_msa[:,0],mask_msa[:,1])
+            # # Not true due to blosum
+            # rf2aa.tensor_util.assert_equal(seq[:,0],seq[:,1])
+            # # rf2aa.tensor_util.assert_equal(t1d[:,0],t1d[:,1]) # Last idx unequal due to confidence
+            # # rf2aa.tensor_util.assert_equal(alpha_t[:,0],alpha_t[:,1]) # Unequal due to coming from different xyz_t
+            # rf2aa.tensor_util.assert_equal(msa_masked[:,0],msa_masked[:,1])
+            # rf2aa.tensor_util.assert_equal(msa_full[:,0],msa_full[:,1])
+            # rf2aa.tensor_util.assert_equal(mask_msa[:,0],mask_msa[:,1])
 
             # From here on out we will operate with t = t
             seq        = seq[:,1]
@@ -1199,6 +1202,7 @@ class Trainer():
             pair_prev  = None
             state_prev = None
 
+            ic(self.preprocess_param['str_self_cond'])
             if self.preprocess_param['str_self_cond']:
                 if unroll_performed:
                     # When doing self conditioning training, the model only receives px0_xyz information through template features
@@ -1211,7 +1215,7 @@ class Trainer():
                     
                     zeros = torch.zeros(B,1,L,36-3,3).float().to(px0_xyz.device)
                     xyz_t = torch.cat((px0_xyz.unsqueeze(1),zeros), dim=-2) # [B,T,L,27,3]
-                    t2d, mask_t_2d_remade = rf2aa.util.get_t2d(
+                    t2d, mask_t_2d_remade = util.get_t2d(
                         # xyz_t[0], mask_t[0], seq_scalar[0], same_chain[0], atom_frames[0])
                         xyz_t[0], is_sm, atom_frames)
                     t2d = t2d[None] # Add batch dimension # [B,T,L,L,44]
