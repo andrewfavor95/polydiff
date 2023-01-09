@@ -16,7 +16,7 @@ import sys
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'RF2-allatom'))
 import rf2aa.data_loader
 import rf2aa.util
-from rf2aa.tensor_util import assert_shape
+from rf2aa.tensor_util import assert_equal
 import rf2aa.kinematics
 
 # for diffusion training

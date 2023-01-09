@@ -27,6 +27,7 @@ import rf2aa.data_loader
 import rf2aa.util
 import rf2aa.loss
 import rf2aa.tensor_util
+from rf2aa.tensor_util import assert_equal
 from rf2aa.util_module import ComputeAllAtomCoords
 from rf2aa.RoseTTAFoldModel import RoseTTAFoldModule
 from data_loader import (
@@ -760,6 +761,7 @@ class Trainer():
             all_param.update(self.loss_param)
             all_param.update(self.diffusion_param)
 
+            # wandb.config.update(all_param)
             wandb.config = all_param
             wandb.save(os.path.join(os.getcwd(), self.outdir, 'git_diff.txt'))
         ic(os.environ['MASTER_ADDR'], rank, world_size, torch.cuda.device_count())
@@ -1180,13 +1182,13 @@ class Trainer():
 
             # Since we are not sequence self-conditioning, much of 2-terminal index is redundant.
             # Let's assert that it's the same.
-            # # Not true due to blosum
-            # rf2aa.tensor_util.assert_equal(seq[:,0],seq[:,1])
-            # # rf2aa.tensor_util.assert_equal(t1d[:,0],t1d[:,1]) # Last idx unequal due to confidence
-            # # rf2aa.tensor_util.assert_equal(alpha_t[:,0],alpha_t[:,1]) # Unequal due to coming from different xyz_t
-            # rf2aa.tensor_util.assert_equal(msa_masked[:,0],msa_masked[:,1])
-            # rf2aa.tensor_util.assert_equal(msa_full[:,0],msa_full[:,1])
-            # rf2aa.tensor_util.assert_equal(mask_msa[:,0],mask_msa[:,1])
+            # Not true due to blosum
+            rf2aa.tensor_util.assert_equal(seq[:,0],seq[:,1])
+            # rf2aa.tensor_util.assert_equal(t1d[:,0],t1d[:,1]) # Last idx unequal due to confidence
+            # rf2aa.tensor_util.assert_equal(alpha_t[:,0],alpha_t[:,1]) # Unequal due to coming from different xyz_t
+            rf2aa.tensor_util.assert_equal(msa_masked[:,0],msa_masked[:,1])
+            rf2aa.tensor_util.assert_equal(msa_full[:,0],msa_full[:,1])
+            rf2aa.tensor_util.assert_equal(mask_msa[:,0],mask_msa[:,1])
 
             # From here on out we will operate with t = t
             seq        = seq[:,1]
@@ -1219,7 +1221,7 @@ class Trainer():
                     xyz_t = torch.cat((px0_xyz.unsqueeze(1),zeros), dim=-2) # [B,T,L,27,3]
                     t2d, mask_t_2d_remade = util.get_t2d(
                         # xyz_t[0], mask_t[0], seq_scalar[0], same_chain[0], atom_frames[0])
-                        xyz_t[0], is_sm, atom_frames)
+                        xyz_t[0], is_sm[0], atom_frames[0])
                     t2d = t2d[None] # Add batch dimension # [B,T,L,L,44]
                 else:
                     xyz_t = torch.zeros_like(xyz_t[:,1])
@@ -1455,6 +1457,7 @@ class Trainer():
                 m, s = divmod(expected_epoch_time, 60)
                 h, m = divmod(m, 60)
                 n_rates = len(self.rate_deque)
+                ic(mean_rate, self.n_epoch, expected_epoch_time, self.batch_size, world_size)
                 print(f'Expected time per epoch (h:m:s) based off {n_rates} measured pseudo batch times: {h:d}:{m:02d}:{s:.0f}')
 
             #     res_mask = 
@@ -1513,6 +1516,7 @@ def make_trainer(args, model_param, loader_param, loss_param, diffusion_param, p
         # loader_param['DATAPKL'] = 'subsampled_dataset.pkl'
         # loader_param['DATAPKL_AA'] = 'subsampled_all-atom-dataset.pkl'
         os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
+        ic.configureOutput(includeContext=True)
     else:
         DEBUG = False 
         WANDB = True 

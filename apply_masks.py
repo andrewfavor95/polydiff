@@ -8,7 +8,8 @@ from diffusion import get_beta_schedule
 from inference.utils import get_next_ca, get_next_frames
 import rf2aa.tensor_util
 import rf2aa.chemical
-from rf2aa.chemical import NAATOKENS
+from rf2aa.chemical import NAATOKENS, MASKINDEX
+from rf2aa.tensor_util import assert_equal
 
 ic.configureOutput(includeContext=True)
 
@@ -382,11 +383,11 @@ def mask_inputs(seq,
         # raise Exception('needs to be adapted to aa')
         assert len(blosum_replacement[0]) == decoded_non_motif[0].sum() and len(blosum_replacement[1]) == decoded_non_motif[1].sum()
         seq = torch.nn.functional.one_hot(seq, num_classes=rf2aa.chemical.NAATOKENS).float() # [n,I,L,22]
-        # seq[0,:,~seq_mask[0],:N_TOKEN-1] = 0
-        seq[1,:,~seq_mask[1],:21] = 0 
+        seq[0,:,~seq_mask[0],:] = 0
+        seq[1,:,~seq_mask[1],:] = 0 
 
-        seq[0,:,~seq_mask[0],21] = 1 # mask token categorical value
-        seq[1,:,~seq_mask[1],21] = 1 # mask token categorical value
+        seq[0,:,~seq_mask[0],MASKINDEX] = 1 # mask token categorical value
+        seq[1,:,~seq_mask[1],MASKINDEX] = 1 # mask token categorical value
 
         seq[0,:,decoded_non_motif[0],:22] = onehot_blosum_rep[0]
         seq[1,:,decoded_non_motif[1],:22] = onehot_blosum_rep[1] 
@@ -411,8 +412,8 @@ def mask_inputs(seq,
         msa_masked[0,:,:,~seq_mask[0],:NAATOKENS-1] = 0
         msa_masked[1,:,:,~seq_mask[0],:NAATOKENS-1] = 0
 
-        msa_masked[0,:,:,~seq_mask[0],NAATOKENS-1]  = 1 # set to mask token
-        msa_masked[1,:,:,~seq_mask[1],NAATOKENS-1]  = 1 # set to mask token
+        msa_masked[0,:,:,~seq_mask[0],MASKINDEX]  = 1 # set to mask token
+        msa_masked[1,:,:,~seq_mask[1],MASKINDEX]  = 1 # set to mask token
 
         # index 44/45 is insertion/deletion
         # index 43 is the masked token NOTE check this
@@ -420,8 +421,8 @@ def mask_inputs(seq,
         msa_masked[0,:,:,~seq_mask[0],NAATOKENS:2*NAATOKENS-1] = 0
         msa_masked[1,:,:,~seq_mask[1],NAATOKENS:2*NAATOKENS-1] = 0
 
-        msa_masked[0,:,:,~seq_mask[0],2*NAATOKENS-1]    = 1
-        msa_masked[1,:,:,~seq_mask[1],2*NAATOKENS-1]    = 1 
+        msa_masked[0,:,:,~seq_mask[0],NAATOKENS+MASKINDEX]    = 1
+        msa_masked[1,:,:,~seq_mask[1],NAATOKENS+MASKINDEX]    = 1 
 
         # insertion/deletion stuff 
         msa_masked[0,:,:,~seq_mask[0],2*NAATOKENS:2*NAATOKENS+2*NINDEL] = 0
@@ -458,11 +459,11 @@ def mask_inputs(seq,
         msa_full[0,:,:,~seq_mask[0],:NAATOKENS-1] = 0
         msa_full[1,:,:,~seq_mask[1],:NAATOKENS-1] = 0
 
-        msa_full[0,:,:,~seq_mask[0],NAATOKENS-1]  = 1
-        msa_full[1,:,:,~seq_mask[1],NAATOKENS-1]  = 1
+        msa_full[0,:,:,~seq_mask[0],MASKINDEX]  = 1
+        msa_full[1,:,:,~seq_mask[1],MASKINDEX]  = 1
 
-        msa_full[0,:,:,~seq_mask[0],-3:] = 0   
-        msa_full[1,:,:,~seq_mask[1],-3:] = 0   #NOTE: double check this is insertions/deletions and 0 makes sense 
+        msa_full[0,:,:,~seq_mask[0],NAATOKENS:NAATOKENS+NINDEL] = 0   
+        msa_full[1,:,:,~seq_mask[1],NAATOKENS:NAATOKENS+NINDEL] = 0   #NOTE: double check this is insertions/deletions and 0 makes sense 
 
         # blosum mutations 
         msa_full[0,:,:,decoded_non_motif[0],:] = 0
@@ -488,19 +489,40 @@ def mask_inputs(seq,
         t1d[:,:,:,22] = input_t1d_seq_conf_mask[:,None,:]
     else:
         # TODO: adapt this for small molecules using t1d shift
+        # Mask the diffused sequence
+
+        # # ic(blosum_replacement.shape)
+        # ic(blosum_replacement)
+        # blosum_replacement = torch.cat(blosum_replacement)
+        # ic(blosum_replacement.shape)
+        # seq_cat_shifted = blosum_replacement.argmax(dim=-1)
+        # ic(seq_cat_shifted)
+        # seq_cat_shifted[seq_cat_shifted>=MASKINDEX] -= 1
+        # # t1d_motif = torch.nn.functional.one_hot(seq_cat_shifted, num_classes=NAATOKENS-1)
+        # # ic(t1d)
+        # # t1d = t1d[None, None] # [L, NAATOKENS-1] --> [1,1,L, NAATOKENS-1]
+
+        # ic(t1d.shape, t1d.argmax(dim=-1))
+
         t1d[0,:,~seq_mask[0],:20] = 0 
         t1d[1,:,~seq_mask[1],:20] = 0 
 
         t1d[0,:,~seq_mask[0],20]  = 1
         t1d[1,:,~seq_mask[1],20]  = 1 # unknown
 
+        # ONLY FOR aa_decoding
+        # Add the motif sequence
+        t1d_before = torch.clone(t1d)
         t1d[0,:,decoded_non_motif[0],:]  = 0
         t1d[1,:,decoded_non_motif[1],:]  = 0
 
         t1d[0,:,decoded_non_motif[0],blosum_replacement[0]] = 1
         t1d[1,:,decoded_non_motif[1],blosum_replacement[1]] = 1
+        # Sanity check that t1d is not altered when not doing aa decoding.
+        if diffusion_param['aa_decode_steps'] == 0:
+            rf2aa.tensor_util.assert_equal(t1d, t1d_before)
 
-        t1d[:,:,:,21] = input_t1d_str_conf_mask[:,None,:]
+        t1d[:,:,:,-1] = input_t1d_str_conf_mask[:,None,:]
     
     # mask sidechains in the diffused region if preprocess_param['sidechain_input'] is False
     if preprocess_param['sidechain_input'] is False:

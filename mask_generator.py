@@ -144,7 +144,7 @@ def get_sm_contacts(xyz, is_atom, is_sm,
     dist_conf = (picked[:, None] - sm_crds[ None]).pow(2).sum(dim=-1).sqrt()
     dist_conf = dist_conf.nan_to_num(9999)
     picked_distances = dist_conf.min(-1)[0].min(-1)[0]
-    ic(is_motif, n_sample, picked_distances, dist_cutoff, indices)
+    #ic(is_motif, n_sample, picked_distances, dist_cutoff, indices)
 
     return is_motif
 
@@ -244,7 +244,7 @@ def generate_sm_mask(prot_masks, is_sm):
             continue
         if k == 'loss_str_mask_2d':
             continue
-        ic(k, v.shape, prot_masks[k].shape, is_sm.shape)
+        #ic(k, v.shape, prot_masks[k].shape, is_sm.shape)
         v[~is_sm] = prot_masks[k]
         mask_dict[k] = v
     mask_dict['input_seq_mask']

@@ -35,7 +35,7 @@ import numpy as np
 import random
 import glob
 import inference.model_runners
-ic.configureOutput(includeContext=True)
+# ic.configureOutput(includeContext=True)
 
 def make_deterministic(seed=0):
         torch.manual_seed(seed)
