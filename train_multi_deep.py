@@ -1448,17 +1448,13 @@ class Trainer():
 
             # Expected epoch time logging
             if rank == 0:
-                n_processed = self.batch_size*world_size
                 elapsed_time = time.time() - start_time
-                rate = n_processed / elapsed_time
-                self.rate_deque.append(rate)
-                mean_rate = np.mean(self.rate_deque)
-                expected_epoch_time = int(self.n_epoch / mean_rate)
+                n_processed = self.batch_size*world_size * counter
+                mean_rate = n_processed / elapsed_time
+                expected_epoch_time = int(self.n_train / mean_rate)
                 m, s = divmod(expected_epoch_time, 60)
                 h, m = divmod(m, 60)
-                n_rates = len(self.rate_deque)
-                ic(mean_rate, self.n_epoch, expected_epoch_time, self.batch_size, world_size)
-                print(f'Expected time per epoch (h:m:s) based off {n_rates} measured pseudo batch times: {h:d}:{m:02d}:{s:.0f}')
+                print(f'Expected time per epoch of size ({self.n_train}) (h:m:s) based off {n_processed} measured pseudo batch times: {h:d}:{m:02d}:{s:.0f}')
 
             #     res_mask = 
             #     rf2aa.utils.writepdb(f'{self.outdir}/training_pdbs/test_epoch_{epoch}_{counter}_{chosen_task[0]}_{chosen_dataset[0]}_t_{int( little_t )}pred.pdb',
