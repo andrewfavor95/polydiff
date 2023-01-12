@@ -79,35 +79,28 @@ def main(conf: HydraConfig) -> None:
             log.info(f'(cautious mode) Skipping this design because {out_prefix}.pdb already exists.')
             continue
 
-        x_init, seq_init = sampler.sample_init()
+        indep = sampler.sample_init()
 
         denoised_xyz_stack = []
         px0_xyz_stack = []
         seq_stack = []
-        chi1_stack = []
-        plddt_stack = []
 
-        x_t = torch.clone(x_init)
-        seq_t = torch.clone(seq_init)
+        rfo = None
 
         # Loop over number of reverse diffusion time steps.
         for t in range(int(sampler.t_step_input), sampler.inf_conf.final_step-1, -1):
-            px0, x_t, seq_t, tors_t, plddt = sampler.sample_step(
-                t=t, seq_t=seq_t, x_t=x_t, seq_init=seq_init, final_step=sampler.inf_conf.final_step)
+            px0, x_t, seq_t, tors_t, plddt, rfo = sampler.sample_step(
+                t, indep, rfo)
+            indep.xyz = x_t
             px0_xyz_stack.append(px0)
             denoised_xyz_stack.append(x_t)
             seq_stack.append(seq_t)
-            chi1_stack.append(tors_t[:,:])
-            plddt_stack.append(plddt[0]) # remove singleton leading dimension
         
         # Flip order for better visualization in pymol
         denoised_xyz_stack = torch.stack(denoised_xyz_stack)
         denoised_xyz_stack = torch.flip(denoised_xyz_stack, [0,])
         px0_xyz_stack = torch.stack(px0_xyz_stack)
         px0_xyz_stack = torch.flip(px0_xyz_stack, [0,])
-
-        # For logging -- don't flip
-        plddt_stack = torch.stack(plddt_stack)
 
         # Save outputs 
         os.makedirs(os.path.dirname(out_prefix), exist_ok=True)
@@ -124,17 +117,15 @@ def main(conf: HydraConfig) -> None:
 
         # pX0 last step
         out = f'{out_prefix}.pdb'
+        des_path = os.path.abspath(out)
 
         # replace mask and unknown tokens in the final seq with alanine
-        final_seq = torch.where(final_seq == 20, 0, final_seq)
-        final_seq = torch.where(final_seq == 21, 0, final_seq)
-
+        final_seq = torch.where(final_seq >= 20, 0, final_seq)
         writepdb(out, denoised_xyz_stack[0], final_seq, sampler.ppi_conf.binderlen, chain_idx=sampler.chain_idx)
 
         # run metadata
         trb = dict(
             config = OmegaConf.to_container(sampler._conf, resolve=True),
-            plddt = plddt_stack.cpu().numpy(),
             device = torch.cuda.get_device_name(torch.cuda.current_device()) if torch.cuda.is_available() else 'CPU',
             time = time.time() - start_time
         )
@@ -151,12 +142,17 @@ def main(conf: HydraConfig) -> None:
         out = f'{traj_prefix}_Xt-1_traj.pdb'
         writepdb_multi(out, denoised_xyz_stack, bfacts, 
             final_seq.squeeze(), use_hydrogens=False, backbone_only=False, chain_ids=sampler.chain_idx)
+        xt_traj_path = os.path.abspath(out)
 
         out=f'{traj_prefix}_pX0_traj.pdb'
         writepdb_multi(out, px0_xyz_stack, bfacts, 
             final_seq.squeeze(), use_hydrogens=False, backbone_only=False, chain_ids=sampler.chain_idx)
+        x0_traj_path = os.path.abspath(out)
 
         log.info(f'Finished design in {(time.time()-start_time)/60:.2f} minutes')
+        log.info(f'design : {des_path}')
+        log.info(f'Xt traj: {xt_traj_path}')
+        log.info(f'X0 traj: {x0_traj_path}')
 
 if __name__ == '__main__':
     main()

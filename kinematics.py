@@ -285,6 +285,7 @@ def c6d_to_bins2(c6d, same_chain, negative=False, params=PARAMS):
 
 def get_init_xyz(xyz_t, is_sm):
     # input: xyz_t (B, T, L, 14, 3)
+    # is_sm: [L]
     # ouput: xyz (B, T, L, 14, 3)
     B, T, L = xyz_t.shape[:3]
     #init = INIT_CRDS.to(xyz_t.device).reshape(1,1,1,36,3).repeat(B,T,L,1,1)
@@ -299,9 +300,9 @@ def get_init_xyz(xyz_t, is_sm):
 
     missing_prot_coord = torch.isnan(xyz_t[:,:,:,:3]).any(dim=-1).any(dim=-1) # (B, T, L)
     missing_sm_coord = torch.isnan(xyz_t[:,:,:,1:2]).any(dim=-1).any(dim=-1) # (B, T, L)
-    mask = torch.zeros(B, T, L)
-    mask[is_sm] = missing_sm_coord
-    mask[~is_sm] = missing_prot_coord
+    mask = torch.zeros(B, T, L).bool()
+    mask[..., is_sm] = missing_sm_coord[...,is_sm]
+    mask[..., ~is_sm] = missing_prot_coord[...,~is_sm]
 
     #
     center_CA = ((~mask[:,:,:,None]) * torch.nan_to_num(xyz_t[:,:,:,1,:])).sum(dim=2) / ((~mask[:,:,:,None]).sum(dim=2)+1e-4) # (B, T, 3)

@@ -725,9 +725,9 @@ class Denoise():
 
         Parameters:
             
-            xt (torch.tensor, required): Current coordinates at timestep t 
+            xt (torch.tensor, required): Current coordinates at timestep t: [L, 14|27, 3]
 
-            px0 (torch.tensor, required): Prediction of x0 
+            px0 (torch.tensor, required): Prediction of x0 : [L, 14|27, 3]
 
             t (int, required): timestep t
 
@@ -811,11 +811,14 @@ class Denoise():
                 zeros = torch.zeros(L,2)
                 seq_next = torch.cat((seq_next, zeros), dim=-1) # [L,22]
             else:
-                seq_t = torch.argmax(seq_t, dim=-1).cpu() # [L]
-                pseq0 = torch.argmax(pseq0, dim=-1).cpu() # [L]
-                seq_next = self.reveal_residues(seq_t, pseq0, px0, t)
-                seq_next = torch.nn.functional.one_hot(
-                        seq_next, num_classes=rf2aa.chemical.NAATOKENS).float()
+                if self.aa_decode_steps > 0:
+                    seq_t = torch.argmax(seq_t, dim=-1).cpu() # [L]
+                    pseq0 = torch.argmax(pseq0, dim=-1).cpu() # [L]
+                    seq_next = self.reveal_residues(seq_t, pseq0, px0, t)
+                    seq_next = torch.nn.functional.one_hot(
+                            seq_next, num_classes=rf2aa.chemical.NAATOKENS).float()
+                else:
+                    seq_next = seq_t
         
         if include_motif_sidechains:
             fullatom_next[:,diffusion_mask,:14] = xt[None,diffusion_mask]
