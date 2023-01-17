@@ -249,7 +249,7 @@ def writepdb(filename, atoms, seq, binderlen=None, idx_pdb=None, bfacts=None, ch
                     chain = 'A'
                 else:
                     chain = 'B'
-            elif binderlen is None:
+            else:
                 chain = 'A'
         else:
             chain = chain_idx[i]
@@ -269,8 +269,7 @@ def writepdb(filename, atoms, seq, binderlen=None, idx_pdb=None, bfacts=None, ch
         else:
             natoms = atomscpu.shape[1]
             if (natoms!=14 and natoms!=27):
-                print ('bad size!', atoms.shape)
-                assert(False)
+                assert False, f'bad size: {atoms.shape}, must be [L, 14|27,...]'
             atms = aa2long[s]
             # his prot hack
             if (s==8 and torch.linalg.norm( atomscpu[i,9,:]-atomscpu[i,5,:] ) < 1.7):

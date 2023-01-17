@@ -1,4 +1,5 @@
 import sys, os
+import shutil
 import collections
 # Insert the se3 transformer version packaged with RF2-allatom before anything else, so it doesn't end up in the python module cache.
 script_dir = os.path.dirname(os.path.realpath(__file__))
@@ -30,6 +31,7 @@ import rf2aa.tensor_util
 from rf2aa.tensor_util import assert_equal
 from rf2aa.util_module import ComputeAllAtomCoords
 from rf2aa.RoseTTAFoldModel import RoseTTAFoldModule
+import aa_model
 from data_loader import (
     get_train_valid_set, loader_pdb, loader_fb, loader_complex, loader_pdb_fixbb, loader_fb_fixbb, loader_complex_fixbb, loader_cn_fixbb, default_dataset_configs,
     Dataset, DatasetComplex, DistilledDataset, DistributedWeightedSampler
@@ -675,21 +677,25 @@ class Trainer():
         rename_model = False
         new_chk = {}
         ctr=0
-        for param in model.module.model.state_dict():
-            #print('On param ',ctr,' of ',len(model.module.model.state_dict()))
-            ctr += 1
+	# Set to false for faster loading when debugging
+        cautious = True
+        if cautious:
+            for param in model.module.model.state_dict():
+                #print('On param ',ctr,' of ',len(model.module.model.state_dict()))
+                ctr += 1
 
-            if param not in checkpoint['model_state_dict']:
-                print ('missing',param)
-                rename_model=True
-            elif (checkpoint['model_state_dict'][param].shape == model.module.model.state_dict()[param].shape):
-                new_chk[param] = checkpoint['model_state_dict'][param]
-            else:
-                print (
-                    'wrong size',param,
-                    checkpoint['model_state_dict'][param].shape,
-                     model.module.model.state_dict()[param].shape )
-
+                if param not in checkpoint['model_state_dict']:
+                    print ('missing',param)
+                    rename_model=True
+                elif (checkpoint['model_state_dict'][param].shape == model.module.model.state_dict()[param].shape):
+                    new_chk[param] = checkpoint['model_state_dict'][param]
+                else:
+                    print (
+                        'wrong size',param,
+                        checkpoint['model_state_dict'][param].shape,
+                        model.module.model.state_dict()[param].shape )
+        else:
+            new_chk = checkpoint['model_state_dict']
         model.module.model.load_state_dict(new_chk, strict=False)
         model.module.shadow.load_state_dict(new_chk, strict=False)
 
@@ -765,9 +771,12 @@ class Trainer():
             wandb.config = all_param
             wandb.save(os.path.join(os.getcwd(), self.outdir, 'git_diff.txt'))
         ic(os.environ['MASTER_ADDR'], rank, world_size, torch.cuda.device_count())
-        gpu = rank % torch.cuda.device_count()
         dist.init_process_group(backend="gloo", world_size=world_size, rank=rank)
-        torch.cuda.set_device("cuda:%d"%gpu)
+        if torch.cuda.device_count():
+            gpu = rank % torch.cuda.device_count()
+            torch.cuda.set_device("cuda:%d"%gpu)
+        else:
+            gpu = 'cpu'
         
         self.n_train = N_EXAMPLE_PER_EPOCH
 
@@ -874,12 +883,17 @@ class Trainer():
             lj_lin=self.loss_param['lj_lin']
             ).to(gpu)
         if self.log_inputs:
-            pickle_dir = pickle_function_call(model, 'forward', 'training')
+            pickle_dir, self.pickle_counter = pickle_function_call(model, 'forward', 'training')
             print(f'pickle_dir: {pickle_dir}')
-
+        if DEBUG:
+            model.verbose_checks = True
         model = EMA(model, 0.999)
         print('Instantiating DDP')
-        ddp_model = DDP(model, device_ids=[gpu], find_unused_parameters=False)
+        ddp_model = model
+        if torch.cuda.device_count():
+            ddp_model = DDP(model, device_ids=[gpu], find_unused_parameters=False)
+        else:
+            ddp_model = DDP(model, find_unused_parameters=False)
         if rank == 0:
             print ("# of parameters:", count_parameters(ddp_model))
         
@@ -1436,15 +1450,19 @@ class Trainer():
                 res_mask = torch.ones((1, L)).bool()
                 pdb_dir = os.path.join(self.outdir, 'training_pdbs')
                 os.makedirs(pdb_dir, exist_ok=True)
-                rf2aa.util.writepdb(f'{pdb_dir}/test_epoch_{epoch}_{counter}_{chosen_task[0]}_{chosen_dataset[0]}_t_{int( little_t )}_input.pdb',
+                prefix = f'{pdb_dir}/test_epoch_{epoch}_{counter}_{chosen_task[0]}_{chosen_dataset[0]}_t_{int( little_t )}'
+                rf2aa.util.writepdb(f'{prefix}_input.pdb',
                     torch.nan_to_num(xyz_prev_orig[res_mask][:,:23]), seq_unmasked[res_mask],
                     bond_feats=bond_feats[:, res_mask[0]][:, :, res_mask[0]])
-                rf2aa.util.writepdb(f'{pdb_dir}/test_epoch_{epoch}_{counter}_{chosen_task[0]}_{chosen_dataset[0]}_t_{int( little_t )}_true.pdb',
+                rf2aa.util.writepdb(f'{prefix}_true.pdb',
                     torch.nan_to_num(true_crds[res_mask][:,:23]), seq_unmasked[res_mask],
                     bond_feats=bond_feats[:, res_mask[0]][:, :, res_mask[0]])
-                rf2aa.util.writepdb(f'{pdb_dir}/test_epoch_{epoch}_{counter}_{chosen_task[0]}_{chosen_dataset[0]}_t_{int( little_t )}_pred.pdb',
+                rf2aa.util.writepdb(f'{prefix}_pred.pdb',
                     torch.nan_to_num(pred_crds[-1][res_mask][:,:23]), seq_unmasked[res_mask],
                     bond_feats=bond_feats[:, res_mask[0]][:, :, res_mask[0]])
+                if self.log_inputs:
+                    shutil.copy(self.pickle_counter.last_pickle, f'{prefix}_input_pickle.pkl')
+                print(f'writing training PDBs with prefix: {prefix}')
 
             # Expected epoch time logging
             if rank == 0:
@@ -1516,6 +1534,8 @@ def make_trainer(args, model_param, loader_param, loss_param, diffusion_param, p
     else:
         DEBUG = False 
         WANDB = True 
+    if not args.wandb:
+        WANDB = False
     
     # set load params based on debug
     global LOAD_PARAM

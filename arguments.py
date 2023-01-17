@@ -49,6 +49,8 @@ def get_args(in_args=None):
             help="Train with all weights in the model set to zero")
     train_group.add_argument('-debug', default=False, action='store_true', 
             help="If true, will set script to debug mode")
+    train_group.add_argument('-no_wandb', dest='wandb', default=True, action='store_false', 
+            help="If passed, will not use wandb")
     train_group.add_argument('-epoch_size', default=25600, action='store', type=int,
             help='Number of examples per epoch (and thus between saving epochs')
 

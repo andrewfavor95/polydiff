@@ -1,3 +1,4 @@
+import copy
 import torch
 from assertpy import assert_that
 import numpy as np
@@ -147,7 +148,7 @@ class Sampler:
 
 
         self.allatom = ComputeAllAtomCoords().to(self.device)
-        self.target_feats = iu.process_target(self.inf_conf.input_pdb, parse_hetatom=True, center=False)
+        self.target_feats = iu.process_target(self.inf_conf.input_pdb, parse_hetatom=False, center=False)
         self.chain_idx = None
 
         if self.diffuser_conf.partial_T:
@@ -341,14 +342,10 @@ class Sampler:
 
         # moved this here as should be updated each iteration of diffusion
         self.contig_map = self.construct_contig(self.target_feats)
-        self.mask_seq = torch.from_numpy(self.contig_map.inpaint_seq)[None,:]
-        self.mask_str = torch.from_numpy(self.contig_map.inpaint_str)[None,:]
-        diffusion_mask = self.mask_str
-        self.diffusion_mask = diffusion_mask
-        self.is_diffused = ~diffusion_mask[0]
 
         indep = self.model_adaptor.make_indep(self._conf.inference.input_pdb, self._conf.inference.ligand)
-        indep = self.model_adaptor.insert_contig(indep, self.contig_map)
+        indep, is_diffused = self.model_adaptor.insert_contig(indep, self.contig_map)
+        self.is_diffused = is_diffused
         if self.diffuser_conf.partial_T:
             raise Exception('not implemented')
 
@@ -367,7 +364,7 @@ class Sampler:
             seq_one_hot,
             atom_mask,
             indep.is_sm,
-            diffusion_mask=diffusion_mask.squeeze(),
+            diffusion_mask=~is_diffused,
             t_list=t_list,
             diffuse_sidechains=self.preprocess_conf.sidechain_input,
             include_motif_sidechains=self.preprocess_conf.motif_sidechain_input)
@@ -376,15 +373,15 @@ class Sampler:
         indep.xyz = xt
 
         if self.diffuser_conf.partial_T and self.seq_diffuser is None:
+            raise Exception('not implemented')
             is_motif = self.mask_seq.squeeze()
             is_shown_at_t = torch.tensor(aa_masks[-1])
             visible = is_motif | is_shown_at_t
             if self.diffuser_conf.partial_T:
-                raise Exception('not implemented')
                 seq_t[visible] = seq_orig[visible]
         else:
             # Sequence diffusion
-            visible = self.mask_seq.squeeze()
+            visible = ~is_diffused
 
         self.denoiser = self.construct_denoiser(len(self.contig_map.ref), visible=visible)
         if self.symmetry is not None:
@@ -744,7 +741,6 @@ class NRBStyleSelfCond(Sampler):
         '''
 
         rfi = self.model_adaptor.prepro(indep, t, self.is_diffused)
-        ic(self.device)
         rf2aa.tensor_util.to_device(rfi, self.device)
         seq_init = torch.nn.functional.one_hot(
                 indep.seq, num_classes=rf2aa.chemical.NAATOKENS).to(self.device).float()
@@ -768,6 +764,10 @@ class NRBStyleSelfCond(Sampler):
             if self.recycle_schedule[t-1] > 1:
                 raise Exception('not implemented')
             for rec in range(self.recycle_schedule[t-1]):
+		# This is the assertion we should be able to use, but the
+		# network's ComputeAllAtom requires even atoms to have N and C coords.                
+		# aa_model.assert_has_coords(rfi.xyz[0], indep)
+                assert not rfi.xyz[0,:,:3,:].isnan().any(), f'{t}: {rfi.xyz[0,:,:3,:]}'
                 rfo = self.model_adaptor.forward(
                                     rfi,
                                     return_infer=True)
@@ -790,11 +790,11 @@ class NRBStyleSelfCond(Sampler):
 
                         t1d[:,:,:,:20] = logits[:,None,:,:20]
                         t1d[:,:,:,20]  = 0 # Setting mask token to zero
-        px0    = rfo.get_xyz().squeeze()[:,:14]
+        px0 = rfo.get_xyz()[:,:14]
         logits = rfo.get_seq_logits()
+        seq_decoded = [rf2aa.chemical.num2aa[s] for s in rfi.seq[0]]
 
         if self.seq_diffuser is None:
-            # pseq0 = None
             # Default method of decoding sequence
             seq_probs   = torch.nn.Softmax(dim=-1)(logits.squeeze()/self.inf_conf.softmax_T)
             sampled_seq = torch.multinomial(seq_probs, 1).squeeze() # sample a single value from each position
@@ -802,7 +802,7 @@ class NRBStyleSelfCond(Sampler):
             pseq_0 = torch.nn.functional.one_hot(
                 sampled_seq, num_classes=rf2aa.chemical.NAATOKENS).to(self.device).float()
 
-            pseq_0[self.mask_seq.squeeze()] = seq_init[self.mask_seq.squeeze()].to(self.device) # [L,22]
+            pseq_0[~self.is_diffused] = seq_init[~self.is_diffused].to(self.device) # [L,22]
         else:
             # Sequence Diffusion
             pseq_0 = logits.squeeze()
@@ -820,20 +820,20 @@ class NRBStyleSelfCond(Sampler):
                 xt=rfi.xyz[0,:,:14].cpu(),
                 px0=px0,
                 t=t,
-                diffusion_mask=self.mask_str.squeeze(),
-                seq_diffusion_mask=self.mask_seq.squeeze(),
+                diffusion_mask=~self.is_diffused,
+                seq_diffusion_mask=~self.is_diffused,
                 seq_t=seq_t,
                 pseq0=pseq_0,
                 diffuse_sidechains=self.preprocess_conf.sidechain_input,
                 align_motif=self.inf_conf.align_motif,
-                include_motif_sidechains=self.preprocess_conf.motif_sidechain_input
+                include_motif_sidechains=self.preprocess_conf.motif_sidechain_input,
             )
         else:
             x_t_1 = torch.clone(px0).to(self.device)
             seq_t_1 = pseq_0
 
             # Dummy tors_t_1 prediction. Not used in final output.
-            tors_t_1 = torch.ones((self.mask_str.shape[-1], 10, 2))
+            tors_t_1 = torch.ones((self.is_diffused.shape[-1], 10, 2))
             px0 = px0.to(self.device)
 
         px0 = px0.cpu()

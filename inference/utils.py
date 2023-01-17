@@ -23,6 +23,7 @@ import logging
 import string 
 import hydra
 import rf2aa.chemical
+import aa_model
 
 ###########################################################
 #### Functions which can be called outside of Denoiser ####
@@ -640,7 +641,6 @@ class Denoise():
         rB = B@R
 
         # calculate rmsd
-        ic(A.shape, rB.shape)
         rms = rmsd(A,rB)
         self._log.info(f'Sampled motif RMSD: {rms:.2f}')
 
@@ -750,8 +750,9 @@ class Denoise():
 
         get_allatom = ComputeAllAtomCoords().to(device=xt.device)
         L,n_atom = xt.shape[:2]
-        assert (xt.shape[1]  == 14) or (xt.shape[1]  == 27)
-        assert (px0.shape[1] == 14) or (px0.shape[1] == 27)# need full atom rep for torsion calculations   
+        if diffuse_sidechains:
+            assert (xt.shape[1]  == 14) or (xt.shape[1]  == 27)
+            assert (px0.shape[1] == 14) or (px0.shape[1] == 27)# need full atom rep for torsion calculations   
 
         pseq0 = pseq0.to(seq_t.device)
 

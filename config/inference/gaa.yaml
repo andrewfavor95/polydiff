@@ -1,0 +1,13 @@
+defaults:
+  - debug
+
+inference:
+  output_prefix: debug/gaa
+  model_runner: NRBStyleSelfCond
+  input_pdb: 'benchmark/input/gaa.pdb'
+  ligand: 'UNL'
+
+contigmap:
+  contigs: ['10-100,A518-518,10-100,A616-616,10-100,A404-404,10-100']
+  length: 200-200
+

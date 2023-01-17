@@ -913,7 +913,7 @@ class Diffuser():
 
         # bring to origin and scale 
         # check if any BB atoms are nan before centering 
-        nan_mask = ~torch.isnan(xyz.squeeze()[:,:3]).any(dim=-1).any(dim=-1)
+        nan_mask = ~torch.isnan(xyz.squeeze()[:,1:2]).any(dim=-1).any(dim=-1)
         assert torch.sum(~nan_mask) == 0
 
         #Centre unmasked structure at origin, as in training (to prevent information leak)

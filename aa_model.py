@@ -1,4 +1,5 @@
 import torch
+import torch.nn.functional as F
 import ipdb
 import dataclasses
 from icecream import ic
@@ -14,13 +15,15 @@ import torch
 import copy
 import numpy as np
 from kinematics import get_init_xyz
+import chemical
 from rf2aa.chemical import MASKINDEX
 import util
+import inference.utils
 
 @dataclass
 class Indep:
-    seq: torch.Tensor
-    xyz: torch.Tensor
+    seq: torch.Tensor # [L]
+    xyz: torch.Tensor # [L, 36?, 3]
     idx: torch.Tensor
 
     # SM specific
@@ -29,6 +32,16 @@ class Indep:
     atom_frames: torch.Tensor
     same_chain: torch.Tensor
     is_sm: torch.Tensor
+
+    def write_pdb(self, path):
+        ic(self.xyz.shape, self.seq.shape)
+        # final_seq = torch.where(self.seq >= 20, 0, self.seq)
+        # util.writepdb(path, self.xyz[:,:3], final_seq)
+        seq = self.seq
+        seq = torch.where(seq == 20, 0, seq)
+        seq = torch.where(seq == 21, 0, seq)
+        rf2aa.util.writepdb(path,
+            torch.nan_to_num(self.xyz), seq, self.bond_feats)
 
 @dataclass
 class RFI:
@@ -58,7 +71,7 @@ class RFO:
     logits_pde: torch.Tensor
     xyz: torch.Tensor
     alpha_s: torch.Tensor
-    xyz_allatom: torch.Tensor
+    xyz_allatom: torch.Tensor # [1, L, 36, 3]
     lddt: torch.Tensor
     msa: torch.Tensor
     pair: torch.Tensor
@@ -68,8 +81,7 @@ class RFO:
         return self.logits_aa.permute(0,2,1)
     
     def get_xyz(self):
-        return self.xyz_allatom
-
+        return self.xyz_allatom[0]
 
 class Model:
 
@@ -83,15 +95,17 @@ class Model:
         # assert set(rfi_dict.keys()) - set()
         return RFO(*self.model(**{**rfi_dict, **kwargs}))
 
-
     def make_indep(self, pdb, parse_hetatm):
         # self.target_feats = iu.process_target(self.inf_conf.input_pdb, parse_hetatom=True, center=False)
         # init_protein_tmpl=False, init_ligand_tmpl=False, init_protein_xyz=False, init_ligand_xyz=False,
         #     parse_hetatm=False, n_cycle=10, random_noise=5.0)
         chirals = torch.Tensor()
-        atom_frames = torch.zeros((1,0,3,2))
+        atom_frames = torch.zeros((0,3,2))
 
         xyz_prot, mask_prot, idx_prot, seq_prot = parsers.parse_pdb(pdb, seq=True)
+
+        target_feats = inference.utils.parse_pdb(pdb)
+        xyz_prot, mask_prot, idx_prot, seq_prot = target_feats['xyz'], target_feats['mask'], target_feats['idx'], target_feats['seq']
         xyz_prot[:,14:] = 0 # remove hydrogens
         mask_prot[:,14:] = False
         xyz_prot = torch.tensor(xyz_prot)
@@ -110,7 +124,8 @@ class Model:
             Ls = [protein_L, sm_L]
             a3m = merge_a3m_hetero(a3m_prot, a3m_sm, Ls)
             msa = a3m['msa'].long()
-            chirals = get_chirals(mol, xyz_sm[0]) + protein_L
+            chirals = get_chirals(mol, xyz_sm[0])
+            chirals[:,:-1] += protein_L
         else:
             Ls = [msa_prot.shape[-1], 0]
             N_symmetry = 1
@@ -119,6 +134,8 @@ class Model:
         xyz = torch.full((N_symmetry, sum(Ls), NTOTAL, 3), np.nan).float()
         mask = torch.full(xyz.shape[:-1], False).bool()
         xyz[:, :Ls[0], :nprotatoms, :] = xyz_prot.expand(N_symmetry, Ls[0], nprotatoms, 3)
+        if parse_hetatm:
+            xyz[:, Ls[0]:, 1, :] = xyz_sm
         xyz = xyz[0]
         mask[:, :protein_L, :nprotatoms] = mask_prot.expand(N_symmetry, Ls[0], nprotatoms)
         idx_sm = torch.arange(max(idx_prot),max(idx_prot)+Ls[1])+200
@@ -131,7 +148,7 @@ class Model:
         bond_feats = torch.zeros((sum(Ls), sum(Ls))).long()
         bond_feats[:Ls[0], :Ls[0]] = rf2aa.util.get_protein_bond_feats(Ls[0])
         if parse_hetatm:
-            bond_feats[Ls[0]:, Ls[0]:] = rf2aa.util.get_bond_feats(mol, G)
+            bond_feats[Ls[0]:, Ls[0]:] = rf2aa.util.get_bond_feats(mol)
 
 
         same_chain = torch.zeros((sum(Ls), sum(Ls))).long()
@@ -185,6 +202,12 @@ class Model:
         o.same_chain = torch.tensor(chain_id[None, :] == chain_id[:, None])
         o.xyz = get_init_xyz(o.xyz[None, None], o.is_sm).squeeze()
 
+        # HACK.  ComputeAllAtom in the network requires N and C coords even for atomized residues,
+	# However, these have no semantic value.  TODO: Remove the network's reliance on these coordinates.
+        sm_ca = o.xyz[o.is_sm, 1]
+        o.xyz[o.is_sm,:3] = sm_ca[...,None,:]
+        o.xyz[o.is_sm] += chemical.INIT_CRDS
+
         o.bond_feats = torch.full((L_mapped, L_mapped), 0).long()
         o.bond_feats[:n_prot, :n_prot] = rf2aa.util.get_protein_bond_feats(n_prot)
         n_prot_ref = L_in-n_sm
@@ -197,8 +220,13 @@ class Model:
         o.chirals[...,:-1] = torch.tensor(hal_by_ref(o.chirals[...,:-1]))
 
         o.idx = torch.tensor([i for _, i in contig_map.hal])
-        return o
 
+        # is_diffused = torch.
+        is_diffused_prot = ~torch.from_numpy(contig_map.inpaint_str)
+        is_diffused_sm = torch.zeros(n_sm).bool()
+        is_diffused = torch.cat((is_diffused_prot, is_diffused_sm))
+
+        return o, is_diffused
 
 
     def prepro(self, indep, t, is_diffused):
@@ -390,7 +418,7 @@ class Model:
             indep.idx[None],
             indep.bond_feats[None],
             indep.chirals[None],
-            indep.atom_frames,
+            indep.atom_frames[None],
             t1d,
             t2d,
             xyz_t,
@@ -408,9 +436,50 @@ class Model:
         zeros = torch.zeros(B,1,L,36-3,3).float().to(rfi.xyz.device)
         xyz_t = torch.cat((rfo.xyz[-1:], zeros), dim=-2) # [B,T,L,27,3]
         t2d, mask_t_2d_remade = util.get_t2d(
-            xyz_t[0], indep.is_sm, rfi.atom_frames)
+            xyz_t[0], indep.is_sm, rfi.atom_frames[0])
         t2d = t2d[None] # Add batch dimension # [B,T,L,L,44]
         # xyz_t = xyz_t[...,1,:]
         rfi_sc.xyz_t = xyz_t[:,:,:,1]
         rfi_sc.t2d = t2d
         return rfi_sc
+
+def assert_has_coords(xyz, indep):
+    assert len(xyz.shape) == 3
+    missing_backbone = torch.isnan(xyz).any(dim=-1)[...,:3].any(dim=-1)
+    prot_missing_bb = missing_backbone[~indep.is_sm]
+    sm_missing_ca = torch.isnan(xyz).any(dim=-1)[...,1]
+    try:
+        assert not prot_missing_bb.any(), f'prot_missing_bb {prot_missing_bb}'
+        assert not sm_missing_ca.any(), f'sm_missing_ca {sm_missing_ca}'
+    except Exception as e:
+        print(e)
+        import ipdb
+        ipdb.set_trace()
+
+
+def has_coords(xyz, indep):
+    assert len(xyz.shape) == 3
+    missing_backbone = torch.isnan(xyz).any(dim=-1)[...,:3].any(dim=-1)
+    prot_missing_bb = missing_backbone[~indep.is_sm]
+    sm_missing_ca = torch.isnan(xyz).any(dim=-1)[...,1]
+    try:
+        assert not prot_missing_bb.any(), f'prot_missing_bb {prot_missing_bb}'
+        assert not sm_missing_ca.any(), f'sm_missing_ca {sm_missing_ca}'
+    except Exception as e:
+        print(e)
+        import ipdb
+        ipdb.set_trace()
+
+
+def pad_dim(x, dim, new_l):
+    padding = [0]*2*x.ndim
+    padding[2*dim] = new_l - x.shape[dim]
+    padding = padding[::-1]
+    print(padding)
+    return F.pad(x, pad=tuple(padding), value=0)
+
+def write_traj(path, xyz_stack, seq, bond_feats):
+    xyz23 = pad_dim(xyz_stack, 2, 23)
+    with open(path, 'w') as fh:
+        for i, xyz in enumerate(xyz23):
+            rf2aa.util.writepdb_file(fh, xyz, seq, bond_feats=bond_feats[None], modelnum=i)
