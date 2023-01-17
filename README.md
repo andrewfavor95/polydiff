@@ -158,3 +158,9 @@ However, the parameters below are definitely worth exploring:
 -inference.num_recycles: Diffusion is trained with RoseTTAFold-style recycling, which can help make better models, obviously with a cost in speed (as this is used at *every* diffusion step)
 -inference.recycle_schedule: It's probably sufficient to just to a bit of recycling at the end of the trajectory (rather than throughout). This can be specified by, e.g. `10,3/1,5`. This means that, for the last 10 steps, the model will do three recycles, and for the last step it'll do 5 recycles.
  
+**AA diffusion**
+Currently, single-chain diffusion in the presence of a ligand is supported.  For a usage example run:
+```
+./run_inference.py --config-name gaa
+```
+and check the debug/ folder for your output.
