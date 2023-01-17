@@ -1,6 +1,40 @@
 # Protein Diffusion
 
 Codes for running :Protein Diffusion.
+## All-Atom Diffusion
+
+To set up the repo after cloning it run:
+```
+git submodule init
+git submodule update
+```
+
+Currently, single-chain diffusion in the presence of a ligand is supported.  For a usage example run:
+```
+conda activate SE3-nvidia
+./run_inference.py --config-name gaa
+```
+and check the debug/ folder for your output.
+
+
+### Devloping:
+All code should be run with the `SE3-nvidia` conda environment.  To activate it run:
+```
+conda activate SE3-nvidia
+```
+
+If you want to develop the RF2-allatom submodule, run:
+```
+cd RF2-allatom
+git checkout diffusion-ready
+```
+
+to get out of the default 'detached HEAD' git state a submodule is initialized with, and then make your changes.
+
+Send a pull-request to the `aa` branch and set Woody Ahern as a reviewer.  Ping me over mattermost if I don't get to it within a day.
+
+DO NOT push directly to the `diffusion-ready` branch of RF2-allatom, please instead submit a pull-request.
+
 
 ## Description
 Protein Diffusion is a method for structure generation, with or without conditional information (a motif, target etc). It is still in development, but should be able to perform a whole range of protein design challenges.
@@ -158,9 +192,4 @@ However, the parameters below are definitely worth exploring:
 -inference.num_recycles: Diffusion is trained with RoseTTAFold-style recycling, which can help make better models, obviously with a cost in speed (as this is used at *every* diffusion step)
 -inference.recycle_schedule: It's probably sufficient to just to a bit of recycling at the end of the trajectory (rather than throughout). This can be specified by, e.g. `10,3/1,5`. This means that, for the last 10 steps, the model will do three recycles, and for the last step it'll do 5 recycles.
  
-**AA diffusion**
-Currently, single-chain diffusion in the presence of a ligand is supported.  For a usage example run:
-```
-./run_inference.py --config-name gaa
-```
-and check the debug/ folder for your output.
+
