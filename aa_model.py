@@ -475,7 +475,6 @@ def pad_dim(x, dim, new_l):
     padding = [0]*2*x.ndim
     padding[2*dim] = new_l - x.shape[dim]
     padding = padding[::-1]
-    print(padding)
     return F.pad(x, pad=tuple(padding), value=0)
 
 def write_traj(path, xyz_stack, seq, bond_feats):

@@ -60,9 +60,7 @@ def get_sampler(conf):
         existing = glob.glob(conf.inference.output_prefix + '*.pdb')
         indices = [-1]
         for e in existing:
-            print(e)
             m = re.match('.*_(\d+)\.pdb$', e)
-            print(m)
             if not m:
                 continue
             m = m.groups()[0]
@@ -153,21 +151,28 @@ def save_outputs(sampler, out_prefix, indep, denoised_xyz_stack, px0_xyz_stack, 
 
     bfacts = torch.ones_like(final_seq.squeeze())
 
+    # replace mask and unknown tokens in the final seq with alanine
+    final_seq = torch.where((final_seq == 20) | (final_seq==21), 0, final_seq)
+    
     # pX0 last step
     out = f'{out_prefix}.pdb'
+    aa_model.write_traj(out, denoised_xyz_stack[0:1], final_seq, indep.bond_feats)
     des_path = os.path.abspath(out)
 
-    # replace mask and unknown tokens in the final seq with alanine
-    final_seq = torch.where(final_seq >= 20, 0, final_seq)
-    writepdb(out, denoised_xyz_stack[0], final_seq, sampler.ppi_conf.binderlen, chain_idx=sampler.chain_idx)
+    # trajectory pdbs
+    traj_prefix = os.path.dirname(out_prefix)+'/traj/'+os.path.basename(out_prefix)
+    os.makedirs(os.path.dirname(traj_prefix), exist_ok=True)
 
-    # out = f'{out_prefix}.aa.pdb'
-    # #import ipdb
-    # #ipdb.set_trace()
-    # des_aa_path = os.path.abspath(out)
-    # sampler.model_adaptor.write_pdb( , indep, out)
+    out = f'{traj_prefix}_Xt-1_traj.pdb'
+    aa_model.write_traj(out, denoised_xyz_stack, final_seq, indep.bond_feats)
+    xt_traj_path = os.path.abspath(out)
+
+    out=f'{traj_prefix}_pX0_traj.pdb'
+    aa_model.write_traj(out, px0_xyz_stack, final_seq, indep.bond_feats)
+    x0_traj_path = os.path.abspath(out)
 
     # run metadata
+    sampler._conf.inference.input_pdb = os.path.abspath(sampler._conf.inference.input_pdb)
     trb = dict(
         config = OmegaConf.to_container(sampler._conf, resolve=True),
         device = torch.cuda.get_device_name(torch.cuda.current_device()) if torch.cuda.is_available() else 'CPU',
@@ -179,18 +184,6 @@ def save_outputs(sampler, out_prefix, indep, denoised_xyz_stack, px0_xyz_stack, 
             trb[key] = value
     with open(f'{out_prefix}.trb','wb') as f_out:
         pickle.dump(trb, f_out)
-
-    # trajectory pdbs
-    traj_prefix = os.path.dirname(out_prefix)+'/traj/'+os.path.basename(out_prefix)
-    os.makedirs(os.path.dirname(traj_prefix), exist_ok=True)
-
-    out = f'{traj_prefix}_Xt-1_traj.pdb'
-    aa_model.write_traj(out, denoised_xyz_stack, indep.seq, indep.bond_feats)
-    xt_traj_path = os.path.abspath(out)
-
-    out=f'{traj_prefix}_pX0_traj.pdb'
-    aa_model.write_traj(out, px0_xyz_stack, indep.seq, indep.bond_feats)
-    x0_traj_path = os.path.abspath(out)
 
     log.info(f'design : {des_path}')
     log.info(f'Xt traj: {xt_traj_path}')
