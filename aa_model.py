@@ -125,7 +125,8 @@ class Model:
             a3m = merge_a3m_hetero(a3m_prot, a3m_sm, Ls)
             msa = a3m['msa'].long()
             chirals = get_chirals(mol, xyz_sm[0])
-            chirals[:,:-1] += protein_L
+            if chirals.numel() !=0:
+                chirals[:,:-1] += protein_L
         else:
             Ls = [msa_prot.shape[-1], 0]
             N_symmetry = 1
