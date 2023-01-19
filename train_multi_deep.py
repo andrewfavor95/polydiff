@@ -49,6 +49,7 @@ import rotation_conversions as rot_conv
 from icecream import ic
 from apply_masks import mask_inputs
 import random
+import model_input_logger
 from model_input_logger import pickle_function_call
 
 # added for diffusion training 
@@ -672,6 +673,7 @@ class Trainer():
         print('*** FOUND MODEL CHECKPOINT ***')
         print('Located at ',chk_fn)
 
+        ic(rank)
         map_location = {"cuda:%d"%0: "cuda:%d"%rank}
         checkpoint = torch.load(chk_fn, map_location=map_location)
         rename_model = False
@@ -883,7 +885,7 @@ class Trainer():
             lj_lin=self.loss_param['lj_lin']
             ).to(gpu)
         if self.log_inputs:
-            pickle_dir, self.pickle_counter = pickle_function_call(model, 'forward', 'training')
+            pickle_dir, self.pickle_counter = pickle_function_call(model, 'forward', 'training', minifier=aa_model.minifier)
             print(f'pickle_dir: {pickle_dir}')
         if DEBUG:
             model.verbose_checks = True
@@ -1319,7 +1321,8 @@ class Trainer():
                                                                 pair_prev=None,
                                                                 state_prev=None,
                                                                 is_motif=is_motif,
-                                                                use_checkpoint=True
+                                                                use_checkpoint=True,
+                                                                **{model_input_logger.LOG_ONLY_KEY: {'t':int(little_t), 'item': item}},
                                                                 )
 
                     # find closest homo-oligomer pairs

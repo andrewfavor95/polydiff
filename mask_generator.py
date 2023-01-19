@@ -138,6 +138,7 @@ def get_sm_contacts(xyz, is_atom, is_sm,
     is_motif = torch.zeros(L).bool()
     is_motif[is_sm] = True
     is_motif[indices] = True
+    ic('DEBUG', candidate_indices, is_motif)
 
     # Verification
     picked = crds[is_motif]
@@ -203,6 +204,7 @@ def get_diffusion_mask(
     masks = [m for m, _ in mask_probs]
     props = [p for _, p in mask_probs]
     get_mask = np.random.choice(masks, p=props)
+    ic('DEBUG: get_mask', is_sm.any(), get_mask)
     if is_sm.any():
         if get_mask in regular_to_sm:
             get_mask = regular_to_sm[get_mask]

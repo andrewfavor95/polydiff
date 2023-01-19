@@ -38,6 +38,7 @@ sys.path.append('../') # to access RF structure prediction stuff
 # When you import this it causes a circular import due to the changes made in apply masks for self conditioning
 # This import is only used for SeqToStr Sampling though so can be fixed later - NRB
 # import data_loader 
+import model_input_logger
 from model_input_logger import pickle_function_call
 
 TOR_INDICES  = util.torsion_indices
@@ -297,7 +298,7 @@ class Sampler:
             ).to(self.device)
         
         if self._conf.logging.inputs:
-            pickle_dir = pickle_function_call(model, 'forward', 'inference')
+            pickle_dir = pickle_function_call(model, 'forward', 'inference', minifier=aa_model.minifier)
             print(f'pickle_dir: {pickle_dir}')
         model = model.eval()
         self._log.info(f'Loading checkpoint.')
@@ -389,12 +390,13 @@ class Sampler:
             xt, seq_t = self.symmetry.apply_symmetry(xt, seq_t)
         
         if return_forward_trajectory:
-            raise Exception('not implemented')
             forward_traj = torch.cat([xyz_true[None], fa_stack[:,:,:]])
             if self.seq_diffuser is None:
-                aa_masks[:, diffusion_mask.squeeze()] = True
-                return xt, seq_t, forward_traj, aa_masks, seq_orig
+                # aa_masks[:, diffusion_mask.squeeze()] = True
+                # return xt, forward_traj
+                return indep, forward_traj
             else:
+                raise Exception('not implemented')
                 # Seq Diffusion
                 return xt, seq_t, forward_traj, diffused_seq_stack, seq_orig
         
@@ -770,7 +772,11 @@ class NRBStyleSelfCond(Sampler):
                 assert not rfi.xyz[0,:,:3,:].isnan().any(), f'{t}: {rfi.xyz[0,:,:3,:]}'
                 rfo = self.model_adaptor.forward(
                                     rfi,
-                                    return_infer=True)
+                                    return_infer=True,
+                                    **{model_input_logger.LOG_ONLY_KEY: {
+                                        't':t,
+                                        'output_prefix':self.output_prefix,
+                                    }})
 
                 if self.symmetry is not None and self.inf_conf.symmetric_self_cond:
                     raise Exception('not implemented')

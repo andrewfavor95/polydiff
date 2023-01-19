@@ -363,40 +363,41 @@ def torsion(a,b,c,d, eps=1e-6):
     return cos_sin
 
 ## ideal N-C distance, ideal cos(CA-C-N angle), ideal cos(C-N-CA angle)
-#def calc_BB_bond_geom(pred, eps=1e-6, ideal_NC=1.329, ideal_CACN=-0.4415, ideal_CNCA=-0.5255, sig_len=0.02, sig_ang=0.05):
-#    '''
-#    Calculate backbone bond geometry (bond length and angle) and put loss on them
-#    Input:
-#     - pred: predicted coords (B, L, :, 3), 0; N / 1; CA / 2; C
-#     - true: True coords (B, L, :, 3)
-#    Output:
-#     - bond length loss, bond angle loss
-#    '''
-#    def cosangle( A,B,C ):
-#        AB = A-B
-#        BC = C-B
-#        ABn = torch.sqrt( torch.sum(torch.square(AB),dim=-1) + eps)
-#        BCn = torch.sqrt( torch.sum(torch.square(BC),dim=-1) + eps)
-#        return torch.clamp(torch.sum(AB*BC,dim=-1)/(ABn*BCn), -0.999,0.999)
-#
-#    B, L = pred.shape[:2]
-#
-#    # bond length: N-CA, CA-C, C-N
-#    blen_CN_pred  = length(pred[:,:-1,2], pred[:,1:,0]).reshape(B,L-1) # (B, L-1)
-#    CN_loss = torch.clamp( torch.abs(blen_CN_pred - ideal_NC) - sig_len, min=0.0 )
-#    CN_loss = (CN_loss).sum() / (L)
-#    blen_loss = CN_loss   #fd squared loss
-#
-#    # bond angle: CA-C-N, C-N-CA
-#    bang_CACN_pred = cosangle(pred[:,:-1,2], pred[:,1:,0], pred[:,1:,1]).reshape(B,L-1)
-#    bang_CNCA_pred = cosangle(pred[:,:-1,2], pred[:,1:,0], pred[:,1:,1]).reshape(B,L-1)
-#    CACN_loss = torch.clamp( torch.abs(bang_CACN_pred - ideal_CACN) - sig_ang,  min=0.0 )
-#    CACN_loss = (CACN_loss).sum() / (L)
-#    CNCA_loss = torch.clamp( torch.abs(bang_CNCA_pred - ideal_CNCA) - sig_ang,  min=0.0 )
-#    CNCA_loss = (CNCA_loss).sum() / (L)
-#    bang_loss = CACN_loss + CNCA_loss
-#
-#    return blen_loss, bang_loss
+def calc_BB_bond_geom_absolute(pred, eps=1e-6, ideal_NC=1.329, ideal_CACN=-0.4415, ideal_CNCA=-0.5255, sig_len=0.02, sig_ang=0.05):
+    # WIP
+    '''
+    Calculate backbone bond geometry (bond length and angle) and put loss on them
+    Input:
+     - pred: predicted coords (B, L, :, 3), 0; N / 1; CA / 2; C
+     - true: True coords (B, L, :, 3)
+    Output:
+     - bond length loss, bond angle loss
+    '''
+    def cosangle( A,B,C ):
+        AB = A-B
+        BC = C-B
+        ABn = torch.sqrt( torch.sum(torch.square(AB),dim=-1) + eps)
+        BCn = torch.sqrt( torch.sum(torch.square(BC),dim=-1) + eps)
+        return torch.clamp(torch.sum(AB*BC,dim=-1)/(ABn*BCn), -0.999,0.999)
+
+    B, L = pred.shape[:2]
+
+    # bond length: N-CA, CA-C, C-N
+    blen_CN_pred  = length(pred[:,:-1,2], pred[:,1:,0]).reshape(B,L-1) # (B, L-1)
+    CN_loss = torch.clamp( torch.abs(blen_CN_pred - ideal_NC) - sig_len, min=0.0 )
+    CN_loss = (CN_loss).sum() / (L)
+    blen_loss = CN_loss   #fd squared loss
+
+    # bond angle: CA-C-N, C-N-CA
+    bang_CACN_pred = cosangle(pred[:,:-1,2], pred[:,1:,0], pred[:,1:,1]).reshape(B,L-1)
+    bang_CNCA_pred = cosangle(pred[:,:-1,2], pred[:,1:,0], pred[:,1:,1]).reshape(B,L-1)
+    CACN_loss = torch.clamp( torch.abs(bang_CACN_pred - ideal_CACN) - sig_ang,  min=0.0 )
+    CACN_loss = (CACN_loss).sum() / (L)
+    CNCA_loss = torch.clamp( torch.abs(bang_CNCA_pred - ideal_CNCA) - sig_ang,  min=0.0 )
+    CNCA_loss = (CNCA_loss).sum() / (L)
+    bang_loss = CACN_loss + CNCA_loss
+
+    return blen_loss, bang_loss
 def calc_BB_bond_geom(pred, true, mask_crds, eps=1e-6):
     '''
     Calculate backbone bond geometry (bond length and angle) and put loss on them

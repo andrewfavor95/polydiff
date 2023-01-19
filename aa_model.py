@@ -483,3 +483,11 @@ def write_traj(path, xyz_stack, seq, bond_feats):
     with open(path, 'w') as fh:
         for i, xyz in enumerate(xyz23):
             rf2aa.util.writepdb_file(fh, xyz, seq, bond_feats=bond_feats[None], modelnum=i)
+
+def minifier(argument_map):
+    argument_map['out_9'] = None
+    argument_map['out_0'] = None
+    argument_map['out_2'] = None
+    argument_map['out_3'] = None
+    argument_map['out_5'] = None
+    argument_map['t2d'] = None
