@@ -23,6 +23,7 @@ sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'RF2-al
 
 import re
 import os, time, pickle
+import dataclasses
 import torch 
 from omegaconf import DictConfig, OmegaConf
 import hydra
@@ -89,6 +90,40 @@ def sample(sampler):
         sampler_out = sample_one(sampler)
         log.info(f'Finished design in {(time.time()-start_time)/60:.2f} minutes')
         save_outputs(sampler, out_prefix, *sampler_out)
+ 
+        # TEMPORARY HACK (jue): Rename ligand and ligand atoms
+        if sampler._conf.inference.ligand:
+            rename_ligand_atoms(sampler._conf.inference.input_pdb, out_prefix+'.pdb')
+
+def rename_ligand_atoms(ref_fn, out_fn):
+    """Copies names of ligand residue and ligand heavy atoms from input pdb
+    into output (design) pdb."""
+
+    def is_H(atomname):
+        """Returns true if a string starts with 'H' followed by non-letters (numbers)"""
+        letters = ''.join([c for c in atomname.strip() if c.isalpha()])
+        return letters=='H'
+
+    with open(ref_fn) as f:
+        input_lig_lines = [line.strip() for line in f.readlines()
+                           if line.startswith('HETATM') and not is_H(line[13:17])]
+
+    with open(out_fn) as f:
+        lines = [line.strip() for line in f.readlines()]
+
+    lines2 = []
+    i_input = 0
+    for line in lines:
+        if line.startswith('HETATM'):
+            lines2.append(line[:13] + input_lig_lines[i_input][13:21] + line[21:])
+            i_input += 1
+        else:
+            lines2.append(line)
+
+    with open(out_fn,'w') as f:
+        for line in lines2:
+            print(line, file=f)
+
 
 def sample_one(sampler, simple_logging=False):
         # For intermediate output logging
@@ -177,7 +212,7 @@ def save_outputs(sampler, out_prefix, indep, denoised_xyz_stack, px0_xyz_stack, 
         config = OmegaConf.to_container(sampler._conf, resolve=True),
         device = torch.cuda.get_device_name(torch.cuda.current_device()) if torch.cuda.is_available() else 'CPU',
         px0_xyz_stack = px0_xyz_stack,
-        indep=indep,
+        indep=dataclasses.asdict(indep),
     )
     if hasattr(sampler, 'contig_map'):
         for key, value in sampler.contig_map.get_mappings().items():
