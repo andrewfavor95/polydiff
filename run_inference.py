@@ -104,22 +104,27 @@ def rename_ligand_atoms(ref_fn, out_fn):
         letters = ''.join([c for c in atomname.strip() if c.isalpha()])
         return letters=='H'
 
+    # get input ligand lines
     with open(ref_fn) as f:
         input_lig_lines = [line.strip() for line in f.readlines()
                            if line.startswith('HETATM') and not is_H(line[13:17])]
 
+    # get output pdb file lines
     with open(out_fn) as f:
         lines = [line.strip() for line in f.readlines()]
 
+    # replace output ligand atom and residue names with those from input ligand
     lines2 = []
     i_input = 0
     for line in lines:
         if line.startswith('HETATM'):
-            lines2.append(line[:13] + input_lig_lines[i_input][13:21] + line[21:])
+            # col 13-16: atom name; col 17-20: ligand name
+            lines2.append(line[:13] + input_lig_lines[i_input][13:21] + line[21:]) 
             i_input += 1
         else:
             lines2.append(line)
 
+    # write new output pdb file
     with open(out_fn,'w') as f:
         for line in lines2:
             print(line, file=f)
