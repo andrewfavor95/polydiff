@@ -19,7 +19,7 @@ import sys
 script_dir = os.path.dirname(os.path.realpath(__file__))
 aa_se3_path = os.path.join(script_dir, 'RF2-allatom/rf2aa/SE3Transformer')
 sys.path.insert(0, aa_se3_path)
-sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'RF2-allatom'))
+sys.path.append(os.path.join(script_dir, 'RF2-allatom'))
 
 import re
 import os, time, pickle
@@ -217,8 +217,8 @@ def save_outputs(sampler, out_prefix, indep, denoised_xyz_stack, px0_xyz_stack, 
     trb = dict(
         config = OmegaConf.to_container(sampler._conf, resolve=True),
         device = torch.cuda.get_device_name(torch.cuda.current_device()) if torch.cuda.is_available() else 'CPU',
-        px0_xyz_stack = px0_xyz_stack,
-        indep=dataclasses.asdict(indep),
+        px0_xyz_stack = px0_xyz_stack.detach().cpu().numpy(),
+        indep={k:v.detach().cpu().numpy() for k,v in dataclasses.asdict(indep).items()},
     )
     if hasattr(sampler, 'contig_map'):
         for key, value in sampler.contig_map.get_mappings().items():
