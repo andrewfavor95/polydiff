@@ -100,14 +100,15 @@ def rename_ligand_atoms(ref_fn, out_fn):
     into output (design) pdb."""
 
     def is_H(atomname):
-        """Returns true if a string starts with 'H' followed by non-letters (numbers)"""
+        """Returns true if the first non-numeric character of `atomname` is 'H'
+        and any subsequent letter is uppercase."""
         letters = ''.join([c for c in atomname.strip() if c.isalpha()])
-        return letters=='H'
+        return letters.startswith('H') and letters.isupper() # True for "HB", False for "Hg"
 
     # get input ligand lines
     with open(ref_fn) as f:
         input_lig_lines = [line.strip() for line in f.readlines()
-                           if line.startswith('HETATM') and not is_H(line[13:17])]
+                           if line.startswith('HETATM') and not is_H(line[12:16])]
 
     # get output pdb file lines
     with open(out_fn) as f:
@@ -118,8 +119,8 @@ def rename_ligand_atoms(ref_fn, out_fn):
     i_input = 0
     for line in lines:
         if line.startswith('HETATM'):
-            # col 13-16: atom name; col 17-20: ligand name
-            lines2.append(line[:13] + input_lig_lines[i_input][13:21] + line[21:]) 
+            # col 12-15: atom name; col 17-19: ligand name
+            lines2.append(line[:12] + input_lig_lines[i_input][12:20] + line[20:]) 
             i_input += 1
         else:
             lines2.append(line)
