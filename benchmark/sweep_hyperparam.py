@@ -48,9 +48,14 @@ def main():
     # parse pre-defined benchmarks
     print('This is benchmarks json')
     print(args.benchmark_json)
-    with open(script_dir+args.benchmark_json) as f: 
+    if not args.benchmark_json.startswith('/'):
+        args.benchmark_json =script_dir+args.benchmark_json
+    with open(args.benchmark_json) as f: 
         benchmarks = json.load(f)
+    outdir_is_absolute = args.out.startswith('/')
     input_path = script_dir+'input/' # prepend path to input pdbs in current repo
+    if outdir_is_absolute:
+        input_path = ''
     benchmark_list = []
     if args.benchmarks is not None:
         if args.benchmarks[0]=='all':
@@ -119,7 +124,7 @@ def main():
 
         for istart in np.arange(0, args.num_per_condition, args.num_per_job):
             log_fn = log_pre+f'_{istart}.log'
-            print(f'source activate SE3nv; python {args.command} {extra_args} '\
+            print(f'source activate SE3-nvidia; python {args.command} {extra_args} '\
                   f'inference.num_designs={args.num_per_job} inference.design_startnum={istart} >> {log_fn}', file=job_list_file)
 
         # copy input pdbs
@@ -141,7 +146,7 @@ def main():
             job_name = 'sweep_hyp_'+os.path.basename(os.path.dirname(args.out))
         if args.p == 'cpu':
             args.gres = ""
-        slurm_job, proc = slurm_tools.array_submit(job_fn, p = args.p, gres=args.gres, log=args.keep_logs, J=job_name, t=args.t)
+        slurm_job, proc = slurm_tools.array_submit(job_fn, p = args.p, gres=args.gres, log=args.keep_logs, J=job_name, t=args.t, in_proc=args.in_proc)
         print(f'Submitted array job {slurm_job} with {len(arg_combos)*args.num_per_condition/args.num_per_job} jobs to make {len(arg_combos)*args.num_per_condition} designs')
 
         
