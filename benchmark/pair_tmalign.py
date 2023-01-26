@@ -25,6 +25,7 @@ def main():
     parser.add_argument('--wait_for',type=str, nargs='+', help='Space-separated slurm job IDs to wait for before starting the scoring jobs')
     parser.add_argument('--no_submit', dest='submit', action="store_false", default=True, help='Do not submit slurm array job, only generate job list.')
     parser.add_argument('--no_logs', dest='keep_logs', action="store_false", default=True, help='Don\'t keep slurm logs.')
+    parser.add_argument('--in_proc', dest='in_proc', action="store_true", default=False, help='Do not submit slurm array job, only generate job list.')
     args = parser.parse_args()
 
     # subdivide designs
@@ -77,7 +78,7 @@ def main():
             job_name = args.J 
         else:
             job_name = 'tmalign_'+os.path.basename(args.datadir.strip('/'))
-        slurm_job, proc = slurm_tools.array_submit(job_fn, p = args.p, gres="", log=args.keep_logs, J=job_name, wait_for=args.wait_for, t=args.t)
+        slurm_job, proc = slurm_tools.array_submit(job_fn, p = args.p, gres="", log=args.keep_logs, J=job_name, wait_for=args.wait_for, t=args.t, in_proc=args.in_proc)
         print(f'Submitted array job {slurm_job} for pairwise TM-align')
 
 if __name__ == "__main__":

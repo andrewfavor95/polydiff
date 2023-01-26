@@ -6,6 +6,7 @@
 import sys, os, re, subprocess, time, argparse
 from icecream import ic
 script_dir = os.path.dirname(os.path.realpath(__file__))+'/'
+IN_PROC = False
     
 def main():
     # parse --out argument for this script
@@ -22,6 +23,8 @@ def main():
     parser.add_argument('--af2_chunk', dest='af2_chunk', default=100, type=int, help='Do not submit slurm array job, run on current node.')
     args, unknown = parser.parse_known_args()
     passed_on_args = '--in_proc' if args.in_proc else ''
+    global IN_PROC
+    IN_PROC = args.in_proc
 
     outdir = os.path.dirname(args.out)
     job_id_tmalign=None
@@ -32,6 +35,7 @@ def main():
             script = f'{script_dir}sweep_hyperparam_inpaint.py'
         else:
             script = f'{script_dir}sweep_hyperparam.py'
+        print('run pipeline step')
         jobid_sweep = run_pipeline_step(f'{script} {arg_str}')
 
         print('Waiting for design jobs to finish...')
@@ -40,7 +44,7 @@ def main():
     if args.start_step in ['sweep','mpnn']:
         jobid_mpnn = run_pipeline_step(f'{script_dir}mpnn_designs.py --num_seq_per_target {args.num_seq_per_target} --chunk 100 -p cpu --gres "" {outdir} {passed_on_args}')
 
-        jobid_tmalign = run_pipeline_step(f'{script_dir}pair_tmalign.py {outdir}')
+        jobid_tmalign = run_pipeline_step(f'{script_dir}pair_tmalign.py {outdir} {passed_on_args}')
 
     if args.start_step in ['sweep','mpnn']:
         print('Waiting for MPNN jobs to finish...')
@@ -80,10 +84,13 @@ def run_pipeline_step(cmd):
     '''Runs a script in shell, prints its output, quits if there's an error,
     and returns list of slurm ids that appear in its output'''
 
-    proc = subprocess.run(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-
-    out = proc.stdout.decode()
-    print(out)
+    if IN_PROC:
+        proc = subprocess.run(cmd, shell=True)
+        out = ''
+    else:
+        proc = subprocess.run(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        out = proc.stdout.decode()
+        print(out)
 
     if proc.returncode != 0: 
         sys.exit(proc.stderr.decode())
