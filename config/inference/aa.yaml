@@ -3,6 +3,6 @@ defaults:
   - base
 
 inference:
-  ckpt_path: /home/ahern/projects/rf_diffusion/train_session2023-01-09_1673291857.7027779/models/BFF_4.pt
+  ckpt_path: /home/ahern/projects/rf_diffusion/train_session2023-01-09_1673291857.7027779/models/BFF_10.pt
   align_motif: False
   str_self_cond: True
