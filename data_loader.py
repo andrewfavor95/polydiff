@@ -1335,58 +1335,59 @@ def loader_complex_fixbb(item, L_s, taxID, assem, params, negative=False, pick_t
            xyz_t.float(), f1d_t.float(), xyz_prev.float(), \
            chain_idx, False, False, complete_chain, mask #complete chain is [chainA or B, length of first chain]
 
-class Dataset(data.Dataset):
-    def __init__(self, IDs, loader, item_dict, params, homo, unclamp_cut=0.9, pick_top=True, p_homo_cut=-1.0):
-        self.IDs = IDs
-        self.item_dict = item_dict
-        self.loader = loader
-        self.params = params
-        self.homo = homo
-        self.pick_top = pick_top
-        self.unclamp_cut = unclamp_cut
-        self.p_homo_cut = p_homo_cut
+# class Dataset(data.Dataset):
+#     def __init__(self, IDs, loader, item_dict, params, homo, unclamp_cut=0.9, pick_top=True, p_homo_cut=-1.0):
+#         self.IDs = IDs
+#         self.item_dict = item_dict
+#         self.loader = loader
+#         self.params = params
+#         self.homo = homo
+#         self.pick_top = pick_top
+#         self.unclamp_cut = unclamp_cut
+#         self.p_homo_cut = p_homo_cut
 
-    def __len__(self):
-        return len(self.IDs)
+#     def __len__(self):
+#         return len(self.IDs)
 
-    def __getitem__(self, index):
-        ID = self.IDs[index]
-        sel_idx = np.random.randint(0, len(self.item_dict[ID]))
-        p_unclamp = np.random.rand()
-        if p_unclamp > self.unclamp_cut:
-            out = self.loader(sel_item[0], self.params, self.homo,
-                              unclamp=True, 
-                              pick_top=self.pick_top, 
-                              p_homo_cut=self.p_homo_cut)
-        else:
-            out = self.loader(sel_item[0], self.params, self.homo, 
-                              pick_top=self.pick_top,
-                              p_homo_cut=self.p_homo_cut)
-        return out
+#     def __getitem__(self, index):
+#         ID = self.IDs[index]
+#         sel_idx = np.random.randint(0, len(self.item_dict[ID]))
+#         p_unclamp = np.random.rand()
+#         if p_unclamp > self.unclamp_cut:
+#             out = self.loader(sel_item[0], self.params, self.homo,
+#                               unclamp=True, 
+#                               pick_top=self.pick_top, 
+#                               p_homo_cut=self.p_homo_cut)
+#         else:
+#             out = self.loader(sel_item[0], self.params, self.homo, 
+#                               pick_top=self.pick_top,
+#                               p_homo_cut=self.p_homo_cut)
+#         return out
 
-class DatasetComplex(data.Dataset):
-    def __init__(self, IDs, loader, item_dict, params, pick_top=True, negative=False):
-        self.IDs = IDs
-        self.item_dict = item_dict
-        self.loader = loader
-        self.params = params
-        self.pick_top = pick_top
-        self.negative = negative
+# class DatasetComplex(data.Dataset):
+#     def __init__(self, IDs, loader, item_dict, params, pick_top=True, negative=False):
+#         self.IDs = IDs
+#         self.item_dict = item_dict
+#         self.loader = loader
+#         self.params = params
+#         self.pick_top = pick_top
+#         self.negative = negative
 
-    def __len__(self):
-        return len(self.IDs)
+#     def __len__(self):
+#         return len(self.IDs)
 
-    def __getitem__(self, index):
-        ID = self.IDs[index]
-        sel_idx = np.random.randint(0, len(self.item_dict[ID]))
-        out = self.loader(sel_item[0],
-                          sel_item[1],
-                          sel_item[2],
-                          sel_item[3],
-                          self.params,
-                          pick_top = self.pick_top,
-                          negative = self.negative)
-        return out
+#     def __getitem__(self, index):
+#         ID = self.IDs[index]
+#         sel_idx = np.random.randint(0, len(self.item_dict[ID]))
+#         out = self.loader(sel_item[0],
+#                           sel_item[1],
+#                           sel_item[2],
+#                           sel_item[3],
+#                           self.params,
+#                           pick_top = self.pick_top,
+#                           negative = self.negative)
+#         return out
+
 
 @dataclass
 class WeightedDataset:
@@ -1398,23 +1399,26 @@ class WeightedDataset:
 def default_dataset_configs(loader_param, debug=False):
     print('Getting train/valid set...')
     #add in all-atom datasets
-    (
-        pdb_items, fb_items, compl_items, neg_items, na_compl_items, na_neg_items, rna_items,
-        sm_compl_items, sm_items, valid_pdb, valid_homo, valid_compl, valid_neg, valid_na_compl, 
-        valid_na_neg, valid_rna, valid_sm_compl, valid_sm_compl_ligclus, valid_sm_compl_strict, 
-        valid_sm, valid_pep, homo
-    ) = rf2aa.data_loader.get_train_valid_set({**rf2aa.data_loader.default_dataloader_params, **loader_param, **{'DATAPKL': loader_param['DATAPKL_AA']}}, no_match_okay=debug)
+    # (
+    #     pdb_items, fb_items, compl_items, neg_items, na_compl_items, na_neg_items, rna_items,
+    #     sm_compl_items, sm_items, valid_pdb, valid_homo, valid_compl, valid_neg, valid_na_compl, 
+    #     valid_na_neg, valid_rna, valid_sm_compl, valid_sm_compl_ligclus, valid_sm_compl_strict, 
+    #     valid_sm, valid_pep, homo
+    # ) = rf2aa.data_loader.get_train_valid_set({**rf2aa.data_loader.default_dataloader_params, **loader_param, **{'DATAPKL': loader_param['DATAPKL_AA']}}, no_match_okay=debug)
+    train_ID_dict, valid_ID_dict, weights_dict, train_dict, valid_dict, homo, chid2hash, chid2L, chid2taxid = \
+            rf2aa.data_loader.get_train_valid_set({**rf2aa.data_loader.default_dataloader_params, **loader_param, **{'DATAPKL': loader_param['DATAPKL_AA']}}, no_match_okay=debug, legacy_datapkl=False)
 
-    pdb_IDs, pdb_weights, pdb_dict = pdb_items
-    fb_IDs, fb_weights, fb_dict = fb_items
-    compl_IDs, compl_weights, compl_dict = compl_items
-    neg_IDs, neg_weights, neg_dict = neg_items
-    na_compl_IDs, na_compl_weights, na_compl_dict = na_compl_items
-    na_neg_IDs, na_neg_weights, na_neg_dict = na_neg_items
-    rna_IDs, rna_weights, rna_dict = rna_items
-    sm_compl_IDs, sm_compl_weights, sm_compl_dict = sm_compl_items
+    # pdb_IDs, pdb_weights, pdb_dict = pdb_items
+    # fb_IDs, fb_weights, fb_dict = fb_items
+    # compl_IDs, compl_weights, compl_dict = compl_items
+    # neg_IDs, neg_weights, neg_dict = neg_items
+    # na_compl_IDs, na_compl_weights, na_compl_dict = na_compl_items
+    # na_neg_IDs, na_neg_weights, na_neg_dict = na_neg_items
+    # rna_IDs, rna_weights, rna_dict = rna_items
+    # sm_compl_IDs, sm_compl_weights, sm_compl_dict = sm_compl_items
 
     #define dataset & data loader
+    #TODO: can we delete these all together? should match the aa case (except for chris norn and negative dataset)
     pdb_items, fb_items, compl_items, neg_items, cn_items, valid_pdb, valid_homo, valid_compl, valid_neg, valid_cn, homo = get_train_valid_set(loader_param)
     pdb_IDs, pdb_weights, pdb_dict = pdb_items
     fb_IDs, fb_weights, fb_dict = fb_items
@@ -1422,67 +1426,70 @@ def default_dataset_configs(loader_param, debug=False):
     neg_IDs, neg_weights, neg_dict = neg_items
     cn_IDs, cn_weights, cn_dict = cn_items
 
-    sm_compl_loader_fixbb = partial(rf2aa.data_loader.loader_sm_compl,
-        init_protein_tmpl=False, init_ligand_tmpl=False,
-        init_protein_xyz=False, init_ligand_xyz=False, fixbb=True)
+    # sm_compl_loader_fixbb = partial(rf2aa.data_loader.loader_sm_compl,
+    #     init_protein_tmpl=False, init_ligand_tmpl=False,
+    #     init_protein_xyz=False, init_ligand_xyz=False, fixbb=True)
 
-    pdb_config = WeightedDataset(pdb_IDs, pdb_dict, {
-        'seq2str':      loader_pdb,
-        'str2seq':      loader_pdb_fixbb, 
-        'str2seq_full': loader_pdb_fixbb, 
-        'hal':          loader_pdb_fixbb, 
-        'hal_ar':       loader_pdb_fixbb,
-        'diff':         loader_pdb_fixbb},
-        pdb_weights)
+    #all the pdb sets use the default rf2aa loader_pdb, but the fixbb adaptor will not be applied to the seq2str task
+    pdb_config = WeightedDataset(train_ID_dict["pdb"], train_dict["pdb"], {
+        'seq2str':      rf2aa.data_loader.loader_pdb,
+        'str2seq':      rf2aa.data_loader.loader_pdb, 
+        'str2seq_full': rf2aa.data_loader.loader_pdb, 
+        'hal':          rf2aa.data_loader.loader_pdb, 
+        'hal_ar':       rf2aa.data_loader.loader_pdb,
+        'diff':         rf2aa.data_loader.loader_pdb},
+        weights_dict["pdb"])
 
-    def pdb_aa_loader_fixbb(item, *args, **kwargs):
-        return sm_compl_loader_fixbb(item + [()], *args, **kwargs)
-    pdb_aa_config = WeightedDataset(pdb_IDs, pdb_dict, {
-        'seq2str':      loader_pdb,
-        'str2seq':      pdb_aa_loader_fixbb, 
-        'str2seq_full': pdb_aa_loader_fixbb, 
-        'hal':          pdb_aa_loader_fixbb, 
-        'hal_ar':       pdb_aa_loader_fixbb,
-        'diff':         pdb_aa_loader_fixbb},
-        pdb_weights)
+    # def pdb_aa_loader_fixbb(item, *args, **kwargs):
+    #     return sm_compl_loader_fixbb(item + [()], *args, **kwargs)
+
+    pdb_aa_config = WeightedDataset(train_ID_dict["pdb"], train_dict["pdb"], {
+        'seq2str':      rf2aa.data_loader.loader_pdb,
+        'str2seq':      rf2aa.data_loader.loader_pdb, 
+        'str2seq_full': rf2aa.data_loader.loader_pdb, 
+        'hal':          rf2aa.data_loader.loader_pdb, 
+        'hal_ar':       rf2aa.data_loader.loader_pdb,
+        'diff':         rf2aa.data_loader.loader_pdb},
+        weights_dict["pdb"])
 
 
-    compl_config = WeightedDataset(compl_IDs, compl_dict, {
-        'seq2str':     loader_complex,
-        'str2seq':     loader_complex_fixbb, 
-        'str2seq_full':loader_complex_fixbb, 
-        'hal':         loader_complex_fixbb, 
-        'hal_ar':      loader_complex_fixbb,
-        'diff':        loader_complex_fixbb},
-        compl_weights)
+    compl_config = WeightedDataset(train_ID_dict["compl"], train_dict["compl"], {
+        'seq2str':     rf2aa.data_loader.loader_complex,
+        'str2seq':     rf2aa.data_loader.loader_complex, 
+        'str2seq_full':rf2aa.data_loader.loader_complex, 
+        'hal':         rf2aa.data_loader.loader_complex, 
+        'hal_ar':      rf2aa.data_loader.loader_complex,
+        'diff':        rf2aa.data_loader.loader_complex},
+        weights_dict["compl"])
     
-    neg_config = WeightedDataset(neg_IDs, neg_dict, loader_complex, neg_weights)
-    fb_config = WeightedDataset(fb_IDs, fb_dict, {
-                        'seq2str':      loader_fb,
-                        'str2seq':      loader_fb_fixbb, 
-                        'str2seq_full': loader_fb_fixbb, 
-                        'hal':          loader_fb_fixbb, 
-                        'hal_ar':       loader_fb_fixbb,
-                        'diff':         loader_fb_fixbb},
-                        fb_weights)
-    cn_config = WeightedDataset(cn_IDs, cn_dict, {
-                        'seq2str':      None,
-                        'str2seq':      loader_cn_fixbb,
-                        'str2seq_full': loader_cn_fixbb,
-                        'hal':          loader_cn_fixbb,
-                        'hal_ar':       loader_cn_fixbb,
-                        'diff':         loader_cn_fixbb},
-                        cn_weights)
-    
+    # neg_config = WeightedDataset(neg_IDs, neg_dict, loader_complex, neg_weights)
+    fb_config = WeightedDataset(train_ID_dict["fb"], train_ID_dict["fb"], {
+                        'seq2str':      rf2aa.data_loader.loader_fb,
+                        'str2seq':      rf2aa.data_loader.loader_fb, 
+                        'str2seq_full': rf2aa.data_loader.loader_fb, 
+                        'hal':          rf2aa.data_loader.loader_fb, 
+                        'hal_ar':       rf2aa.data_loader.loader_fb,
+                        'diff':         rf2aa.data_loader.loader_fb},
+                        weights_dict["fb"])
+    # cn_config = WeightedDataset(cn_IDs, cn_dict, {
+    #                     'seq2str':      None,
+    #                     'str2seq':      loader_cn_fixbb,
+    #                     'str2seq_full': loader_cn_fixbb,
+    #                     'hal':          loader_cn_fixbb,
+    #                     'hal_ar':       loader_cn_fixbb,
+    #                     'diff':         loader_cn_fixbb},
+    #                     cn_weights)
+    sm_compl_loader_fixbb = partial(rf2aa.data_loader.loader_sm_compl_assembly, \
+                                chid2hash=chid2hash, chid2L=chid2L,chid2taxid=chid2taxid)
     sm_compl_config = WeightedDataset(
-                sm_compl_IDs, sm_compl_dict, sm_compl_loader_fixbb, sm_compl_weights)
+                train_ID_dict["sm_compl"], train_ID_dict["sm_compl"], sm_compl_loader_fixbb, weights_dict["sm_compl"])
 
     return OrderedDict({
         'pdb': pdb_config,
         'complex': compl_config,
-        'negative': neg_config,
+        # 'negative': neg_config,
         'fb': fb_config,
-        'cn': cn_config,
+        # 'cn': cn_config,
         # AA configs
         'pdb_aa': pdb_aa_config,
         'sm_complex': sm_compl_config,
@@ -1548,8 +1555,13 @@ class DistilledDataset(data.Dataset):
         #ic('from DistilledDataset:', chosen_dataset, index, task)
         dataset_config = self.dataset_configs[chosen_dataset]
         ID = dataset_config.ids[index]
-        sel_idx = np.random.randint(0, len(dataset_config.dic[ID]))
-        sel_item = dataset_config.dic[ID][sel_idx]
+        if chosen_dataset == "sm_complex":
+            sel_item = rf2aa.data_loader.sample_sm_compl_item(dataset_config.dic, ID)
+        else:
+            sel_item = rf2aa.data_loader.sample_item(dataset_config.dic, ID)
+        # sel_idx = np.random.randint(0, len(dataset_config.dic[ID]))
+        # sel_item = dataset_config.dic[ID][sel_idx]
+        import pdb; pdb.set_trace()
         ic(chosen_dataset, sel_item, task)
 
         if self.params['SPOOF_ITEM']:
@@ -1560,10 +1572,12 @@ class DistilledDataset(data.Dataset):
             self.spoofed=True
 
         if chosen_dataset == 'cn':
+            raise NotImplementedError("new aa dataset don't have backwards compatibility with CN set")
             chosen_loader = dataset_config.task_loaders[task]
             out = chosen_loader(sel_item[0], self.params)
 
         elif chosen_dataset == 'negative':
+            raise NotImplementedError("new aa dataset don't have backwards compatibility with negative set")
             out = dataset_config.task_loaders(sel_item[0], sel_item[1], sel_item[2], sel_item[3], self.params, negative=True)
 
         elif chosen_dataset == 'complex':
@@ -1595,7 +1609,9 @@ class DistilledDataset(data.Dataset):
             )
         else:
             raise Exception(f'chosen_dataset {chosen_dataset} not implemented')
-
+        
+        if task is not "seq2str":
+            out = rf2aa.data_loader.adaptor_fix_bb(out)
         (seq, msa, msa_masked, msa_full, mask_msa, true_crds, atom_mask, idx_pdb, xyz_t, t1d, mask_t, xyz_prev,
         mask_prev, same_chain, unclamp, negative, atom_frames, bond_feats, chirals, dataset_name, item) = out
         #(seq, msa, msa_masked, msa_full, mask_msa, true_crds, atom_mask, idx_pdb, xyz_t, t1d, mask_t, xyz_prev, mask_prev, same_chain, unclamp, negative, atom_frames, bond_feats, chirals, is_sm) = out
@@ -1605,7 +1621,7 @@ class DistilledDataset(data.Dataset):
         if complete_chain[1] is not None:
             chain_tensor, contacts = get_contacts(complete_chain, xyz_t)
         else:
-            # make tensor of zeros to stable onto t1d for monomers (i.e. no contacts)
+            # make tensor of zeros to staple onto t1d for monomers (i.e. no contacts)
             contacts = torch.zeros(xyz_t.shape[1])
             
         #### DJ/JW alteration: Pop any NaN residues from tensors for diffuion training 

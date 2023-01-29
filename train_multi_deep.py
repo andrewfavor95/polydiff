@@ -18,9 +18,6 @@ import torch
 import torch.nn as nn
 from torch.utils import data
 
-
-
-
 #rf2_allatom = __import__('RF2-allatom')
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'RF2-allatom'))
 import rf2aa.chemical
