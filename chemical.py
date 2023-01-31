@@ -17,6 +17,7 @@ one_letter = ["A", "R", "N", "D", "C", \
              "S", "T", "W", "Y", "V", "?", "-"]
 
 aa2num= {x:i for i,x in enumerate(num2aa)}
+aa2num['MEN'] = 20
 
 aa_321 = {a:b for a,b in zip(num2aa,one_letter)}
 aa_123 = {val:key for key,val in aa_321.items()}

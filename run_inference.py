@@ -76,6 +76,8 @@ def get_sampler(conf):
 def sample(sampler):
 
     log = logging.getLogger(__name__)
+    des_i_start = sampler._conf.inference.design_startnum
+    des_i_end = sampler._conf.inference.design_startnum + sampler.inf_conf.num_designs
     for i_des in range(sampler._conf.inference.design_startnum, sampler._conf.inference.design_startnum + sampler.inf_conf.num_designs):
         if sampler._conf.inference.deterministic:
             make_deterministic(i_des)
@@ -87,6 +89,7 @@ def sample(sampler):
         if sampler.inf_conf.cautious and os.path.exists(out_prefix+'.pdb'):
             log.info(f'(cautious mode) Skipping this design because {out_prefix}.pdb already exists.')
             continue
+        ic(f'making design {i_des} of {des_i_start}:{des_i_end}')
         sampler_out = sample_one(sampler)
         log.info(f'Finished design in {(time.time()-start_time)/60:.2f} minutes')
         save_outputs(sampler, out_prefix, *sampler_out)

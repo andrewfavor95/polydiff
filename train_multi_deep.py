@@ -1144,6 +1144,7 @@ class Trainer():
             # Some percentage of the time, provide the model with the model's prediction of x_0 | x_t+1
             # When little_t[0] == little_t[1] we are at t == T so we should not unroll
             step_back = not (little_t[0] == little_t[1]) and (torch.tensor(self.preprocess_param['prob_self_cond']) > torch.rand(1))
+            ic(self.preprocess_param['prob_self_cond'], step_back)
             if step_back:
                 unroll_performed = True
 

@@ -10,6 +10,7 @@ import pandas as pd
 script_dir = os.path.dirname(os.path.realpath(__file__))+'/'
 
 def main():
+    print('in main')
     parser = argparse.ArgumentParser()
     parser.add_argument('datadir',type=str,help='Folder of designs that TM align was run on')
     parser.add_argument('--thresh',type=int, nargs='+', default=[0.4,0.6,0.8],
@@ -18,12 +19,15 @@ def main():
 
     tmalign_folder = args.datadir+'/tmalign/'
     filenames = glob.glob(tmalign_folder+'*.out')
+    print(f'found {len(filenames)} tmalign.out files')
 
     # parse separate TM matrices for different subdivisions of designs
     labels = np.unique([fn.split('.')[-3] for fn in filenames])
+    print(f'found {len(labels)} tmalign.out subdivisions')
 
     df_s = []
     for label in labels:
+        print(f'parsing label {label}')
         fn_s = [fn for fn in filenames if fn.split('.')[-3]==label]
         tm, names = load_tm_matrix(fn_s)
         df = pd.DataFrame()

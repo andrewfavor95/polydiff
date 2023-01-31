@@ -17,6 +17,7 @@ def main():
     filenames = glob.glob(args.datadir+'/*.trb')
 
     # load run metadata
+    print('loading run metadata')
     records = []
     for fn in filenames:
         name = os.path.basename(fn).replace('.trb','')
@@ -47,6 +48,7 @@ def main():
     df = pd.DataFrame.from_records(records)
 
     # load computed metrics, if they exist
+    print('loading computed metrics')
     for path in [
         args.datadir+'/af2_metrics.csv.*',
         args.datadir+'/pyrosetta_metrics.csv.*',
@@ -56,6 +58,7 @@ def main():
         df = df.merge(tmp, on='name', how='outer')
 
     # mpnn metrics require adding an extra column
+    print('loading computed metrics from MPNNed designs')
     df_mpnn = pd.DataFrame(dict(name=[]))
     for path in [
         args.datadir+'/mpnn/af2_metrics.csv.*',
@@ -71,6 +74,7 @@ def main():
         df_mpnn = df_mpnn.merge(tmp, on='name', how='outer')
 
     if os.path.exists(args.datadir+'/mpnn/'):
+        print('loading MPNN scores')
         mpnn_scores = load_mpnn_scores(args.datadir+'/mpnn/')
         df_mpnn = df_mpnn.merge(mpnn_scores, on='name', how='outer')
         df_mpnn['mpnn_index'] = df_mpnn.name.map(lambda x: int(x.split('_')[-1]))

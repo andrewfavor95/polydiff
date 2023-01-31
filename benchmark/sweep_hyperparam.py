@@ -139,6 +139,7 @@ def main():
         job_list_file.close()
     # submit job
     if args.submit:
+        job_fn = prune_jobs_list(job_fn)
 
         if args.J is not None:
             job_name = args.J
@@ -150,5 +151,31 @@ def main():
         print(f'Submitted array job {slurm_job} with {len(arg_combos)*args.num_per_condition/args.num_per_job} jobs to make {len(arg_combos)*args.num_per_condition} designs')
 
         
+def prune_jobs_list(jobs_path):
+    pruned_path = os.path.join(os.path.split(jobs_path)[0], 'jobs.list.pruned')
+    pruned = []
+    with open(jobs_path, 'r') as fh:
+        jobs = fh.readlines()
+    for job in jobs:
+        want_outs = expected_outputs(job)
+        if not all(os.path.exists(want) for want in want_outs):
+            pruned.append(job)
+    with open(pruned_path, 'w') as fh:
+        fh.writelines(pruned)
+    return pruned_path
+
+import re
+def expected_outputs(job):
+    output_prefix = re.match('.*inference\.output_prefix=(\S+).*', job).groups()[0]
+    design_startnum = re.match('.*inference\.design_startnum=(\S+).*', job).groups()[0]
+    num_designs = re.match('.*inference\.num_designs=(\S+).*', job).groups()[0]
+
+    design_startnum = int(design_startnum)
+    num_designs = int(num_designs)
+
+    des_i_start = design_startnum
+    des_i_end = design_startnum + num_designs
+    return [f'{output_prefix}_{i}.pdb' for i in range(des_i_start, des_i_end)]
+
 if __name__ == "__main__":
     main()

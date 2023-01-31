@@ -83,6 +83,29 @@ class RFO:
     def get_xyz(self):
         return self.xyz_allatom[0]
 
+def filter_het(pdb_lines, ligand):
+    lines = []
+    hetatm_ids = []
+    for l in pdb_lines:
+        if 'HETATM' not in l:
+            continue
+        if l[17:17+4].strip() != ligand:
+            continue
+        lines.append(l)
+        hetatm_ids.append(int(l[7:7+6].strip()))
+    
+    for l in pdb_lines:
+        if 'CONECT' not in l:
+            continue
+        ids = [int(e.strip()) for e in l[6:].split()]
+        if all(i in hetatm_ids for i in ids):
+            lines.append(l)
+            continue
+        if any(i in hetatm_ids for i in ids):
+            raise Exception(f'line {l} references atom ids in the target ligand {ligand} and another atom')
+    return lines
+
+
 class Model:
 
     def __init__(self, conf):
@@ -115,7 +138,13 @@ class Model:
         ins_prot = torch.zeros(msa_prot.shape).long()
         a3m_prot = {"msa": msa_prot, "ins": ins_prot}
         if parse_hetatm:
-            stream = [l for l in open(pdb) if "HETATM" in l or "CONECT" in l]
+            with open(pdb, 'r') as fh:
+                stream = [l for l in fh if "HETATM" in l or "CONECT" in l]
+            ligand = self.conf.inference.ligand
+            stream = filter_het(stream, ligand)
+            if not len(stream):
+                raise Exception(f'ligand {ligand} not found in pdb: {pdb}')
+
             mol, msa_sm, ins_sm, xyz_sm, mask_sm = parsers.parse_mol("".join(stream), filetype="pdb", string=True)
             a3m_sm = {"msa": msa_sm.unsqueeze(0), "ins": ins_sm.unsqueeze(0)}
             G = rf2aa.util.get_nxgraph(mol)
