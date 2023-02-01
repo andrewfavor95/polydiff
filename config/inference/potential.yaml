@@ -1,0 +1,17 @@
+defaults:
+  - debug
+
+inference:
+  output_prefix: debug/gaa
+  model_runner: NRBStyleSelfCond
+  input_pdb: 'benchmark/input/gaa.pdb'
+  ligand: 'UNL'
+
+contigmap:
+  contigs: ['40,A518-518,40,A616-616,40,A404-404,40']
+  length: 163-163
+
+potentials:
+  guiding_potentials: ['type:ligand_ncontacts,weight:1']
+  guide_scale: 2
+  guide_decay: 'linear'

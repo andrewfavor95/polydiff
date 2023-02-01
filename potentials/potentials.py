@@ -3,6 +3,7 @@ from icecream import ic
 import numpy as np 
 from util import generate_Cbeta
 from icecream import ic
+import rf2aa
 
 class Potential:
     '''
@@ -271,6 +272,43 @@ class monomer_contacts(Potential):
         #Potential value is the average of both radii of gyration (is avg. the best way to do this?)
         return self.weight * ncontacts.sum()
 
+
+class ligand_ncontacts(Potential):
+
+    '''
+        Differentiable way to maximise number of contacts between binder and target
+
+        Motivation is given here: https://www.plumed.org/doc-v2.7/user-doc/html/_c_o_o_r_d_i_n_a_t_i_o_n.html
+
+        Author: PV
+    '''
+
+
+    def __init__(self, weight=1, r_0=8, d_0=4):
+
+        self.r_0       = r_0
+        self.weight    = weight
+        self.d_0       = d_0
+
+    def compute(self, seq, xyz):
+
+        is_atom = rf2aa.util.is_atom(torch.argmax(seq,dim=1)).cpu()
+
+        # Extract ligand Ca residues
+        Ca_l = xyz[is_atom,1] # [Ll,3]
+
+        # Extract binder Ca residues
+        Ca_b = xyz[~is_atom,1] # [Lb,3]
+
+
+        #cdist needs a batch dimension - NRB
+        dgram = torch.cdist(Ca_b[None,...].contiguous(), Ca_l[None,...].contiguous(), p=2) # [1,Ll,Lb]
+        ligand_ncontacts = -1 * contact_energy(dgram, self.r_0, self.d_0)
+        #Potential is the sum of values in the tensor
+        ligand_ncontacts = ligand_ncontacts.sum()
+        print("LIGAND CONTACTS:", ligand_ncontacts.sum())
+
+        return self.weight * ligand_ncontacts
 
 def make_contact_matrix(nchain, contact_string=None):
     """
@@ -730,7 +768,8 @@ implemented_potentials = { 'monomer_ROG':          monomer_ROG,
                            'monomer_contacts':     monomer_contacts,
                            'olig_intra_contacts':  olig_intra_contacts,
                            'olig_contacts':        olig_contacts,
-                           'substrate_contacts':    substrate_contacts}
+                           'substrate_contacts':   substrate_contacts,
+                           'ligand_ncontacts':     ligand_ncontacts}
 
 require_binderlen      = { 'binder_ROG',
                            'binder_distance_ReLU',

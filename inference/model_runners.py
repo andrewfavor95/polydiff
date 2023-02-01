@@ -403,9 +403,7 @@ class Sampler:
         self.msa_prev = None
         self.pair_prev = None
         self.state_prev = None
-        # For the implicit ligand potential
-        if self.potential_conf.guiding_potentials is not None:
-            raise Exception('not implemented')
+        
         return indep
 
     def _preprocess(self, seq, xyz_t, t, repack=False):
