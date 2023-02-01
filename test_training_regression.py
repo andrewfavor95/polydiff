@@ -26,6 +26,8 @@ class TestRegression(unittest.TestCase):
     
     # Example regression test.
     def test_regression(self):
+        # This test must be run on a CPU.
+        assert torch.cuda.device_count() == 0
         run_inference.make_deterministic()
         # Uncomment to assert test is checking the appropriate things.
         # run_inference.make_deterministic(1)

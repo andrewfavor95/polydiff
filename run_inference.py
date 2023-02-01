@@ -41,9 +41,10 @@ import aa_model
 # ic.configureOutput(includeContext=True)
 
 def make_deterministic(seed=0):
-        torch.manual_seed(seed)
-        np.random.seed(seed)
-        random.seed(seed)
+    torch.use_deterministic_algorithms(True)
+    torch.manual_seed(seed)
+    np.random.seed(seed)
+    random.seed(seed)
 
 
 @hydra.main(version_base=None, config_path='config/inference', config_name='base')
