@@ -1,4 +1,6 @@
 import re
+import json
+from icecream import ic
 import os
 import subprocess
 from pathlib import Path
@@ -44,7 +46,7 @@ def assert_matches_golden(t, name, got, rewrite=False, processor_specific=False,
     if custom_comparator:
         diff = custom_comparator(got, want)
         if diff:
-            t.fail(diff)
+            t.fail(json.dumps(diff, indent=4))
     else:
         t.assertEqual(got, want)
 
