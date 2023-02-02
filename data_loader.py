@@ -31,8 +31,11 @@ import util
 import math
 from functools import partial
 import pandas as pd
+<<<<<<< HEAD
 import run_inference
 import aa_model
+=======
+>>>>>>> d8c432b (working training of diffusion)
 
 base_dir = "/projects/ml/TrRosetta/PDB-2021AUG02"
 compl_dir = "/projects/ml/RoseTTAComplex"
