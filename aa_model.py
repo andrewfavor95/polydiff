@@ -20,6 +20,8 @@ import chemical
 from rf2aa.chemical import MASKINDEX
 import util
 import inference.utils
+import networkx as nx
+import itertools
 
 
 NINDEL=1
@@ -585,6 +587,9 @@ def adaptor_fix_bb_indep(out):
         true_crds = true_crds[0]
         atom_mask = atom_mask[0]
     
+    #update template features
+    xyz_t, mask_t, t1d, xyz_prev, mask_prev = set_ground_truth_template_feats(seq, true_crds, atom_mask)
+
     # our dataloaders return torch.zeros(L...) for atom frames and chirals when there are none, this updates it to use common shape 
     if torch.sum(atom_frames) == 0:
         atom_frames = torch.zeros((0,3,2))
@@ -749,3 +754,251 @@ def self_cond(indep, rfi, rfo):
     rfi_sc.xyz_t = xyz_t[:,:,:,1]
     rfi_sc.t2d = t2d
     return rfi_sc
+    return seq, msa, msa_masked, msa_full, mask_msa, true_crds, atom_mask, idx_pdb, xyz_t, t1d, mask_t, xyz_prev, \
+        mask_prev, same_chain, unclamp, negative, atom_frames, bond_feats, chirals, ch_label, dataset_name, item
+
+
+def set_ground_truth_template_feats(seq, true_crds, atom_mask):
+    """
+    sets the template features to the ground truth coordinates and sequence 
+    """
+    assert (len(true_crds.shape)==3), f"true_crds should have shape (L, natoms, 3), found {true_crds.shape}"
+    assert (len(atom_mask.shape)==2), f"atom_mask should have shape L, natoms, found {atom_mask.shape}"
+    xyz_t = torch.clone(true_crds)[None]
+    mask_t = torch.clone(atom_mask)[None]
+    seq_mask_shifted = torch.clone(seq)
+    seq_mask_shifted[seq_mask_shifted>=MASKINDEX] -= 1
+    f1d_t = torch.nn.functional.one_hot(seq_mask_shifted, num_classes=NAATOKENS-1)
+    conf = torch.ones_like(seq[:1])[...,None]
+    f1d_t = torch.cat((f1d_t, conf), dim=-1)
+    t1d = f1d_t.float()
+
+    xyz_prev = xyz_t[0].clone()
+    mask_prev = mask_t[0].clone()
+    return xyz_t, mask_t, t1d, xyz_prev, mask_prev
+
+
+class AtomizeResidues:
+    def __init__(
+        self,
+        seq, # (1, L)
+        msa, # (1, 1, L)
+        msa_masked, # (1, 1, L, 164)
+        msa_full, # (1, 1, L, 83)
+        mask_msa, # (1, 1, L)
+        true_crds, # (L, natoms, 3)
+        atom_mask, # (L, natoms)
+        idx_pdb, # (L)
+        xyz_t, # (1, L, natoms, 3)
+        t1d, # (1, L, 80)
+        mask_t, # (1, L, 36)
+        xyz_prev, # (L, natoms, 3)
+        mask_prev, # (L, natoms)
+        same_chain, # (L, L)
+        unclamp, # Boolean
+        negative, # Boolean
+        atom_frames, # (natoms, nframes, 3, 2)
+        bond_feats,  # (L, L)
+        chirals, # (nchirals*3, 5)
+        ch_label, # (L)
+        is_sm, # (L)
+        masks_1d # dict
+        ) -> None:
+        self.seq = seq 
+        self.msa = msa
+        self.msa_masked = msa_masked
+        self.msa_full = msa_full
+        self.mask_msa = mask_msa
+        self.true_crds = true_crds
+        self.atom_mask = atom_mask
+        self.idx_pdb = idx_pdb
+        self.xyz_t = xyz_t
+        self.t1d = t1d
+        self.mask_t = mask_t
+        self.xyz_prev = xyz_prev
+        self.mask_prev = mask_prev
+        self.same_chain = same_chain
+        self.unclamp = unclamp
+        self.negative = negative
+        self.atom_frames = atom_frames
+        self.bond_feats = bond_feats
+        self.chirals = chirals
+        self.ch_label = ch_label
+        self.is_sm = is_sm
+        self.masks_1d = masks_1d
+    
+    def featurize_atomized_residues(
+        self
+    ):
+        """
+        this function takes all the outputs of the RF2aa dataloader and the generated masks and refeaturizes the example where the 
+        portion of the structure that is provided as context is treated as atoms instead of residues. the mask will be updated so that only the 
+        tip atoms of the context residues are context and the rest is diffused
+        """
+        L = self.bond_feats.shape[0]
+        is_motif = self.masks_1d["input_str_mask"]
+        is_protein_motif = is_motif * ~self.is_sm
+        allatom_mask = rf2aa.util.allatom_mask # 1 if that atom index exists for that residue and 0 if it doesnt
+        allatom_mask[:, 14:] = False #no Hs
+        # iterate through residue indices in the structure to atomize
+        seq_atomize_all = []
+        ins_atomize_all = []
+        xyz_atomize_all = []
+        mask_atomize_all = []
+        frames_atomize_all = [self.atom_frames]
+        chirals_atomize_all = [self.chirals]
+        res_idx_atomize_all = [] # residues that end up getting atomized 
+        is_atom_motif_all = []
+        for res_idx in is_protein_motif.nonzero():
+            residue = self.seq[0, res_idx] # number representing the residue in the token list, can be used to index aa2long
+            # check if all the atoms in the residue are resolved, if not dont atomize, 
+            #TODO: check if neighbors are resolved
+            if torch.all(allatom_mask[residue]==self.atom_mask[res_idx]) \
+                and (self.idx_pdb[res_idx+1]-self.idx_pdb[res_idx] == 1) \
+                and (self.idx_pdb[res_idx]-self.idx_pdb[res_idx-1] == 1):
+
+                seq_atomize, ins_atomize, xyz_atomize, mask_atomize, frames_atomize, bond_feats_atomize, last_C, chirals_atomize = \
+                                rf2aa.util.atomize_protein(res_idx, self.seq, self.true_crds, self.atom_mask, n_res_atomize=1)
+                
+                natoms = seq_atomize.shape[0]
+                # glycine and alanine don't have meaningful sidechains, don't atomize these (difficult to specify a tip atom)
+                if natoms < 6:
+                    continue
+
+                seq_atomize_all.append(seq_atomize)
+                ins_atomize_all.append(ins_atomize)
+                xyz_atomize_all.append(xyz_atomize)
+                mask_atomize_all.append(mask_atomize)
+                frames_atomize_all.append(frames_atomize)
+                chirals_atomize_all.append(chirals_atomize)
+                res_idx_atomize_all.append(res_idx)
+
+                # update bond_feats every iteration, update all other features at the end 
+                bond_feats_new = torch.zeros((L+natoms, L+natoms))
+                bond_feats_new[:L, :L] = self.bond_feats
+                bond_feats_new[L:, L:] = bond_feats_atomize
+                # add bond between protein and atomized N 
+                bond_feats_new[res_idx-1, L] = 6
+                bond_feats_new[L, res_idx-1] = 6
+                # add bond between protein and C, assumes every residue is being atomized one at a time (eg n_res_atomize=1)
+                bond_feats_new[res_idx+1, L+int(last_C.numpy())] = 6
+                bond_feats_new[L+int(last_C.numpy()), res_idx+1] = 6
+                self.bond_feats = bond_feats_new
+                L = self.bond_feats.shape[0]
+
+        if not res_idx_atomize_all: # no residues atomized, just return the inputs
+            return
+            # return self.seq,  \
+            #         self.msa, \
+            #         self.msa_masked, \
+            #         self.msa_full, \
+            #         self.mask_msa, \
+            #         self.true_crds, \
+            #         self.atom_mask, \
+            #         self.idx_pdb, \
+            #         self.xyz_t, \
+            #         self.t1d, \
+            #         self.mask_t, \
+            #         self.xyz_prev, \
+            #         self.mask_prev, \
+            #         self.same_chain, \
+            #         self.unclamp, \
+            #         self.negative, \
+            #         self.atom_frames, \
+            #         self.bond_feats,  \
+            #         self.chirals, \
+            #         self.ch_label, \
+            #         self.is_sm, \
+            #         self.masks_1d 
+
+        # Handle MSA feature updates
+        seq_atomize_all = torch.cat(seq_atomize_all)
+        ins_atomize_all = torch.cat(ins_atomize_all)
+        
+        atomize_L = seq_atomize_all.shape[0]
+        term_info = torch.zeros((atomize_L, 2)) # provide no N/C terminus feature for atomized residue
+        seq_atomize_all, msa_atomize_all, msa_masked_atomize_all, msa_full_atomize_all, mask_msa_atomize_all = \
+                MSAFeaturize(seq_atomize_all[None], ins_atomize_all[None], {**rf2aa.data_loader.default_dataloader_params, "MAXCYCLE": 1}, p_mask=0.0, term_info=term_info)
+        
+        self.seq = torch.cat((self.seq, seq_atomize_all), dim=1)
+        self.msa = torch.cat((self.msa, msa_atomize_all), dim=2)
+        self.msa_masked = torch.cat((self.msa_masked, msa_masked_atomize_all), dim=2)
+        self.msa_full = torch.cat((self.msa_full, msa_full_atomize_all), dim=2)
+        self.mask_msa = torch.cat((self.mask_msa, mask_msa_atomize_all), dim=2)
+
+        # handle coordinates, need to handle permutation symmetry
+        orig_L, natoms = self.true_crds.shape[:2]
+        total_L = orig_L + atomize_L
+        xyz_atomize_all = rf2aa.util.cartprodcat(xyz_atomize_all)
+        N_symmetry = xyz_atomize_all.shape[0]
+        import pdb; pdb.set_trace()
+        xyz = torch.full((N_symmetry, total_L, NTOTAL, 3), np.nan).float()
+        mask = torch.full(xyz.shape[:-1], False).bool()
+        xyz[:, :orig_L, :natoms, :] = self.true_crds.expand(N_symmetry, orig_L, natoms, 3)
+        xyz[:, orig_L:, 1, :] = xyz_atomize_all
+        mask[:, :orig_L, :natoms] = self.atom_mask.expand(N_symmetry, orig_L, natoms)
+        mask[:, orig_L:, 1] = xyz_atomize_all
+        
+        self.true_crds = xyz
+        self.atom_mask = mask
+        # handle idx_pdb and same_chain
+        last_res = self.idx_pdb[-1]
+        idx_atomize = torch.arange(atomize_L) + last_res
+        self.idx_pdb = torch.cat((self.idx_pdb, idx_atomize))
+
+        # handle template features (diffusion style)
+        self.xyz_t, self.mask_t, self.f1d_t, self.xyz_prev, self.mask_prev = \
+                                                set_ground_truth_template_feats(self.seq, self.true_crds[0], self.atom_mask[0])
+        # handle sm specific features- atom_frames, chirals
+        self.atom_frames = torch.cat(frames_atomize_all)
+        self.chirals = torch.cat(chirals_atomize_all)
+
+        #remove msa and coordinate features at the residue level for residues whos features are captured as atoms
+        pop = torch.tensor([i for i in range(total_L) if i not in res_idx_atomize_all])
+        N     = pop.sum()
+        pop2d = pop[None,:] * pop[:,None]
+
+        self.seq         = self.seq[:,pop]
+        self.msa         = self.msa[:,:,pop]
+        self.msa_masked  = self.msa_masked[:,:,pop]
+        self.msa_full    = self.msa_full[:,:,pop]
+        self.mask_msa    = self.mask_msa[:,:,pop]
+        self.true_crds   = self.true_crds[pop]
+        self.atom_mask   = self.atom_mask[pop]
+        self.idx_pdb     = self.idx_pdb[pop]
+        self.xyz_t       = self.xyz_t[:,pop]
+        self.t1d         = self.t1d[:,pop]
+        self.xyz_prev    = self.xyz_prev[pop]
+        self.same_chain  = self.same_chain[pop2d].reshape(N,N)
+        self.mask_t = self.mask_t[:, pop]
+        self.bond_feats = self.bond_feats[pop2d].reshape(N,N)
+        self.mask_prev = self.mask_prev[pop]
+        self.ch_label = self.ch_label[pop]
+        #handle diffusion specific things such as masking 
+        import pdb; pdb.set_trace()
+
+    def choose_atom_motif(bond_feats_atomize):
+        """
+        given a residue to be atomized, chooses a random contiguous portion of the residue to treat 
+        """
+        natoms = bond_feats_atomize.shape[0]
+        # choose atoms to be given as the motif 
+        is_atom_motif = torch.zeros((natoms))
+        sc_bond_graph = nx.from_numpy_matrix(bond_feats_atomize.numpy()[5:, 5:]) # first four indices are backbone atoms
+
+        # tip atom defined by atom with the lowest degree; if there are multiple sample from them
+        sc_atoms_by_degree = sorted(sc_bond_graph.degree, key=lambda x: x[1]) # list of tuples [(index, degree)]
+        # group by 
+        sc_atoms_min_degree = [list(i[1])[0] for i in itertools.groupby(sc_atoms_by_degree, key=lambda x: x[1])][0]
+        tip_atom = np.random.choice(sc_atoms_min_degree)
+        num_motif_atoms = np.random.randint(2, natoms-5) # exclude backbone atoms, this is why we need to skip gly, ala
+        # find all the sets of side chain atoms that could be provided as the motif for this tip atom
+        all_paths = []
+        for target in sc_bond_graph.nodes:
+            all_paths.extend(list(nx.all_simple_paths(sc_bond_graph, tip_atom, target, num_motif_atoms-1)))
+
+        #TODO: make sure this function works, currently cant produce a path to itself
+        chosen_motif_indices = torch.tensor(np.random.choice(all_paths))
+        is_atom_motif[chosen_motif_indices] = 1
+
+        return is_atom_motif

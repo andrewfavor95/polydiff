@@ -34,9 +34,12 @@ import util
 import math
 from functools import partial
 import pandas as pd
+
 import run_inference
 import aa_model
 
+import run_inference
+import aa_model
 
 base_dir = "/projects/ml/TrRosetta/PDB-2021AUG02"
 compl_dir = "/projects/ml/RoseTTAComplex"

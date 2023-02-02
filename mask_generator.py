@@ -185,6 +185,15 @@ def get_diffusion_mask_simple(xyz, full_prop, low_prop, high_prop, broken_prop):
         diffusion_mask[-(mask_length-split):] = False
     return diffusion_mask
 
+def get_unconditional_diffusion_mask(xyz, is_sm):
+    """
+    unconditional generation of proteins, if a small molecule is present it will be given as context
+    """
+    L = xyz.shape[0]
+    is_motif = torch.zeros(L).bool()
+    is_motif[is_sm] = True
+    return is_motif
+
 regular_to_sm = {
     get_triple_contact: get_sm_contacts,
 }
@@ -194,16 +203,17 @@ def get_diffusion_mask(
         diff_mask_probs):
     
     L = xyz.shape[0]
-    if random.uniform(0,1) < full_prop:
-        is_motif = torch.zeros(L).bool()
-        is_motif[is_sm] = True
-        return is_motif
+    # if random.uniform(0,1) < full_prop:
+    #     is_motif = torch.zeros(L).bool()
+    #     is_motif[is_sm] = True
+    #     return is_motif
 
 
     mask_probs = list(diff_mask_probs.items())
     masks = [m for m, _ in mask_probs]
     props = [p for _, p in mask_probs]
     get_mask = np.random.choice(masks, p=props)
+
     ic('DEBUG: get_mask', is_sm.any(), get_mask)
     if is_sm.any():
         if get_mask in regular_to_sm:
@@ -316,7 +326,6 @@ def generate_masks(L, task, loader_params, chosen_dataset, full_chain=None, xyz=
         # False is diffused, True is not diffused 
         #input_str_mask[start:end+1] = False 
         #input_seq_mask     = torch.clone(input_str_mask)
-        
         #MADE A NEW FUNCTION
         diffusion_mask = get_diffusion_mask(
             xyz,

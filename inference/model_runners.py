@@ -771,10 +771,10 @@ class NRBStyleSelfCond(Sampler):
                 rfo = self.model_adaptor.forward(
                                     rfi,
                                     return_infer=True,
-                                    **({model_input_logger.LOG_ONLY_KEY: {
+                                    **{model_input_logger.LOG_ONLY_KEY: {
                                         't':t,
                                         'output_prefix':self.output_prefix,
-                                    }} if self._conf.logging.inputs else {}))
+                                    }})
 
                 if self.symmetry is not None and self.inf_conf.symmetric_self_cond:
                     raise Exception('not implemented')
