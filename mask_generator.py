@@ -103,7 +103,7 @@ def find_third_contact(contacts):
                 return torch.tensor([i,j,k])
     return None
 
-def get_sm_contacts(xyz, is_atom, is_sm,
+def get_sm_contacts(xyz, atom_mask, is_sm,
     d_beyond_closest = 1.5,
     n_beyond_closest = 2,
     n_sample_low = 1,
@@ -117,7 +117,7 @@ def get_sm_contacts(xyz, is_atom, is_sm,
     n_sample = np.random.randint(n_sample_low, n_sample_high)
 
     crds = torch.clone(xyz)
-    crds[~is_atom] = torch.nan
+    crds[~atom_mask] = torch.nan
     prot_crds = crds[~is_sm]
     sm_crds = crds[is_sm]
     dist = (prot_crds[:, None] - sm_crds[ None]).pow(2).sum(dim=-1).sqrt()
@@ -190,7 +190,7 @@ regular_to_sm = {
 }
 
 def get_diffusion_mask(
-        xyz, is_atom, is_sm, full_prop, low_prop, high_prop, broken_prop,
+        xyz, atom_mask, is_sm, full_prop, low_prop, high_prop, broken_prop,
         diff_mask_probs):
     
     L = xyz.shape[0]
@@ -208,7 +208,7 @@ def get_diffusion_mask(
     if is_sm.any():
         if get_mask in regular_to_sm:
             get_mask = regular_to_sm[get_mask]
-            return get_mask(xyz, is_atom, is_sm)
+            return get_mask(xyz, atom_mask, is_sm)
 
         # xyz_prot = true_crds[~is_sm]
         # msa_prot = msa[:, :, ~is_sm]
@@ -257,7 +257,7 @@ def generate_sm_mask(prot_masks, is_sm):
 # Main mask generator function
 #####################################
 
-def generate_masks(msa, task, loader_params, chosen_dataset, full_chain=None, xyz=None, is_atom=None, is_sm=None): #full_chain is for complexes, to signify which chain is complete
+def generate_masks(msa, task, loader_params, chosen_dataset, full_chain=None, xyz=None, atom_mask=None, is_sm=None): #full_chain is for complexes, to signify which chain is complete
     '''
     Slimmed down function that outputs 1D masks for inputs and loss calculations.
     Input masks are defined as True=(unmasked)/False=masked (except for input_t1dconf, which is a scalar value, and seq2str_mask which is the msa mask for the seq2str task)
@@ -321,7 +321,7 @@ def generate_masks(msa, task, loader_params, chosen_dataset, full_chain=None, xy
         #MADE A NEW FUNCTION
         diffusion_mask = get_diffusion_mask(
             xyz,
-            is_atom,
+            atom_mask,
             is_sm,
             full_prop=loader_params['P_UNCOND'],
             low_prop=loader_params['MASK_MIN_PROPORTION'],

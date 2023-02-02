@@ -28,6 +28,7 @@ from apply_masks import mask_inputs
 import util
 import math
 from functools import partial
+import pandas as pd
 
 base_dir = "/projects/ml/TrRosetta/PDB-2021AUG02"
 compl_dir = "/projects/ml/RoseTTAComplex"
@@ -1392,7 +1393,7 @@ def loader_complex_fixbb(item, L_s, taxID, assem, params, negative=False, pick_t
 @dataclass
 class WeightedDataset:
     ids: dict
-    dic: dict
+    dic: pd.DataFrame
     task_loaders: dict
     weights: np.array
 
@@ -1405,8 +1406,10 @@ def default_dataset_configs(loader_param, debug=False):
     #     valid_na_neg, valid_rna, valid_sm_compl, valid_sm_compl_ligclus, valid_sm_compl_strict, 
     #     valid_sm, valid_pep, homo
     # ) = rf2aa.data_loader.get_train_valid_set({**rf2aa.data_loader.default_dataloader_params, **loader_param, **{'DATAPKL': loader_param['DATAPKL_AA']}}, no_match_okay=debug)
-    train_ID_dict, valid_ID_dict, weights_dict, train_dict, valid_dict, homo, chid2hash, chid2L, chid2taxid = \
-            rf2aa.data_loader.get_train_valid_set({**rf2aa.data_loader.default_dataloader_params, **loader_param, **{'DATAPKL': loader_param['DATAPKL_AA']}}, no_match_okay=debug, legacy_datapkl=False)
+    train_ID_dict, valid_ID_dict, weights_dict, train_dict, valid_dict, homo, chid2hash, chid2taxid = \
+            rf2aa.data_loader.get_train_valid_set({**rf2aa.data_loader.default_dataloader_params, \
+            #**loader_param, 
+            **{'DATAPKL': loader_param['DATAPKL_AA']}}, no_match_okay=debug, diffusion_training=True)
 
     # pdb_IDs, pdb_weights, pdb_dict = pdb_items
     # fb_IDs, fb_weights, fb_dict = fb_items
@@ -1419,12 +1422,12 @@ def default_dataset_configs(loader_param, debug=False):
 
     #define dataset & data loader
     #TODO: can we delete these all together? should match the aa case (except for chris norn and negative dataset)
-    pdb_items, fb_items, compl_items, neg_items, cn_items, valid_pdb, valid_homo, valid_compl, valid_neg, valid_cn, homo = get_train_valid_set(loader_param)
-    pdb_IDs, pdb_weights, pdb_dict = pdb_items
-    fb_IDs, fb_weights, fb_dict = fb_items
-    compl_IDs, compl_weights, compl_dict = compl_items
-    neg_IDs, neg_weights, neg_dict = neg_items
-    cn_IDs, cn_weights, cn_dict = cn_items
+    # pdb_items, fb_items, compl_items, neg_items, cn_items, valid_pdb, valid_homo, valid_compl, valid_neg, valid_cn, homo = get_train_valid_set(loader_param)
+    # pdb_IDs, pdb_weights, pdb_dict = pdb_items
+    # fb_IDs, fb_weights, fb_dict = fb_items
+    # compl_IDs, compl_weights, compl_dict = compl_items
+    # neg_IDs, neg_weights, neg_dict = neg_items
+    # cn_IDs, cn_weights, cn_dict = cn_items
 
     # sm_compl_loader_fixbb = partial(rf2aa.data_loader.loader_sm_compl,
     #     init_protein_tmpl=False, init_ligand_tmpl=False,
@@ -1463,7 +1466,7 @@ def default_dataset_configs(loader_param, debug=False):
         weights_dict["compl"])
     
     # neg_config = WeightedDataset(neg_IDs, neg_dict, loader_complex, neg_weights)
-    fb_config = WeightedDataset(train_ID_dict["fb"], train_ID_dict["fb"], {
+    fb_config = WeightedDataset(train_ID_dict["fb"], train_dict["fb"], {
                         'seq2str':      rf2aa.data_loader.loader_fb,
                         'str2seq':      rf2aa.data_loader.loader_fb, 
                         'str2seq_full': rf2aa.data_loader.loader_fb, 
@@ -1480,9 +1483,9 @@ def default_dataset_configs(loader_param, debug=False):
     #                     'diff':         loader_cn_fixbb},
     #                     cn_weights)
     sm_compl_loader_fixbb = partial(rf2aa.data_loader.loader_sm_compl_assembly, \
-                                chid2hash=chid2hash, chid2L=chid2L,chid2taxid=chid2taxid)
+                                chid2hash=chid2hash,chid2taxid=chid2taxid)
     sm_compl_config = WeightedDataset(
-                train_ID_dict["sm_compl"], train_ID_dict["sm_compl"], sm_compl_loader_fixbb, weights_dict["sm_compl"])
+                train_ID_dict["sm_compl"], train_dict["sm_compl"], sm_compl_loader_fixbb, weights_dict["sm_compl"])
 
     return OrderedDict({
         'pdb': pdb_config,
@@ -1493,7 +1496,7 @@ def default_dataset_configs(loader_param, debug=False):
         # AA configs
         'pdb_aa': pdb_aa_config,
         'sm_complex': sm_compl_config,
-        })
+        }), homo
 
 class DistilledDataset(data.Dataset):
     def __init__(self,
@@ -1510,7 +1513,7 @@ class DistilledDataset(data.Dataset):
                  homo=None,
                  p_homo_cut=0.5):
         
-        self.homo = homo or {}
+        self.homo = homo if homo is not None else pd.DataFrame()
         self.params = params
         self.p_task = params['TASK_P']
         self.task_names = params['TASK_NAMES']
@@ -1556,14 +1559,16 @@ class DistilledDataset(data.Dataset):
         dataset_config = self.dataset_configs[chosen_dataset]
         ID = dataset_config.ids[index]
         if chosen_dataset == "sm_complex":
-            sel_item = rf2aa.data_loader.sample_sm_compl_item(dataset_config.dic, ID)
+            sel_item = rf2aa.data_loader.sample_item_sm_compl(dataset_config.dic, ID)
         else:
             sel_item = rf2aa.data_loader.sample_item(dataset_config.dic, ID)
+        
+        # use fixbb settings for MSA generation if not sequence to structure task  
+        fixbb = task != "seq2str"
         # sel_idx = np.random.randint(0, len(dataset_config.dic[ID]))
         # sel_item = dataset_config.dic[ID][sel_idx]
-        import pdb; pdb.set_trace()
         ic(chosen_dataset, sel_item, task)
-
+        
         if self.params['SPOOF_ITEM']:
             if hasattr(self, 'spoofed'):
                 raise Exception('stopping after succesful spoofing of one item')
@@ -1581,39 +1586,39 @@ class DistilledDataset(data.Dataset):
             out = dataset_config.task_loaders(sel_item[0], sel_item[1], sel_item[2], sel_item[3], self.params, negative=True)
 
         elif chosen_dataset == 'complex':
-            if sel_item[0][0] in self.homo: #homooligomer so do seq2str
+            if sel_item["CHAINID"] in self.homo['CHAIN_A'].values: #homooligomer so do seq2str
                 task='seq2str'
             chosen_loader = dataset_config.task_loaders[task]
-            out = chosen_loader(sel_item[0], sel_item[1],sel_item[2], sel_item[3], self.params, negative=False)
+            out = chosen_loader(sel_item, sel_item[1],sel_item[2], sel_item[3], self.params, negative=False, fixbb=fixbb)
         elif chosen_dataset == 'pdb' or chosen_dataset == 'pdb_aa':
             chosen_loader = dataset_config.task_loaders[task]
             # if p_unclamp > self.unclamp_cut:
             #     out = chosen_loader(sel_item[0], self.params, self.homo, unclamp=True, p_homo_cut=self.p_homo_cut)
             # else:
             #     out = chosen_loader(sel_item[0], self.params, self.homo, unclamp=False, p_homo_cut=self.p_homo_cut)
-            out = chosen_loader(sel_item[0], 
-                {**rf2aa.data_loader.default_dataloader_params, **self.params})
+            out = chosen_loader(sel_item, 
+                {**rf2aa.data_loader.default_dataloader_params, **self.params}, self.homo, p_homo_cut=-1.0,fixbb=fixbb)
         elif chosen_dataset == 'fb':
             # print('Chose fb')
-            ID = self.fb_IDs[index]
-            sel_idx = np.random.randint(0, len(self.fb_dict[ID]))
             chosen_loader = self.fb_loaders[task]
             if p_unclamp > self.unclamp_cut:
-                out = chosen_loader(sel_item[0], self.params, unclamp=True)
+                out = chosen_loader(sel_item, self.params, unclamp=True, fixbb=fixbb)
             else:
-                out = chosen_loader(sel_item[0], self.params, unclamp=False)
+                out = chosen_loader(sel_item, self.params, unclamp=False,fixbb=fixbb)
         elif chosen_dataset == 'sm_complex':
             out = dataset_config.task_loaders(
-                sel_item[0],
-                {**rf2aa.data_loader.default_dataloader_params, **self.params},
+                sel_item,
+                {**rf2aa.data_loader.default_dataloader_params, **self.params}, num_ligand_chains=1, p_atomize_modres=-1.0, 
+                fixbb=fixbb,
             )
         else:
             raise Exception(f'chosen_dataset {chosen_dataset} not implemented')
         
-        if task is not "seq2str":
+        if fixbb:
             out = rf2aa.data_loader.adaptor_fix_bb(out)
+
         (seq, msa, msa_masked, msa_full, mask_msa, true_crds, atom_mask, idx_pdb, xyz_t, t1d, mask_t, xyz_prev,
-        mask_prev, same_chain, unclamp, negative, atom_frames, bond_feats, chirals, dataset_name, item) = out
+        mask_prev, same_chain, unclamp, negative, atom_frames, bond_feats, chirals, ch_label, dataset_name, item) = out
         #(seq, msa, msa_masked, msa_full, mask_msa, true_crds, atom_mask, idx_pdb, xyz_t, t1d, mask_t, xyz_prev, mask_prev, same_chain, unclamp, negative, atom_frames, bond_feats, chirals, is_sm) = out
         # (seq, msa, msa_masked, msa_full, mask_msa, true_crds, atom_mask, idx_pdb, xyz_t, t1d,         xyz_prev, same_chain, unclamp, negative, complete_chain, atom_mask) = out
         complete_chain = [None, None]
@@ -1642,6 +1647,7 @@ class DistilledDataset(data.Dataset):
         print('same chain ',same_chain.shape)
         print('chirals ',chirals.shape)
         print('bond_feats ',bond_feats.shape)
+        print('ch label ', ch_label.shape)
 
 
         n_atoms = rf2aa.util.is_atom(seq[0]).sum()
@@ -1652,7 +1658,7 @@ class DistilledDataset(data.Dataset):
         ic(f'Removing {(~pop).sum()} residues / atoms')
         N     = pop.sum()
         pop2d = pop[None,:] * pop[:,None]
-
+ 
         seq         = seq[:,pop]
         msa         = msa[:,:,pop]
         msa_masked  = msa_masked[:,:,pop]
@@ -1669,6 +1675,7 @@ class DistilledDataset(data.Dataset):
         mask_t = mask_t[:, pop]
         bond_feats = bond_feats[pop2d].reshape(N,N)
         mask_prev = mask_prev[pop]
+        ch_label = ch_label[pop]
         pop_atoms = pop[is_sm_prepop]
         n_atoms_missing_coordinates = (~pop_atoms).sum()
         assertpy.assert_that(n_atoms_missing_coordinates).is_equal_to(0)
@@ -1700,8 +1707,8 @@ class DistilledDataset(data.Dataset):
         """
 
         is_sm = rf2aa.util.is_atom(seq[0]) # (L)
-        masks_1d = mask_generator.generate_masks(msa, task, self.params, chosen_dataset, complete_chain, xyz=true_crds, is_atom=atom_mask, is_sm=is_sm)
-        
+        masks_1d = mask_generator.generate_masks(msa, task, self.params, chosen_dataset, complete_chain, xyz=true_crds, atom_mask=atom_mask, is_sm=is_sm)
+
         #Concatenate on the contacts tensor onto t1d
         n_t1d = t1d.shape[0]
 

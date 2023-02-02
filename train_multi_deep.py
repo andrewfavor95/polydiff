@@ -31,7 +31,8 @@ from rf2aa.RoseTTAFoldModel import RoseTTAFoldModule
 import aa_model
 from data_loader import (
     get_train_valid_set, loader_pdb, loader_fb, loader_complex, loader_pdb_fixbb, loader_fb_fixbb, loader_complex_fixbb, loader_cn_fixbb, default_dataset_configs,
-    Dataset, DatasetComplex, DistilledDataset, DistributedWeightedSampler
+    #Dataset, DatasetComplex, 
+    DistilledDataset, DistributedWeightedSampler
 )
 
 from kinematics import xyz_to_c6d, c6d_to_bins2, xyz_to_t2d, xyz_to_bbtor, get_init_xyz
@@ -779,12 +780,12 @@ class Trainer():
         
         self.n_train = N_EXAMPLE_PER_EPOCH
 
-        dataset_configs = default_dataset_configs(self.loader_param, debug=DEBUG)
+        dataset_configs, homo = default_dataset_configs(self.loader_param, debug=DEBUG)
         
         print('Making train sets')
         train_set = DistilledDataset(dataset_configs, 
                                      self.loader_param, self.diffuser, self.seq_diffuser, self.ti_dev, self.ti_flip, self.ang_ref, 
-                                     self.diffusion_param, self.preprocess_param, self.model_param)
+                                     self.diffusion_param, self.preprocess_param, self.model_param, homo)
         #get proportion of seq2str examples
         if 'seq2str' in self.loader_param['TASK_NAMES']:
             p_seq2str = self.loader_param['TASK_P'][self.loader_param['TASK_NAMES'].index('seq2str')]
@@ -1320,7 +1321,11 @@ class Trainer():
                                                                 state_prev=None,
                                                                 is_motif=is_motif,
                                                                 use_checkpoint=True,
+<<<<<<< HEAD
                                                                 **({model_input_logger.LOG_ONLY_KEY: {'t':int(little_t), 'item': item}} if self.log_inputs else {}),
+=======
+                                                                **{model_input_logger.LOG_ONLY_KEY: {'t':int(little_t), 'item': item}},
+>>>>>>> 52eeca8 (Enable model input/output logging during training and inference.)
                                                                 )
 
                     # find closest homo-oligomer pairs

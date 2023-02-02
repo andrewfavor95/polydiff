@@ -511,7 +511,11 @@ def write_traj(path, xyz_stack, seq, bond_feats, **kwargs):
     xyz23 = pad_dim(xyz_stack, 2, 23)
     with open(path, 'w') as fh:
         for i, xyz in enumerate(xyz23):
+<<<<<<< HEAD
             rf2aa.util.writepdb_file(fh, xyz, seq, bond_feats=bond_feats[None], modelnum=i, **kwargs)
+=======
+            rf2aa.util.writepdb_file(fh, xyz, seq, bond_feats=bond_feats[None], modelnum=i)
+>>>>>>> 52eeca8 (Enable model input/output logging during training and inference.)
 
 def minifier(argument_map):
     argument_map['out_9'] = None
@@ -519,4 +523,8 @@ def minifier(argument_map):
     argument_map['out_2'] = None
     argument_map['out_3'] = None
     argument_map['out_5'] = None
+<<<<<<< HEAD
     argument_map['t2d'] = None
+=======
+    argument_map['t2d'] = None
+>>>>>>> 52eeca8 (Enable model input/output logging during training and inference.)
