@@ -476,7 +476,6 @@ def mask_inputs(seq,
     ### t1d ###
     ########### 
     # NOTE: Not adjusting t1d last dim (confidence) from sequence mask
-
     t1d = torch.stack([t1d,t1d], dim=0) # [n,I,L,22]
     # NOTE DJ, add the sinusoidal timestep embedding logic here
     if not seq_diffuser is None:
@@ -535,5 +534,4 @@ def mask_inputs(seq,
     # Structure masking
     # str_mask = input_str_mask[0]
     # xyz_t[:,:,~str_mask,:,:] = float('nan') # NOTE: not using this because diffusion is effectively the mask 
-    
     return seq, msa_masked, msa_full, xyz_t, t1d, mask_msa, t_list[:2], true_crds
