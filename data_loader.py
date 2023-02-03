@@ -4,9 +4,11 @@ import torch.nn.functional as F
 import time
 from dataclasses import dataclass
 from torch.utils import data
+from torch import tensor
 from collections import OrderedDict
 import os
 import csv
+import ast
 from dateutil import parser
 import numpy as np
 from parsers import parse_a3m, parse_pdb
@@ -29,6 +31,8 @@ import util
 import math
 from functools import partial
 import pandas as pd
+import run_inference
+import aa_model
 
 base_dir = "/projects/ml/TrRosetta/PDB-2021AUG02"
 compl_dir = "/projects/ml/RoseTTAComplex"
@@ -1550,6 +1554,7 @@ class DistilledDataset(data.Dataset):
 
 
     def __getitem__(self, index):
+        mask_gen_seed = np.random.randint(0, 99999999)
         p_unclamp = np.random.rand()
         task_idx = np.random.choice(np.arange(len(self.task_names)), 1, p=self.p_task)[0]
         task = self.task_names[task_idx]
@@ -1572,8 +1577,9 @@ class DistilledDataset(data.Dataset):
         if self.params['SPOOF_ITEM']:
             if hasattr(self, 'spoofed'):
                 raise Exception('stopping after succesful spoofing of one item')
-            chosen_dataset, item = eval(self.params['SPOOF_ITEM'])
-            sel_item = [item]
+            # chosen_dataset, 
+            item = eval(self.params['SPOOF_ITEM'])
+            sel_item = item
             self.spoofed=True
 
         if chosen_dataset == 'cn':
@@ -1608,14 +1614,14 @@ class DistilledDataset(data.Dataset):
         elif chosen_dataset == 'sm_complex':
             out = dataset_config.task_loaders(
                 sel_item,
-                {**rf2aa.data_loader.default_dataloader_params, **self.params}, num_ligand_chains=1, p_atomize_modres=-1.0, 
+                {**rf2aa.data_loader.default_dataloader_params, **self.params, "P_ATOMIZE_MODRES": -1}, num_protein_chains=1, num_ligand_chains=1, 
                 fixbb=fixbb,
             )
         else:
             raise Exception(f'chosen_dataset {chosen_dataset} not implemented')
         
         if fixbb:
-            out = rf2aa.data_loader.adaptor_fix_bb(out)
+            out = aa_model.adaptor_fix_bb(out)
 
         (seq, msa, msa_masked, msa_full, mask_msa, true_crds, atom_mask, idx_pdb, xyz_t, t1d, mask_t, xyz_prev,
         mask_prev, same_chain, unclamp, negative, atom_frames, bond_feats, chirals, ch_label, dataset_name, item) = out
@@ -1705,7 +1711,7 @@ class DistilledDataset(data.Dataset):
             if chosen_dataset != 'complex':
                 assert torch.sum(t1d[:,:,-1]) == 0 
         """
-
+        run_inference.seed_all(seed=mask_gen_seed)
         is_sm = rf2aa.util.is_atom(seq[0]) # (L)
         masks_1d = mask_generator.generate_masks(msa, task, self.params, chosen_dataset, complete_chain, xyz=true_crds, atom_mask=atom_mask, is_sm=is_sm)
 
@@ -1727,7 +1733,7 @@ class DistilledDataset(data.Dataset):
             seq = torch.where(seq > 19, 0, seq)
 
             ic(f'Fixed sequence {seq}')
-
+        
         seq, msa_masked, msa_full, xyz_t, t1d, mask_msa, little_t, true_crds = mask_inputs(seq,
                                                                                     msa_masked,
                                                                                     msa_full,
@@ -1762,7 +1768,6 @@ class DistilledDataset(data.Dataset):
             
             true_crds (torch.tensor)  : [L,14,3] The true coordinates before noising
         '''
-
         if False:
             ic(seq.shape)
             ic(msa_masked.shape)
@@ -1801,6 +1806,7 @@ class DistilledDataset(data.Dataset):
         # t2d = torch.stack(t2d_arr)
         t2d = -1
         mask_t_2d = torch.ones(1,1,L,L).bool()
+        run_inference.seed_all(mask_gen_seed)
         return seq, msa, msa_masked, msa_full, mask_msa, true_crds, atom_mask, idx_pdb, xyz_t, t1d, t2d, alpha_t, xyz_prev, same_chain, unclamp, negative, masks_1d, task, chosen_dataset, little_t, mask_t, mask_prev, atom_frames, bond_feats, chirals, mask_t_2d, dataset_name, item, is_sm
 
 

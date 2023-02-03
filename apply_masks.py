@@ -315,7 +315,7 @@ def mask_inputs(seq,
             blosum_replacement.append(sampled_blosum[1,decoded_non_motif[1]])
 
             onehot_blosum_rep = [torch.nn.functional.one_hot(i, num_classes=22).float() for i in blosum_replacement] # [n,dim_replace,22]
-            
+
             # JW Move mask_msa masking here, and apply new masks (see above)
             # 1.) make all decoded residues False (so not scored scored)
             mask_msa[0,:,:,seq_mask[0]] = False

@@ -771,17 +771,11 @@ class NRBStyleSelfCond(Sampler):
                 rfo = self.model_adaptor.forward(
                                     rfi,
                                     return_infer=True,
-<<<<<<< HEAD
-                                    **({model_input_logger.LOG_ONLY_KEY: {
-                                        't':t,
-                                        'output_prefix':self.output_prefix,
-                                    }} if self._conf.logging.inputs else {}))
-=======
                                     **{model_input_logger.LOG_ONLY_KEY: {
                                         't':t,
                                         'output_prefix':self.output_prefix,
                                     }})
->>>>>>> 52eeca8 (Enable model input/output logging during training and inference.)
+
 
                 if self.symmetry is not None and self.inf_conf.symmetric_self_cond:
                     raise Exception('not implemented')

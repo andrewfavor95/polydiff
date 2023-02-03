@@ -43,6 +43,9 @@ import aa_model
 
 def make_deterministic(seed=0):
     torch.use_deterministic_algorithms(True)
+    seed_all(seed)
+
+def seed_all(seed=0):
     torch.manual_seed(seed)
     np.random.seed(seed)
     random.seed(seed)

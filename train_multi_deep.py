@@ -1094,6 +1094,7 @@ class Trainer():
 
 
             is_motif = masks_1d['input_str_mask'].squeeze()
+
             # for saving pdbs
             seq_original = torch.clone(seq)
 
