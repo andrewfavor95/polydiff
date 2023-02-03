@@ -29,7 +29,9 @@ def array_submit(job_list_file, p='gpu', gres='gpu:rtx2080:1', wait_for=None, lo
             job = re.sub('>>', '2>&1 | tee', job)
             print(f'running job after: {job}')
 
-            subprocess.run(job, shell=True)
+            proc = subprocess.run(job, shell=True)
+            if proc.returncode != 0:
+                raise Exception(f'FAILED: {job}')
         return -1, None
     return slurm_submit(
         cmd = 'eval \\`sed -n \\${SLURM_ARRAY_TASK_ID}p '+job_list_file+'\\`',

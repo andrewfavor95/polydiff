@@ -4,7 +4,7 @@
 # scripts, optionally submits array job and outputs slurm job ID
 #
 
-import sys, os, argparse, itertools, json, shutil
+import sys, os, argparse, itertools, json, shutil, re
 import numpy as np
 
 script_dir = os.path.dirname(os.path.realpath(__file__))+'/'
@@ -30,6 +30,7 @@ def main():
     parser.add_argument('--no_logs', dest='keep_logs', action="store_false", default=True, help='Don\'t keep slurm logs.')
     parser.add_argument('--out', type=str, default='out/out',help='Path prefix for output files')
     parser.add_argument('--benchmark_json', type=str, default='benchmarks.json', help='Path to non-standard custom json file of benchmarks')
+    parser.add_argument('--use_ligand', default=False, action='store_true', help='Use LigandMPNN instead of regular MPNN.')
 
     args, unknown = parser.parse_known_args()
     if len(unknown)>0:
@@ -127,13 +128,16 @@ def main():
             print(f'source activate SE3-nvidia; python {args.command} {extra_args} '\
                   f'inference.num_designs={args.num_per_job} inference.design_startnum={istart} >> {log_fn}', file=job_list_file)
 
-        # copy input pdbs
+        # copy input pdbs / ligand files
+        in_dir = ''
         for argstr in arglist:
             if argstr.startswith('inference.input_pdb'):
                 fn = argstr.split(' ')[0].split('=')[1]
+                in_dir = os.path.dirname(fn)+'/'
                 outfn = os.path.dirname(args.out)+'/input/'+os.path.basename(fn)
                 if not os.path.exists(outfn):
                     shutil.copyfile(fn, outfn)
+                break
 
     if args.submit or args.in_proc:
         job_list_file.close()

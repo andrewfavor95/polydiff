@@ -507,11 +507,11 @@ def pad_dim(x, dim, new_l):
     padding = padding[::-1]
     return F.pad(x, pad=tuple(padding), value=0)
 
-def write_traj(path, xyz_stack, seq, bond_feats):
+def write_traj(path, xyz_stack, seq, bond_feats, **kwargs):
     xyz23 = pad_dim(xyz_stack, 2, 23)
     with open(path, 'w') as fh:
         for i, xyz in enumerate(xyz23):
-            rf2aa.util.writepdb_file(fh, xyz, seq, bond_feats=bond_feats[None], modelnum=i)
+            rf2aa.util.writepdb_file(fh, xyz, seq, bond_feats=bond_feats[None], modelnum=i, **kwargs)
 
 def minifier(argument_map):
     argument_map['out_9'] = None

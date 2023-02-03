@@ -24,23 +24,20 @@ def get_args():
     parser.add_argument('--no_logs', dest='keep_logs', action="store_false", default=True, help='Don\'t keep slurm logs.')
     parser.add_argument('--num_seq_per_target', default=8,type=int, help='How many mpnn sequences per design? Default = 8')
     parser.add_argument('--in_proc', dest='in_proc', action="store_true", default=False, help='Do not submit slurm array job, run on current node.')
+    parser.add_argument('--use_ligand', action="store_true", default=False, help='Use ligandMPNN.')
     args, unknown = parser.parse_known_args()
     if len(unknown)>0:
         print(f'WARNING: Unknown arguments {unknown}')
     return args
 
-def make_fixed_positions_dict(pdb_dict_list, folder):
-    my_dict = {}
-    for entry in pdb_dict_list:
-        trb = np.load(glob.glob(folder+'/'+entry['name']+'.trb')[0],allow_pickle=True)
-        my_dict[entry['name']] = {'A': [int(x[1]) for x in trb['con_hal_pdb_idx']]}
-    return my_dict
-
 def main():
 
     args = get_args()
 
-    mpnn_folder = args.datadir+'/mpnn/'
+    if args.use_ligand:
+        mpnn_folder = args.datadir+'/ligmpnn/'
+    else:
+        mpnn_folder = args.datadir+'/mpnn/'
     os.makedirs(mpnn_folder, exist_ok=True)
 
     filenames = glob.glob(args.datadir+'/*.pdb')
@@ -55,19 +52,26 @@ def main():
 
     # run parser script
     job_fn = args.datadir + '/jobs.mpnn.parse.list'
-    job_list_file = open(job_fn,'w')
+    job_list_file = open(job_fn, 'w') if args.submit else sys.stdout
+    if args.use_ligand:
+        parse_script = f'{script_dir}/util/parse_multiple_chains_ligand.py'
+    else:
+        parse_script = f'{script_dir}/util/parse_multiple_chains.py'
+
     for i in range(0, len(filenames), args.chunk):
         with open(mpnn_folder+f'parse_multiple_chains.list.{i}','w') as outf:
             for fn in filenames[i:i+args.chunk]:
                 print(fn,file=outf)
-        print(f'python {script_dir}/util/parse_multiple_chains.py --input_files {mpnn_folder}/parse_multiple_chains.list.{i} '\
-              f'--datadir {args.datadir} --output_parsed {mpnn_folder}/pdbs_{i}.jsonl '\
+        print(f'python {parse_script} --input_files {mpnn_folder}/parse_multiple_chains.list.{i} '\
+              f'--datadir {args.datadir} '\
+              f'--output_parsed {mpnn_folder}/pdbs_{i}.jsonl '\
               f'--output_fixed_pos {mpnn_folder}/pdbs_position_fixed_{i}.jsonl', file=job_list_file)
-    job_list_file.close()
+    if args.submit: job_list_file.close()
 
     # submit to slurm
     if args.submit:
-        slurm_job, proc = slurm_tools.array_submit(job_fn, p='cpu', gres=None, J='mpnn_pre', log=args.keep_logs, in_proc=args.in_proc)
+        pre = 'ligmpnn_pre' if args.use_ligand else 'mpnn_pre'
+        slurm_job, proc = slurm_tools.array_submit(job_fn, p='cpu', gres=None, J=pre, log=args.keep_logs, in_proc=args.in_proc)
         print(f'Submitted array job {slurm_job} with {int(np.ceil(len(filenames)/args.chunk))} jobs to preprocess {len(filenames)} designs for MPNN')
 
         prev_job = slurm_job
@@ -76,9 +80,16 @@ def main():
 
     job_fn = args.datadir + '/jobs.mpnn.list'
     job_list_file = open(job_fn, 'w') if args.submit else sys.stdout
+    if args.use_ligand:
+        mpnn_script = '/net/databases/mpnn/github_repo/ligandMPNN/protein_mpnn_run.py'
+        model_name = 'v_32_020'
+    else:
+        mpnn_script = '/net/databases/mpnn/github_repo/protein_mpnn_run.py'
+        model_name = 'v_48_020'
+
     for i in range(0, len(filenames), args.chunk):
-        print(f'source activate mlfold; python /home/jue/git/proteinmpnn/protein_mpnn_run.py '\
-              f'--model_name "v_48_020" '\
+        print(f'source activate SE3-nvidia; python {mpnn_script} '\
+              f'--model_name "{model_name}" '\
               f'--jsonl_path {mpnn_folder}pdbs_{i}.jsonl '\
               f'--fixed_positions_jsonl {mpnn_folder}pdbs_position_fixed_{i}.jsonl '\
               f'--out_folder {mpnn_folder} '\
@@ -94,7 +105,8 @@ def main():
         if args.J is not None:
             job_name = args.J
         else:
-            job_name = 'mpnn_'+os.path.basename(args.datadir.strip('/'))
+            pre = 'ligmpnn_' if args.use_ligand else 'mpnn_'
+            job_name = pre + os.path.basename(args.datadir.strip('/'))
         slurm_job, proc = slurm_tools.array_submit(job_fn, p = args.p, gres=args.gres, log=args.keep_logs, J=job_name, wait_for=[prev_job], in_proc=args.in_proc)
         print(f'Submitted array job {slurm_job} with {int(np.ceil(len(filenames)/args.chunk))} jobs to MPNN {len(filenames)} designs')
 

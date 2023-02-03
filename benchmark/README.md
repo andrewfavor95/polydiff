@@ -78,9 +78,21 @@ designs, if they exist, into a single table, adding design run metadata from
 the trb file (each command-line flag becomes a column), and saves it to
 combined_metrics.csv.
 
+### LigandMPNN
+By default, the benchmarking scripts run regular MPNN, which does not take into
+account small molecule ligands. To use LigandMPNN instead, include the flag
+`--use_ligand` to the `pipeline.py` or `mpnn_designs.py` scripts. This assumes
+that you've set up the benchmark with a ligand input to `run_inference.py`.
+
+To generate a params file, export the small molecule ligand from PyMOL into
+mol2 format and then run the following:
+
+    /software/rosetta/main/source/scripts/python/public/molfile_to_params.py --keep-names --clobber  ../LIGANDNAME.mol2 -n LIGANDNAME 
+
+You can use both MPNN and ligandMPNN on the same set of designs. These are
+indicated in the output CSV by a boolean column `mpnn` or `ligmpnn`.
 
 ### Diversity-adjusted success rate
-
 To obtain a final benchmark metric that represents success rate at varying
 metric thresholds and structural diversities:
 

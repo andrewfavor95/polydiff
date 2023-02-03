@@ -37,6 +37,7 @@ import random
 import glob
 import inference.model_runners
 import rf2aa.tensor_util
+import rf2aa.util
 import aa_model
 # ic.configureOutput(includeContext=True)
 
@@ -135,6 +136,39 @@ def rename_ligand_atoms(ref_fn, out_fn):
             print(line, file=f)
 
 
+        # TEMPORARY HACK (jue): Rename ligand and ligand atoms
+        if sampler._conf.inference.ligand:
+            rename_ligand_atoms(sampler._conf.inference.input_pdb, out_prefix+'.pdb')
+
+def rename_ligand_atoms(ref_fn, out_fn):
+    """Copies names of ligand residue and ligand heavy atoms from input pdb
+    into output (design) pdb."""
+
+    def is_H(atomname):
+        """Returns true if a string starts with 'H' followed by non-letters (numbers)"""
+        letters = ''.join([c for c in atomname.strip() if c.isalpha()])
+        return letters=='H'
+
+    with open(ref_fn) as f:
+        input_lig_lines = [line.strip() for line in f.readlines()
+                           if line.startswith('HETATM') and not is_H(line[13:17])]
+
+    with open(out_fn) as f:
+        lines = [line.strip() for line in f.readlines()]
+
+    lines2 = []
+    i_input = 0
+    for line in lines:
+        if line.startswith('HETATM'):
+            lines2.append(line[:13] + input_lig_lines[i_input][13:21] + line[21:])
+            i_input += 1
+        else:
+            lines2.append(line)
+
+    with open(out_fn,'w') as f:
+        for line in lines2:
+            print(line, file=f)
+
 def sample_one(sampler, simple_logging=False):
         # For intermediate output logging
         indep = sampler.sample_init()
@@ -198,10 +232,14 @@ def save_outputs(sampler, out_prefix, indep, denoised_xyz_stack, px0_xyz_stack, 
 
     # replace mask and unknown tokens in the final seq with alanine
     final_seq = torch.where((final_seq == 20) | (final_seq==21), 0, final_seq)
+
+    # determine lengths of protein and ligand for correct chain labeling in output pdb
+    sm_mask = rf2aa.util.is_atom(final_seq)
+    chain_Ls = [len(sm_mask)-sm_mask.sum(), sm_mask.sum()] # assumes 1 protein followed by 1 ligand
     
     # pX0 last step
     out = f'{out_prefix}.pdb'
-    aa_model.write_traj(out, denoised_xyz_stack[0:1], final_seq, indep.bond_feats)
+    aa_model.write_traj(out, denoised_xyz_stack[0:1], final_seq, indep.bond_feats, chain_Ls=chain_Ls)
     des_path = os.path.abspath(out)
 
     # trajectory pdbs
@@ -209,11 +247,11 @@ def save_outputs(sampler, out_prefix, indep, denoised_xyz_stack, px0_xyz_stack, 
     os.makedirs(os.path.dirname(traj_prefix), exist_ok=True)
 
     out = f'{traj_prefix}_Xt-1_traj.pdb'
-    aa_model.write_traj(out, denoised_xyz_stack, final_seq, indep.bond_feats)
+    aa_model.write_traj(out, denoised_xyz_stack, final_seq, indep.bond_feats, chain_Ls=chain_Ls)
     xt_traj_path = os.path.abspath(out)
 
     out=f'{traj_prefix}_pX0_traj.pdb'
-    aa_model.write_traj(out, px0_xyz_stack, final_seq, indep.bond_feats)
+    aa_model.write_traj(out, px0_xyz_stack, final_seq, indep.bond_feats, chain_Ls=chain_Ls)
     x0_traj_path = os.path.abspath(out)
 
     # run metadata

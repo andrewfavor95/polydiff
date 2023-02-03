@@ -18,6 +18,8 @@
 	"theo_1": "inference.input_pdb=theozyme/theo_1.pdb contigmap.contigs=[\\'6,A7-7,186,A194-195,46,A242-243,8\\']",
     "theo_2": "inference.input_pdb=theozyme/theo_2.pdb contigmap.contigs=[\\'173,A174-174,33,A208-208,67,A276-276,24\\']",
     "theo_3": "inference.input_pdb=theozyme/theo_3.pdb contigmap.contigs=[\\'106,A107-108,15,A124-125,39,A165-166,1\\']",
-    "theo_4": "inference.input_pdb=theozyme/theo_4.pdb contigmap.contigs=[\\'29,A30-31,41,A73-74,15,A90-90,13\\']"
+    "theo_4": "inference.input_pdb=theozyme/theo_4.pdb contigmap.contigs=[\\'29,A30-31,41,A73-74,15,A90-90,13\\']",
+    "gaa_0": "inference.input_pdb=gaa.pdb inference.ligand=UNL contigmap.contigs=[\\'10-100,A518-518,10-100,A616-616,10-100,A404-404,10-100\\'] contigmap.length=200-200",
+    "gaa_1": "inference.input_pdb=gaa.pdb inference.ligand=UNL contigmap.contigs=[\\'10-50,A518-518,10-50,A616-616,10-50,A404-404,10-50\\'] contigmap.length=120-120"
 }
 

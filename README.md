@@ -17,7 +17,7 @@ conda activate SE3-nvidia
 and check the debug/ folder for your output.
 
 
-### Devloping:
+### Developing:
 All code should be run with the `SE3-nvidia` conda environment.  To activate it run:
 ```
 conda activate SE3-nvidia

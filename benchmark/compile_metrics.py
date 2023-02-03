@@ -16,8 +16,7 @@ def main():
 
     filenames = glob.glob(args.datadir+'/*.trb')
 
-    # load run metadata
-    print('loading run metadata')
+    print('loading run metadata (base metrics)')
     records = []
     for fn in filenames:
         name = os.path.basename(fn).replace('.trb','')
@@ -45,56 +44,69 @@ def main():
                     record[k+'.'+k2] = v
         records.append(record)
 
-    df = pd.DataFrame.from_records(records)
+    df_base = pd.DataFrame.from_records(records)
 
     # load computed metrics, if they exist
     print('loading computed metrics')
+    # accumulate metrics for: no mpnn, mpnn, ligand mpnn
+    df_all_list = []
+
+    # metrics of "no mpnn" designs
+    df_nompnn = df_base.copy()
     for path in [
         args.datadir+'/af2_metrics.csv.*',
         args.datadir+'/pyrosetta_metrics.csv.*',
     ]:
         df_s = [ pd.read_csv(fn,index_col=0) for fn in glob.glob(path) ]
         tmp = pd.concat(df_s) if len(df_s)>0 else pd.DataFrame(dict(name=[]))
-        df = df.merge(tmp, on='name', how='outer')
+        df_nompnn = df_nompnn.merge(tmp, on='name', how='outer')
 
-    # mpnn metrics require adding an extra column
-    print('loading computed metrics from MPNNed designs')
-    df_mpnn = pd.DataFrame(dict(name=[]))
-    for path in [
-        args.datadir+'/mpnn/af2_metrics.csv.*',
-        args.datadir+'/mpnn/pyrosetta_metrics.csv.*',
-    ]:
-        df_s = [ pd.read_csv(fn,index_col=0) for fn in glob.glob(path) ]
-        tmp = pd.concat(df_s) if len(df_s)>0 else pd.DataFrame(dict(name=[]))
-        n_unique_names = len(set(tmp['name']))
-        n_names = len(tmp)
-        if n_unique_names < n_names:
-            print('Dropping {n_names - n_unique_names}/{n_names} duplicates from {path}')
-            tmp.drop_duplicates('name', inplace=True)
-        df_mpnn = df_mpnn.merge(tmp, on='name', how='outer')
+    if df_nompnn.shape[1] > df_base.shape[1]: # were there designs that we added metrics for?
+        df_nompnn['mpnn'] = False
+        df_nompnn['ligmpnn'] = False
+        df_all_list.append(df_nompnn)
 
+    # MPNN and LigandMPNN metrics
+    def _load_mpnn_df(mpnn_dir, df_base):
+        df_accum = pd.DataFrame(dict(name=[]))
+        for path in [
+            mpnn_dir+'/af2_metrics.csv.*',
+            mpnn_dir+'/pyrosetta_metrics.csv.*',
+        ]:
+            df_s = [ pd.read_csv(fn,index_col=0) for fn in glob.glob(path) ]
+            tmp = pd.concat(df_s) if len(df_s)>0 else pd.DataFrame(dict(name=[]))
+            n_unique_names = len(set(tmp['name']))
+            n_names = len(tmp)
+            if n_unique_names < n_names:
+                print('Dropping {n_names - n_unique_names}/{n_names} duplicates from {path}')
+                tmp.drop_duplicates('name', inplace=True)
+            df_accum = df_accum.merge(tmp, on='name', how='outer')
+
+        mpnn_scores = load_mpnn_scores(mpnn_dir)
+        df_accum = df_accum.merge(mpnn_scores, on='name', how='outer')
+        df_accum['mpnn_index'] = df_accum.name.map(lambda x: int(x.split('_')[-1]))
+        df_accum['name'] = df_accum.name.map(lambda x: '_'.join(x.split('_')[:-1]))
+        df_out = df_base.copy().merge(df_accum, on='name', how='outer')
+        return df_out
+
+    # MPNN metrics
     if os.path.exists(args.datadir+'/mpnn/'):
-        print('loading MPNN scores')
-        mpnn_scores = load_mpnn_scores(args.datadir+'/mpnn/')
-        df_mpnn = df_mpnn.merge(mpnn_scores, on='name', how='outer')
-        df_mpnn['mpnn_index'] = df_mpnn.name.map(lambda x: int(x.split('_')[-1]))
-        df_mpnn['name'] = df_mpnn.name.map(lambda x: '_'.join(x.split('_')[:-1]))
-        df_mpnn = df_mpnn.merge(df, on='name', how='outer')
-        print(df_mpnn['contig_rmsd_af2'])
+        df_mpnn = _load_mpnn_df(args.datadir+'/mpnn/', df_base)
+        if df_mpnn.shape[1] > df_base.shape[1]: # were there designs that we added metrics for?
+            df_mpnn['mpnn'] = True
+            df_mpnn['ligmpnn'] = False
+            df_all_list.append(df_mpnn)
 
-    # combine regular and mpnn designs
-    df_s = []
-    if df.shape[1] > len(records[0].keys()):
-        df['mpnn'] = False
-        df_s.append(df)
-    if df_mpnn.shape[1] > len(records[0].keys()):
-        df_mpnn['mpnn'] = True
-        df_s.append(df_mpnn)
+    # LigandMPNN metrics
+    if os.path.exists(args.datadir+'/ligmpnn/'):
+        df_ligmpnn = _load_mpnn_df(args.datadir+'/ligmpnn/', df_base)
+        if df_ligmpnn.shape[1] > df_base.shape[1]: # were there designs that we added metrics for?
+            df_ligmpnn['mpnn'] = False
+            df_ligmpnn['ligmpnn'] = True
+            df_all_list.append(df_ligmpnn)
 
-    if len(df_s) == 0:
-        df = pd.DataFrame.from_records(records)
-    else:
-        df = pd.concat(df_s)
+    # concatenate all designs into one list
+    df = pd.concat(df_all_list)
 
     # add seq/struc clusters (assumed to be the same for mpnn designs as non-mpnn)
     for path in [
@@ -105,7 +117,7 @@ def main():
         tmp = pd.concat(df_s) if len(df_s)>0 else pd.DataFrame(dict(name=[]))
         df = df.merge(tmp, on='name', how='outer')
 
-    df.to_csv(args.datadir+'/'+args.outcsv)
+    df.to_csv(args.datadir+'/'+args.outcsv, index=None)
     print(f'Wrote metrics dataframe {df.shape} to "{args.datadir}/{args.outcsv}"')
 
 def load_mpnn_scores(folder):

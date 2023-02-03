@@ -182,9 +182,9 @@ def main():
                     use_o=True)
     
                 if n_designs == 1:
-                   dest = args.datadir+'/mpnn/'+name+'.trb'
+                   dest = args.outdir+name+'.trb'
                 else:
-                    dest = args.datadir+'/mpnn/'+name+f'_{i}.trb'
+                    dest = args.outdir+name+f'_{i}.trb'
                 if not os.path.exists(dest):
                     os.symlink('../'+name+'.trb', dest)
 

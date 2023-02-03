@@ -18,6 +18,9 @@ def main():
         help="Use sweep_hyperparam_inpaint.py, i.e. command-line arguments are in argparse format")
     parser.add_argument('--af2_unmpnned', action='store_true', default=False)
     parser.add_argument('--num_seq_per_target', default=8,type=int, help='How many mpnn sequences per design? Default = 8')
+    parser.add_argument('--use_ligand', default=False,action='store_true', 
+        help='Use LigandMPNN instead of regular MPNN.')
+    parser.add_argument('--no_tmalign', default=False,action='store_false', dest='tmalign')
     parser.add_argument('--af2_gres', type=str, default='',help='--gres argument for alphfold.  If set to the empty string, the arguments used for hyperparameter sweeping are passed to the score_designs.py script')
     parser.add_argument('--in_proc', dest='in_proc', action="store_true", default=False, help='Do not submit slurm array job, run on current node.')
     parser.add_argument('--af2_chunk', dest='af2_chunk', default=100, type=int, help='Do not submit slurm array job, run on current node.')
@@ -30,6 +33,7 @@ def main():
     job_id_tmalign=None
 
     arg_str = ' '.join(['"'+x+'"' if (' ' in x or '|' in x or x=='') else x for x in sys.argv[1:]])
+    use_ligand = 'input_mol2' in arg_str
     if args.start_step == 'sweep':
         if args.inpaint:
             script = f'{script_dir}sweep_hyperparam_inpaint.py'
@@ -42,9 +46,13 @@ def main():
         wait_for_jobs(jobid_sweep)
 
     if args.start_step in ['sweep','mpnn']:
-        jobid_mpnn = run_pipeline_step(f'{script_dir}mpnn_designs.py --num_seq_per_target {args.num_seq_per_target} --chunk 100 -p cpu --gres "" {outdir} {passed_on_args}')
+        if args.use_ligand:
+            job_id_prepare_ligandmpnn_params = run_pipeline_step(f'{script_dir}/pdb_to_params.py {outdir}')
+            wait_for_jobs(job_id_prepare_ligandmpnn_params)
+        jobid_mpnn = run_pipeline_step(f'{script_dir}mpnn_designs.py --num_seq_per_target {args.num_seq_per_target} --chunk 100 -p cpu --gres "" {"--use_ligand" if args.use_ligand else ""} {outdir} {passed_on_args}')
 
-        jobid_tmalign = run_pipeline_step(f'{script_dir}pair_tmalign.py {outdir} {passed_on_args}')
+        if args.tmalign:
+            jobid_tmalign = run_pipeline_step(f'{script_dir}pair_tmalign.py {outdir} {passed_on_args}')
 
     if args.start_step in ['sweep','mpnn']:
         print('Waiting for MPNN jobs to finish...')
@@ -52,7 +60,11 @@ def main():
 
     if args.start_step in ['sweep', 'mpnn', 'thread_mpnn']:
         print('Threading MPNN sequences onto design models...')
-        run_pipeline_step(f'{script_dir}thread_mpnn.py {outdir}')
+        if args.use_ligand:
+            run_pipeline_step(f'{script_dir}thread_mpnn.py --outdir {outdir}/ligmpnn/ '\
+                              f'--seqdir {outdir}/ligmpnn/seqs/ {outdir}')
+        else:
+            run_pipeline_step(f'{script_dir}thread_mpnn.py {outdir}')
 
     print('Initiating scoring')
     af2_args = arg_str
@@ -61,7 +73,11 @@ def main():
     af2_args += f' {passed_on_args}'
     if args.af2_unmpnned:
         jobid_score = run_pipeline_step(f'{script_dir}score_designs.py --chunk {args.af2_chunk} {outdir}/ {af2_args}')
-    jobid_score_mpnn = run_pipeline_step(f'{script_dir}score_designs.py --chunk {args.af2_chunk} {outdir}/mpnn {af2_args}')
+    if args.use_ligand:
+        mpnn_dir = f'{outdir}/ligmpnn'
+    else:
+        mpnn_dir = f'{outdir}/mpnn'
+    jobid_score_mpnn = run_pipeline_step(f'{script_dir}score_designs.py --chunk {args.af2_chunk} {mpnn_dir} {af2_args}')
 
     if job_id_tmalign:
         print('Waiting for TM-align jobs to finish...')
@@ -85,15 +101,17 @@ def run_pipeline_step(cmd):
     and returns list of slurm ids that appear in its output'''
 
     if IN_PROC:
+        print(f'RUNNING: {cmd}')
         proc = subprocess.run(cmd, shell=True)
         out = ''
+        if proc.returncode != 0:
+            raise Exception(f'FAILED: {cmd}')
     else:
         proc = subprocess.run(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         out = proc.stdout.decode()
         print(out)
-
-    if proc.returncode != 0: 
-        sys.exit(proc.stderr.decode())
+        if proc.returncode != 0: 
+            sys.exit(proc.stderr.decode())
 
     jobids = re.findall(r'array job (\d+)', out)
 
