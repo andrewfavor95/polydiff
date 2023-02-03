@@ -1322,11 +1322,7 @@ class Trainer():
                                                                 state_prev=None,
                                                                 is_motif=is_motif,
                                                                 use_checkpoint=True,
-<<<<<<< HEAD
-                                                                **({model_input_logger.LOG_ONLY_KEY: {'t':int(little_t), 'item': item}} if self.log_inputs else {}),
-=======
                                                                 **{model_input_logger.LOG_ONLY_KEY: {'t':int(little_t), 'item': item}},
->>>>>>> 52eeca8 (Enable model input/output logging during training and inference.)
                                                                 )
 
                     # find closest homo-oligomer pairs
