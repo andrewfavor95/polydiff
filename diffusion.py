@@ -339,6 +339,7 @@ class IGSO3():
             self._log.info('Using cached IGSO3.')
             igso3_vals = read_pkl(cache_fname)
         else:
+            self._log.info(f'No IGSO3 cache found at {cache_fname}.')
             self._log.info('Calculating IGSO3.')
             igso3_vals = igso3.calculate_igso3(
                 num_sigma=self.num_sigma,
