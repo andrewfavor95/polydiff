@@ -194,40 +194,54 @@ def get_unconditional_diffusion_mask(xyz, is_sm):
     is_motif[is_sm] = True
     return is_motif
 
+def get_triple_contact_atomize(xyz, atom_mask, is_sm):
+    """
+    placeholder function which allows you to define a probability of atomizing sidechains in training.
+    In practice, this will always be converted to get_triple_contact in get_diffusion_mask
+    """
+    raise NotImplementedError("get_triple_contact_atomize is a placeholder function for controlling how often the model sees atomized residue examples. it should not be called explicitly")
+
 regular_to_sm = {
     get_triple_contact: get_sm_contacts,
 }
-
+atomize_to_regular = {
+    get_triple_contact_atomize: get_triple_contact
+}
 def get_diffusion_mask(
         xyz, atom_mask, is_sm, full_prop, low_prop, high_prop, broken_prop,
         diff_mask_probs):
     
     L = xyz.shape[0]
-    # if random.uniform(0,1) < full_prop:
-    #     is_motif = torch.zeros(L).bool()
-    #     is_motif[is_sm] = True
-    #     return is_motif
-
+    is_atomize_example = False
+    if random.uniform(0,1) < full_prop: #unconditional diffusion
+        is_motif = torch.zeros(L).bool()
+        is_motif[is_sm] = True
+        return is_motif, is_atomize_example
 
     mask_probs = list(diff_mask_probs.items())
     masks = [m for m, _ in mask_probs]
     props = [p for _, p in mask_probs]
     get_mask = np.random.choice(masks, p=props)
-
+    
     ic('DEBUG: get_mask', is_sm.any(), get_mask)
+
+    if get_mask in atomize_to_regular:
+        is_atomize_example = True
+        get_mask = atomize_to_regular[get_mask]
+
     if is_sm.any():
         if get_mask in regular_to_sm:
             get_mask = regular_to_sm[get_mask]
-            return get_mask(xyz, atom_mask, is_sm)
+            return get_mask(xyz, atom_mask, is_sm), is_atomize_example
 
         # xyz_prot = true_crds[~is_sm]
         # msa_prot = msa[:, :, ~is_sm]
         diffusion_mask = torch.ones(L).bool()
         diffusion_mask_prot = get_mask(xyz[~is_sm], full_prop, low_prop, high_prop, broken_prop)
         diffusion_mask[~is_sm] = diffusion_mask_prot
-        return diffusion_mask
+        return diffusion_mask, is_atomize_example
 
-    return get_mask(xyz, full_prop, low_prop, high_prop, broken_prop)
+    return get_mask(xyz, full_prop, low_prop, high_prop, broken_prop), is_atomize_example
 
 def generate_sm_mask(prot_masks, is_sm):
     # Not currently used, but may become part of a better way to do this
@@ -294,7 +308,7 @@ def generate_masks(L, task, loader_params, chosen_dataset, full_chain=None, xyz=
     loss_seq_mask = torch.ones(L).bool()
     loss_str_mask = torch.ones(L).bool()
     loss_str_mask_2d = torch.ones(L,L).bool()
-
+    is_atomize_example = False
     if task == 'seq2str':
         '''
         Classic structure prediction task.
@@ -327,7 +341,7 @@ def generate_masks(L, task, loader_params, chosen_dataset, full_chain=None, xyz=
         #input_str_mask[start:end+1] = False 
         #input_seq_mask     = torch.clone(input_str_mask)
         #MADE A NEW FUNCTION
-        diffusion_mask = get_diffusion_mask(
+        diffusion_mask, is_atomize_example = get_diffusion_mask(
             xyz,
             atom_mask,
             is_sm,
@@ -561,7 +575,8 @@ def generate_masks(L, task, loader_params, chosen_dataset, full_chain=None, xyz=
                 'input_t1d_seq_conf_mask':input_t1d_seq_conf_mask,
                 'loss_seq_mask':loss_seq_mask,
                 'loss_str_mask':loss_str_mask,
-                'loss_str_mask_2d':loss_str_mask_2d}
+                'loss_str_mask_2d':loss_str_mask_2d,
+                'is_atomize_example': is_atomize_example}
     
     return mask_dict
 

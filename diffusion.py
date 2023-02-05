@@ -940,8 +940,9 @@ class Diffuser():
 
         # 2 get  frames
         is_motif = diffusion_mask
-        assert is_motif[is_sm].all(), 'small molecules are not currently diffused, needs checking'
+        # assert is_motif[is_sm].all(), 'small molecules are not currently diffused, needs checking'
         tick = time.time()
+
         diffused_frame_crds, diffused_frames = self.so3_diffuser.diffuse_frames(xyz[:,:3,:].clone(), diffusion_mask=diffusion_mask.numpy(), t_list=None)
         diffused_frame_crds /= self.crd_scale 
         #print('Time to diffuse frames: ',time.time()-tick)
