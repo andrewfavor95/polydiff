@@ -870,52 +870,7 @@ class Trainer():
         self.cb_ang = self.cb_ang.to(gpu)
         self.cb_tor = self.cb_tor.to(gpu)
 
-        model = RoseTTAFoldModule(
-            **self.model_param,
-            aamask=self.aamask,
-            atom_type_index=self.atom_type_index,
-            ljlk_parameters=self.ljlk_parameters,
-            lj_correction_parameters=self.lj_correction_parameters,
-            num_bonds=self.num_bonds,
-            cb_len = self.cb_len,
-            cb_ang = self.cb_ang,
-            cb_tor = self.cb_tor,
-            lj_lin=self.loss_param['lj_lin']
-            ).to(gpu)
-        if self.log_inputs:
-            pickle_dir, self.pickle_counter = pickle_function_call(model, 'forward', 'training', minifier=aa_model.minifier)
-            print(f'pickle_dir: {pickle_dir}')
-        if DEBUG:
-            model.verbose_checks = True
-        model = EMA(model, 0.999)
-        print('Instantiating DDP')
-        ddp_model = model
-        if torch.cuda.device_count():
-            ddp_model = DDP(model, device_ids=[gpu], find_unused_parameters=False)
-        else:
-            ddp_model = DDP(model, find_unused_parameters=False)
-        if rank == 0:
-            print ("# of parameters:", count_parameters(ddp_model))
-        
-        # define optimizer and scheduler
-        opt_params = add_weight_decay(ddp_model, self.l2_coeff)
-        #optimizer = torch.optim.Adam(opt_params, lr=self.init_lr)
-        optimizer = torch.optim.AdamW(opt_params, lr=self.init_lr)
-        #scheduler = get_stepwise_decay_schedule_with_warmup(optimizer, 1000, 10000, 0.95) # For initial round of training
-        #scheduler = get_stepwise_decay_schedule_with_warmup(optimizer, 100, 10000, 0.95) # Trialled using this in diffusion training
-        scheduler = get_stepwise_decay_schedule_with_warmup(optimizer, 0, 10000, 0.95) # for fine-tuning
-        scaler = torch.cuda.amp.GradScaler(enabled=USE_AMP)
-       
-        # load model
-        print('About to load model...')
-        loaded_epoch, best_valid_loss = self.load_model(ddp_model, optimizer, scheduler, scaler, 
-                                                       self.model_name, gpu, resume_train=False)
-
-        print('Done loading model')
-
-        if loaded_epoch >= self.n_epoch:
-            DDP_cleanup()
-            return
+        ddp_model, optimizer, scheduler, scaler, loaded_epoch = self.init_model(gpu)
 
         if return_setup:
             return ddp_model, train_loader, optimizer, scheduler, scaler
@@ -975,6 +930,56 @@ class Trainer():
                             model_path)
                 
         dist.destroy_process_group()
+
+    def init_model(self, device):
+        model = RoseTTAFoldModule(
+            **self.model_param,
+            aamask=self.aamask,
+            atom_type_index=self.atom_type_index,
+            ljlk_parameters=self.ljlk_parameters,
+            lj_correction_parameters=self.lj_correction_parameters,
+            num_bonds=self.num_bonds,
+            cb_len = self.cb_len,
+            cb_ang = self.cb_ang,
+            cb_tor = self.cb_tor,
+            lj_lin=self.loss_param['lj_lin']
+            ).to(device)
+        if self.log_inputs:
+            pickle_dir, self.pickle_counter = pickle_function_call(model, 'forward', 'training', minifier=aa_model.minifier)
+            print(f'pickle_dir: {pickle_dir}')
+        if DEBUG:
+            model.verbose_checks = True
+        model = EMA(model, 0.999)
+        print('Instantiating DDP')
+        ddp_model = model
+        if torch.cuda.device_count():
+            ddp_model = DDP(model, device_ids=[device], find_unused_parameters=False)
+        else:
+            ddp_model = DDP(model, find_unused_parameters=False)
+        # if rank == 0:
+        #     print ("# of parameters:", count_parameters(ddp_model))
+        
+        # define optimizer and scheduler
+        opt_params = add_weight_decay(ddp_model, self.l2_coeff)
+        #optimizer = torch.optim.Adam(opt_params, lr=self.init_lr)
+        optimizer = torch.optim.AdamW(opt_params, lr=self.init_lr)
+        #scheduler = get_stepwise_decay_schedule_with_warmup(optimizer, 1000, 10000, 0.95) # For initial round of training
+        #scheduler = get_stepwise_decay_schedule_with_warmup(optimizer, 100, 10000, 0.95) # Trialled using this in diffusion training
+        scheduler = get_stepwise_decay_schedule_with_warmup(optimizer, 0, 10000, 0.95) # for fine-tuning
+        scaler = torch.cuda.amp.GradScaler(enabled=USE_AMP)
+       
+        # load model
+        print('About to load model...')
+        loaded_epoch, best_valid_loss = self.load_model(ddp_model, optimizer, scheduler, scaler, 
+                                                       self.model_name, device, resume_train=False)
+
+        print('Done loading model')
+
+        return ddp_model, optimizer, scheduler, scaler, loaded_epoch
+
+        if loaded_epoch >= self.n_epoch:
+            DDP_cleanup()
+            return
 
     def train_cycle(self, ddp_model, train_loader, optimizer, scheduler, scaler, rank, gpu, world_size, epoch):
 
