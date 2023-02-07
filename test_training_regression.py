@@ -1,6 +1,7 @@
 import os
 import sys
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'RF2-allatom'))
+from rf2aa.RoseTTAFoldModel import RoseTTAFoldModule as RoseTTAFoldModuleReal
 from rf2aa.RoseTTAFoldModel import RoseTTAFoldModule
 import torch
 from torch import tensor
@@ -86,11 +87,11 @@ class TestRegression(unittest.TestCase):
         ic('end 2')
         torch.distributed.destroy_process_group()
 
-    def test_regression(self):
+    def test_no_self_cond(self):
         os.environ['MASTER_PORT'] = '12319'
-        self.run_regression(arg_string, 'model_input_0')
+        self.run_regression(arg_string, 'model_input_no_self_cond')
 
-    def test_self_cond_regression(self):
+    def test_self_cond_tp1(self):
         os.environ['MASTER_PORT'] = '12320'
         self_cond_arg_string = arg_string[:]
         old_self_cond = '-prob_self_cond 0.5'
@@ -100,10 +101,22 @@ class TestRegression(unittest.TestCase):
         # replacing something.
         assert old_self_cond in self_cond_arg_string
         self_cond_arg_string = self_cond_arg_string.replace(old_self_cond, new_self_cond)
-        self.run_regression(self_cond_arg_string, 'model_input_self_cond')
+        self.run_regression(self_cond_arg_string, 'model_input_self_cond_tp1')
 
-    # Example regression test.
-    def run_regression(self, arg_string, golden_name):
+    def test_self_cond_t(self):
+        os.environ['MASTER_PORT'] = '12321'
+        self_cond_arg_string = arg_string[:]
+        old_self_cond = '-prob_self_cond 0.5'
+        new_self_cond = '-prob_self_cond 1.0'
+        # Since we are doing this the lazy way with string replacement rather
+        # than using a data structure for the arguments, assert that we're actually
+        # replacing something.
+        assert old_self_cond in self_cond_arg_string
+        self_cond_arg_string = self_cond_arg_string.replace(old_self_cond, new_self_cond)
+        self.run_regression(self_cond_arg_string, 'model_input_self_cond_t', call_number=2)
+
+    # Example regression test, with one faked return value from the model.
+    def run_regression(self, arg_string, golden_name, call_number=1):
         # This test must be run on a CPU.
         assert torch.cuda.device_count() == 0
         run_inference.make_deterministic()
@@ -117,8 +130,20 @@ class TestRegression(unittest.TestCase):
         func_sig = signature(RoseTTAFoldModule.forward)
         train = train_multi_deep.make_trainer(*all_args)
         with mock.patch.object(train, "init_model") as submethod_mocked:
+
+            def side_effect(*args, **kwargs):
+                ic("mock forward", type(args[0]), len(args), args[4].shape, side_effect.call_count)
+                side_effect.call_count += 1
+                if side_effect.call_count < call_number:
+                    xyz = args[4] # [1, L, 36 3]
+                    px0_xyz = xyz[None,:,:,:3].repeat(40, 1, 1, 1, 1)
+                    px0_xyz = torch.normal(0, 1, px0_xyz.shape) + px0_xyz
+                    return  None, None, None, None, px0_xyz, None, None, None, None, None, None
+                else:
+                    raise CallException('called')
+            side_effect.call_count = 0
             mymock_method = mock.MagicMock()
-            mymock_method.side_effect = CallException('Function called')
+            mymock_method.side_effect = side_effect
 
             submethod_mocked.return_value = mymock_method, mock.MagicMock(), mock.MagicMock(), mock.MagicMock(), 0
             train.group_name = golden_name
@@ -134,7 +159,6 @@ class TestRegression(unittest.TestCase):
             argument_map = argument_binding.arguments
             argument_map = tensor_util.cpu(argument_map)
             test_utils.assert_matches_golden(self, golden_name, argument_map, rewrite=REWRITE, custom_comparator=tensor_util.cmp)
-        
 
 if __name__ == '__main__':
         unittest.main()
