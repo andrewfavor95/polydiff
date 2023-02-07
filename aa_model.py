@@ -656,7 +656,8 @@ def diffuse(conf, diffuser, indep, is_diffused, t):
         t_list = [t,t]
     else: 
         t_list = [t+1,t]
-    indep_diffused = copy.deepcopy(indep)
+    indep_diffused_t = copy.deepcopy(indep)
+    indep_diffused_tplus1 = copy.deepcopy(indep)
     ic(conf)
     kwargs = {
         'xyz'                     :indep.xyz,
@@ -724,9 +725,9 @@ def diffuse(conf, diffuser, indep, is_diffused, t):
         
         diffused_fullatoms[1] = tmp_x_t
 
-    # rf2aa.tensor_util.assert_same_shape(diffused_fullatoms[1], indep.xyz)
-    indep_diffused.xyz = diffused_fullatoms[1, :, :14]
-    return indep_diffused, t_list
+    indep_diffused_tplus1.xyz = diffused_fullatoms[0, :, :14]
+    indep_diffused_t.xyz = diffused_fullatoms[1, :, :14]
+    return (indep_diffused_tplus1, indep_diffused_t), t_list
 
 def forward(model, rfi, **kwargs):
     rfi_dict = dataclasses.asdict(rfi)

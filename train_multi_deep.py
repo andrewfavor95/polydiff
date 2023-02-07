@@ -1009,7 +1009,8 @@ class Trainer():
         
         print('About to enter train loader loop')
         for loader_out in train_loader:
-            indep, rfi, dataset_name, item, little_t, is_diffused = loader_out
+            indep, rfi_tp1_t, dataset_name, item, little_t, is_diffused = loader_out
+            rfi_tp1, rfi_t = rfi_tp1_t
 
             ic(gpu, dataset_name, item)
 
@@ -1060,29 +1061,6 @@ class Trainer():
                 ic('Train cycle received bad example, skipping')
                 continue
 
-            #ic(seq.shape)
-            #ic(msa.shape)
-            #ic(msa_masked.shape)
-            #ic(msa_full.shape)
-            #ic(mask_msa.shape)
-            #ic(true_crds.shape)
-            #ic(mask_crds.shape)
-            #ic(idx_pdb.shape)
-            #ic(xyz_t.shape)
-            #ic(t1d.shape)
-            #ic(xyz_prev.shape)
-            #ic(same_chain)
-            # ic(unclamp)
-            # ic(negative)
-            # ic(masks_1d)
-            # ic(chosen_task)
-            # ic(chosen_dataset)
-            # ic(atom_mask)
-
-            # torch.save(torch.clone(xyz_t), 'xyz_t.pt')
-            # torch.save(torch.clone(seq), 'seq.pt')
-            # torch.save(torch.clone(atom_mask), 'atom_mask.pt')
-
             # for saving pdbs
             seq_original = torch.clone(indep.seq)
 
@@ -1094,8 +1072,8 @@ class Trainer():
             # xyz_t_in = torch.clone(xyz_t)
 
             # transfer inputs to device
-            B, _, N, L = rfi.msa_latent.shape
-            rf2aa.tensor_util.to_device(rfi, gpu)
+            B, _, N, L = rfi_t.msa_latent.shape
+            rf2aa.tensor_util.to_device(rfi_t, gpu)
             alpha_prev = torch.zeros((B,L,rf2aa.chemical.NTOTALDOFS,2)).to(gpu, non_blocking=True)
 
             counter += 1 
@@ -1117,6 +1095,7 @@ class Trainer():
             ic(self.preprocess_param['prob_self_cond'], step_back)
             if step_back:
                 unroll_performed = True
+                rf2aa.tensor_util.to_device(rfi_tp1, gpu)
 
                 # Take 1 step back in time to get the training example to feed to the model
                 # For this model evaluation msa_prev, pair_prev, and state_prev are all None and i_cycle is
@@ -1124,48 +1103,55 @@ class Trainer():
                 with torch.no_grad():
                     with ddp_model.no_sync():
                         with torch.cuda.amp.autocast(enabled=USE_AMP):
+                            # # Select timestep t = t+1
+                            # use_seq        = seq[:,0]
+                            # use_msa_masked = msa_masked[:,0]
+                            # use_msa_full   = msa_full[:,0]
+                            # use_xyz_prev   = xyz_prev[:,0] # grab t entry, could also make this None when not self conditioning
+                            # use_t1d        = t1d[:,0]
+                            # # use_t2d        = t2d[:,0] # May want to make this zero for self cond
+                            # use_xyz_t      = xyz_t[:,0]
+                            # use_alpha_t    = alpha_t[:,0]
+                            # seq_scalar = torch.argmax(use_seq[0], dim=-1)
+                            # # use_t2d, mask_t_2d = rf2aa.data_loader.get_t2d(
+                            # #     xyz_t[i], mask_t, use_msa_masked[0,0], same_chain, atom_frames)
+                            # # This is new
+                            # # use_t2d = torch.zeros_like(use_t2d)
+                            # use_t2d = torch.zeros(B,1,L,L,68)
+                            # use_xyz_t = torch.zeros_like(use_xyz_t)
 
-                            # Select timestep t = t+1
-                            use_seq        = seq[:,0]
-                            use_msa_masked = msa_masked[:,0]
-                            use_msa_full   = msa_full[:,0]
-                            use_xyz_prev   = xyz_prev[:,0] # grab t entry, could also make this None when not self conditioning
-                            use_t1d        = t1d[:,0]
-                            # use_t2d        = t2d[:,0] # May want to make this zero for self cond
-                            use_xyz_t      = xyz_t[:,0]
-                            use_alpha_t    = alpha_t[:,0]
-                            seq_scalar = torch.argmax(use_seq[0], dim=-1)
-                            # use_t2d, mask_t_2d = rf2aa.data_loader.get_t2d(
-                            #     xyz_t[i], mask_t, use_msa_masked[0,0], same_chain, atom_frames)
-                            # This is new
-                            # use_t2d = torch.zeros_like(use_t2d)
-                            use_t2d = torch.zeros(B,1,L,L,68)
-                            use_xyz_t = torch.zeros_like(use_xyz_t)
+                            rfo = aa_model.forward(
+                                    ddp_model,
+                                    rfi_tp1,
+                                    use_checkpoint=False,
+                                    return_raw=False
+                                    )
+                            _, sequence_logits, _, _, px0_xyz, _, px0_allatom, _, _, _, _ = rfo
 
-                            _, sequence_logits, _, _, px0_xyz, _, px0_allatom, _, _, _, _ = ddp_model(
-                                                                       use_msa_masked[:,0],
-                                                                       use_msa_full[:,0],
-                                                                       seq_scalar,
-                                                                       seq_scalar, # msa
-                                                                       use_xyz_prev,
-                                                                       alpha_prev,
-                                                                       idx_pdb,
-                                                                       bond_feats=bond_feats,
-                                                                       chirals=chirals,
-                                                                       atom_frames=atom_frames,
-                                                                       t1d=use_t1d,
-                                                                       t2d=use_t2d,
-                                                                       xyz_t=use_xyz_t[...,1,:],
-                                                                       alpha_t=use_alpha_t,
-                                                                       mask_t=mask_t_2d,
-                                                                       same_chain=same_chain,
-                                                                       msa_prev=None,
-                                                                       pair_prev=None,
-                                                                       state_prev=None,
-                                                                       return_raw=False,
-                                                                       is_motif=is_motif,
-                                                                       use_checkpoint=False
-                                                                       )
+                            # _, sequence_logits, _, _, px0_xyz, _, px0_allatom, _, _, _, _ = ddp_model(
+                            #                                            use_msa_masked[:,0],
+                            #                                            use_msa_full[:,0],
+                            #                                            seq_scalar,
+                            #                                            seq_scalar, # msa
+                            #                                            use_xyz_prev,
+                            #                                            alpha_prev,
+                            #                                            idx_pdb,
+                            #                                            bond_feats=bond_feats,
+                            #                                            chirals=chirals,
+                            #                                            atom_frames=atom_frames,
+                            #                                            t1d=use_t1d,
+                            #                                            t2d=use_t2d,
+                            #                                            xyz_t=use_xyz_t[...,1,:],
+                            #                                            alpha_t=use_alpha_t,
+                            #                                            mask_t=mask_t_2d,
+                            #                                            same_chain=same_chain,
+                            #                                            msa_prev=None,
+                            #                                            pair_prev=None,
+                            #                                            state_prev=None,
+                            #                                            return_raw=False,
+                            #                                            is_motif=is_motif,
+                            #                                            use_checkpoint=False
+                            #                                            )
 
             # KEEEEEEEEEEEEEEEEEEP THIS, UNCOMMENT ONCE DOING SC
             # # Since we are not sequence self-conditioning, much of 2-terminal index is redundant.
@@ -1219,28 +1205,6 @@ class Trainer():
                     with ddp_model.no_sync():
                         with torch.cuda.amp.autocast(enabled=USE_AMP):
                             raise Exception('cycling not implemented yet')
-                            msa_prev, pair_prev, xyz_prev, state_prev, alpha = ddp_model(
-                                                                      msa_masked[:,0],
-                                                                      msa_full[:,0],
-                                                                      seq[:,0],
-                                                                      xyz_prev, 
-                                                                      idx_pdb,
-                                                                      t=little_t,
-                                                                      t1d=t1d,
-                                                                      t2d=t2d,
-                                                                      xyz_t=xyz_t[...,1,:],
-                                                                      alpha_t=alpha_t,
-                                                                      msa_prev=msa_prev,
-                                                                      pair_prev=pair_prev,
-                                                                      state_prev=state_prev,
-                                                                      return_raw=True,
-                                                                      motif_mask=diffusion_mask,
-                                                                      i_cycle=i_cycle,
-                                                                      n_cycle=N_cycle,
-                                                                      )
-
-
-                            #_, xyz_prev = self.compute_allatom_coords(seq[:,i_cycle], xyz_prev, alpha)
 
             xyz_prev_orig = xyz_prev.clone()
             i_cycle = N_cycle-1
@@ -1252,7 +1216,7 @@ class Trainer():
                 with torch.cuda.amp.autocast(enabled=USE_AMP):
                     rfo = aa_model.forward(
                                     ddp_model,
-                                    rfi,
+                                    rfi_t,
                                     use_checkpoint=True,
                                     **({model_input_logger.LOG_ONLY_KEY: {'t':int(little_t), 'item': item}} if self.log_inputs else {}))
                     logit_s, logit_aa_s, logits_pae, logits_pde, pred_crds, alphas, px0_allatom, pred_lddts, _, _, _ = rfo
