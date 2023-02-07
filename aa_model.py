@@ -504,20 +504,7 @@ class Model:
             None)
         return rfi
     
-    def self_cond(self, indep, rfi, rfo):
-        # RFI is already batched
-        B = 1
-        L = indep.xyz.shape[0]
-        rfi_sc = copy.deepcopy(rfi)
-        zeros = torch.zeros(B,1,L,36-3,3).float().to(rfi.xyz.device)
-        xyz_t = torch.cat((rfo.xyz[-1:], zeros), dim=-2) # [B,T,L,27,3]
-        t2d, mask_t_2d_remade = util.get_t2d(
-            xyz_t[0], indep.is_sm, rfi.atom_frames[0])
-        t2d = t2d[None] # Add batch dimension # [B,T,L,L,44]
-        # xyz_t = xyz_t[...,1,:]
-        rfi_sc.xyz_t = xyz_t[:,:,:,1]
-        rfi_sc.t2d = t2d
-        return rfi_sc
+
 
 def assert_has_coords(xyz, indep):
     assert len(xyz.shape) == 3
@@ -735,3 +722,18 @@ def forward(model, rfi, **kwargs):
 
 def mask_indep(indep, is_diffused):
     indep.seq[is_diffused] = MASKINDEX
+
+def self_cond(indep, rfi, rfo):
+    # RFI is already batched
+    B = 1
+    L = indep.xyz.shape[0]
+    rfi_sc = copy.deepcopy(rfi)
+    zeros = torch.zeros(B,1,L,36-3,3).float().to(rfi.xyz.device)
+    xyz_t = torch.cat((rfo.xyz[-1:], zeros), dim=-2) # [B,T,L,27,3]
+    t2d, mask_t_2d_remade = util.get_t2d(
+        xyz_t[0], indep.is_sm, rfi.atom_frames[0])
+    t2d = t2d[None] # Add batch dimension # [B,T,L,L,44]
+    # xyz_t = xyz_t[...,1,:]
+    rfi_sc.xyz_t = xyz_t[:,:,:,1]
+    rfi_sc.t2d = t2d
+    return rfi_sc

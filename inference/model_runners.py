@@ -755,7 +755,7 @@ class NRBStyleSelfCond(Sampler):
         self_cond = False
         if ((t < self.diffuser.T) and (t != self.diffuser_conf.partial_T)) and self._conf.inference.str_self_cond:
             self_cond=True
-            rfi = self.model_adaptor.self_cond(indep, rfi, rfo)
+            rfi = aa_model.self_cond(indep, rfi, rfo)
 
         if self.symmetry is not None:
             idx_pdb, self.chain_idx = self.symmetry.res_idx_procesing(res_idx=idx_pdb)

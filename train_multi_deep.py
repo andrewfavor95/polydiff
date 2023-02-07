@@ -1014,83 +1014,42 @@ class Trainer():
 
             ic(gpu, dataset_name, item)
 
-            # Save trues for writing pdbs later.
-            xyz_prev = indep.xyz[None]
-            xyz_prev_orig = xyz_prev.clone()
-            seq_unmasked = indep.seq[None]
-            # Not relevant since we pop the residues this would be filtering
-            #res_mask = ~((atom_mask_[:,:,:3].sum(dim=-1) < 3.0) * ~(is_atom(msa[:,i_cycle,0])))
+            N_cycle = np.random.randint(1, self.maxcycle+1) # number of recycling
 
-            '''
-                Current Dimensions:
-                
-                seq (torch.tensor)        : [B,n,I,L,22] noised one hot sequence
-
-                msa (torch.tensor)        : [B,I,N_long,L]
-                
-                msa_masked (torch.tensor) : [B,n,I,N_short,L,48] 
-                
-                msa_full (torch.tensor)   : [B,n,I,N_long,L,25]
-
-                mask_msa (torch.tensor)   : [B,n,N_short,L] The msa mask at t 
-
-                true_crds (torch.tensor)  : [B,L,27,3]
-
-                mask_crds (torch.tensor)  : [B,L,27]
-
-                idx_pdb (torch.tensor)    : [B,L]
-                
-                xyz_t (torch.tensor)      : [B,n,T,L,27,3] Noised true coordinates at t+1 and t
-                
-                t1d (torch.tensor)        : [B,n,T,L,33] Template 1D features at t+1 and t
-
-                t2d (torch.tensor)        : [B,n,T,L,L,44] Template 2D features at t+1 and t
-                
-                alpha_t (torch.tensor)    : [B,n,T,L,30]
-
-                xyz_prev (torch.tensor)   : [B,n,L,27,3]
-                
-                ...
-
-                little_t (torch.tensor)   : [n] The timesteps t+1 and t
-            '''
+            # Defensive assertions
             assert little_t > 0
+            assert N_cycle == 1, 'cycling not implemented'
+            i_cycle = N_cycle-1
+            assert(( self.preprocess_param['prob_self_cond'] == 0 ) ^ \
+                   ( self.preprocess_param['str_self_cond'] or self.preprocess_param['seq_self_cond'] )), \
+                  'prob_self_cond must be > 0 for str_self_cond or seq_self_cond to be active'
 
             # Checking whether this example was of poor quality and the dataloader just returned None - NRB
             if indep.seq.shape[0] == 0:
                 ic('Train cycle received bad example, skipping')
                 continue
 
+            # Save trues for writing pdbs later.
+            xyz_prev_orig = indep.xyz[None]
+            seq_unmasked = indep.seq[None]
+
             # for saving pdbs
             seq_original = torch.clone(indep.seq)
-
-            # Do diffusion + apply masks 
-            start = time.time()
-
-            # for saving pdbs
-            seq_masked = torch.clone(indep.seq)
-            # xyz_t_in = torch.clone(xyz_t)
 
             # transfer inputs to device
             B, _, N, L = rfi_t.msa_latent.shape
             rf2aa.tensor_util.to_device(rfi_t, gpu)
-            alpha_prev = torch.zeros((B,L,rf2aa.chemical.NTOTALDOFS,2)).to(gpu, non_blocking=True)
 
             counter += 1 
 
-            N_cycle = np.random.randint(1, self.maxcycle+1) # number of recycling
 
             # get diffusion_mask for the displacement loss
             diffusion_mask     = ~is_diffused
 
             unroll_performed = False
 
-            assert(( self.preprocess_param['prob_self_cond'] == 0 ) ^ \
-                   ( self.preprocess_param['str_self_cond'] or self.preprocess_param['seq_self_cond'] )), \
-                  'prob_self_cond must be > 0 for str_self_cond or seq_self_cond to be active'
-
             # Some percentage of the time, provide the model with the model's prediction of x_0 | x_t+1
-            # When little_t[0] == little_t[1] we are at t == T so we should not unroll
+            # When little_t == T should not unroll as we cannot go back further in time.
             step_back = not (little_t == self.config_dict['diffuser']['T']) and (torch.tensor(self.preprocess_param['prob_self_cond']) > torch.rand(1))
             ic(self.preprocess_param['prob_self_cond'], step_back)
             if step_back:
@@ -1103,111 +1062,14 @@ class Trainer():
                 with torch.no_grad():
                     with ddp_model.no_sync():
                         with torch.cuda.amp.autocast(enabled=USE_AMP):
-                            # # Select timestep t = t+1
-                            # use_seq        = seq[:,0]
-                            # use_msa_masked = msa_masked[:,0]
-                            # use_msa_full   = msa_full[:,0]
-                            # use_xyz_prev   = xyz_prev[:,0] # grab t entry, could also make this None when not self conditioning
-                            # use_t1d        = t1d[:,0]
-                            # # use_t2d        = t2d[:,0] # May want to make this zero for self cond
-                            # use_xyz_t      = xyz_t[:,0]
-                            # use_alpha_t    = alpha_t[:,0]
-                            # seq_scalar = torch.argmax(use_seq[0], dim=-1)
-                            # # use_t2d, mask_t_2d = rf2aa.data_loader.get_t2d(
-                            # #     xyz_t[i], mask_t, use_msa_masked[0,0], same_chain, atom_frames)
-                            # # This is new
-                            # # use_t2d = torch.zeros_like(use_t2d)
-                            # use_t2d = torch.zeros(B,1,L,L,68)
-                            # use_xyz_t = torch.zeros_like(use_xyz_t)
-
                             rfo = aa_model.forward(
                                     ddp_model,
                                     rfi_tp1,
                                     use_checkpoint=False,
                                     return_raw=False
                                     )
-                            _, sequence_logits, _, _, px0_xyz, _, px0_allatom, _, _, _, _ = rfo
-
-                            # _, sequence_logits, _, _, px0_xyz, _, px0_allatom, _, _, _, _ = ddp_model(
-                            #                                            use_msa_masked[:,0],
-                            #                                            use_msa_full[:,0],
-                            #                                            seq_scalar,
-                            #                                            seq_scalar, # msa
-                            #                                            use_xyz_prev,
-                            #                                            alpha_prev,
-                            #                                            idx_pdb,
-                            #                                            bond_feats=bond_feats,
-                            #                                            chirals=chirals,
-                            #                                            atom_frames=atom_frames,
-                            #                                            t1d=use_t1d,
-                            #                                            t2d=use_t2d,
-                            #                                            xyz_t=use_xyz_t[...,1,:],
-                            #                                            alpha_t=use_alpha_t,
-                            #                                            mask_t=mask_t_2d,
-                            #                                            same_chain=same_chain,
-                            #                                            msa_prev=None,
-                            #                                            pair_prev=None,
-                            #                                            state_prev=None,
-                            #                                            return_raw=False,
-                            #                                            is_motif=is_motif,
-                            #                                            use_checkpoint=False
-                            #                                            )
-
-            # KEEEEEEEEEEEEEEEEEEP THIS, UNCOMMENT ONCE DOING SC
-            # # Since we are not sequence self-conditioning, much of 2-terminal index is redundant.
-            # # Let's assert that it's the same.
-            # # Not true due to blosum
-            # rf2aa.tensor_util.assert_equal(seq[:,0],seq[:,1])
-            # # rf2aa.tensor_util.assert_equal(t1d[:,0],t1d[:,1]) # Last idx unequal due to confidence
-            # # rf2aa.tensor_util.assert_equal(alpha_t[:,0],alpha_t[:,1]) # Unequal due to coming from different xyz_t
-            # rf2aa.tensor_util.assert_equal(msa_masked[:,0],msa_masked[:,1])
-            # rf2aa.tensor_util.assert_equal(msa_full[:,0],msa_full[:,1])
-            # rf2aa.tensor_util.assert_equal(mask_msa[:,0],mask_msa[:,1])
-
-            if self.preprocess_param['str_self_cond']:
-                if unroll_performed:
-                    # When doing self conditioning training, the model only receives px0_xyz information through template features
-                    # Turn model's prediction of x0 structure into xyz_t and t2d
-                    I,B,L = px0_xyz.shape[:3]
-
-                    assert(px0_xyz.shape[-2] == 3) # No sidechains allowed
-
-                    px0_xyz = px0_xyz[-1] # Only grab final prediction
-                    
-                    zeros = torch.zeros(B,1,L,36-3,3).float().to(px0_xyz.device)
-                    xyz_t = torch.cat((px0_xyz.unsqueeze(1),zeros), dim=-2) # [B,T,L,27,3]
-                    t2d, mask_t_2d_remade = util.get_t2d(
-                        # xyz_t[0], mask_t[0], seq_scalar[0], same_chain[0], atom_frames[0])
-                        xyz_t[0], is_sm[0], atom_frames[0])
-                    t2d = t2d[None] # Add batch dimension # [B,T,L,L,44]
-            else:
-                # Default behavior, no str self conditioning
-                xyz_t = xyz_t[:,1]
-                t2d   = t2d[:,1]
-
-            if self.preprocess_param['seq_self_cond']:
-                if unroll_performed:
-                    # When doing seq self conditioning training, the model only receives px0_seq information through template features
-                    # Turn model's prediction of x0 sequence into t1d
-
-                    # Removing prediction of mask character
-                    pred_seq = sequence_logits[0,:20,:].permute(1,0) # [L,20]
-
-                    t1d[:,:,:,:20] = pred_seq # [B,T,L,33]
-                    t1d[:,:,:,20]  = 0 # Mask token set to zero
-                     
-                else:
-                    t1d[:,:,:,:21] = 0 # [B,T,L,33]
-
-
-            with torch.no_grad():
-                for i_cycle in range(N_cycle-1):
-                    with ddp_model.no_sync():
-                        with torch.cuda.amp.autocast(enabled=USE_AMP):
-                            raise Exception('cycling not implemented yet')
-
-            xyz_prev_orig = xyz_prev.clone()
-            i_cycle = N_cycle-1
+                            rfi_t = aa_model.self_cond(indep, rfi_t, rfo)
+                            xyz_prev_orig = rfi_t.xyz[:,:,:14].clone()
 
 
             with ExitStack() as stack:
@@ -1345,10 +1207,6 @@ class Trainer():
             if self.diffusion_param['seqdiff'] == 'continuous':
                 top1_sequence = torch.argmax(logit_aa_s[:,:20,:], dim=1)
 
-            # Also changed to allow for one-hot sequence input
-            seq_original = torch.argmax(seq_original[:,:,:,:,:20], dim=-1)
-            seq_masked = torch.argmax(seq_masked[:,:,:,:,:20], dim=-1)
-
             clamped = top1_sequence
 
             save_pdb = np.random.randint(0,self.n_write_pdb) == 0
@@ -1358,6 +1216,7 @@ class Trainer():
                 pdb_dir = os.path.join(self.outdir, 'training_pdbs')
                 os.makedirs(pdb_dir, exist_ok=True)
                 prefix = f'{pdb_dir}/test_epoch_{epoch}_{counter}_{chosen_task[0]}_{chosen_dataset[0]}_t_{int( little_t )}'
+                bond_feats = indep.bond_feats
                 rf2aa.util.writepdb(f'{prefix}_input.pdb',
                     torch.nan_to_num(xyz_prev_orig[res_mask][:,:23]), seq_unmasked[res_mask],
                     bond_feats=bond_feats[:, res_mask[0]][:, :, res_mask[0]])
