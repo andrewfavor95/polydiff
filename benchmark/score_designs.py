@@ -25,7 +25,11 @@ def main():
     parser.add_argument('--in_proc', dest='in_proc', action="store_true", default=False, help='Do not submit slurm array job, only generate job list.')
     parser.add_argument('--no_logs', dest='keep_logs', action="store_false", default=True, help='Don\'t keep slurm logs.')
     parser.add_argument('--pipeline', '-P', action='store_true', default=False, help='Pipeline mode: submit the next script to slurm with a dependency on jobs from this script.')
+<<<<<<< HEAD
     parser.add_argument('-r', '--run', default='af2', help='Comma-separated (no whitespace) list of scoring scripts to run (e.g. "af2,pyrosetta"). Can contain any of {"af2", pyrosetta", "chemnet", "rosettalig"}')
+=======
+    parser.add_argument('-r', '--run', default='af2', help='Comma-separated (no whitespace) list of scoring scripts to run (e.g. "af2,pyrosetta"). Can contain any of {"af2", pyrosetta", "chemnet"}')
+>>>>>>> 0898d1a (added chemnet to benchmarking pipeline)
 
     args, unknown = parser.parse_known_args()
     if len(unknown)>0:
