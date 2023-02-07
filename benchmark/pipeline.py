@@ -61,8 +61,10 @@ def main():
     if args.start_step in ['sweep', 'mpnn', 'thread_mpnn']:
         print('Threading MPNN sequences onto design models...')
         if args.use_ligand:
-            run_pipeline_step(f'{script_dir}thread_mpnn.py --outdir {outdir}/ligmpnn/ '\
-                              f'--seqdir {outdir}/ligmpnn/seqs/ {outdir}')
+            run_pipeline_step(
+                f'{script_dir}thread_mpnn.py --use_ligand --init_sc --outdir {outdir}/ligmpnn/ '\
+                f'--seqdir {outdir}/ligmpnn/seqs/ {outdir}'
+            )
         else:
             run_pipeline_step(f'{script_dir}thread_mpnn.py {outdir}')
 
@@ -72,12 +74,21 @@ def main():
         af2_args = f' --gres {args.af2_gres}'
     af2_args += f' {passed_on_args}'
     if args.af2_unmpnned:
-        jobid_score = run_pipeline_step(f'{script_dir}score_designs.py --chunk {args.af2_chunk} {outdir}/ {af2_args}')
+        jobid_score = run_pipeline_step(
+            f'{script_dir}score_designs.py --run "af2,pyrosetta" --chunk {args.af2_chunk} '\
+            f'{outdir}/ {af2_args}'
+        )
     if args.use_ligand:
         mpnn_dir = f'{outdir}/ligmpnn'
+        score_scripts = "af2,pyrosetta,chemnet"
     else:
         mpnn_dir = f'{outdir}/mpnn'
-    jobid_score_mpnn = run_pipeline_step(f'{script_dir}score_designs.py --chunk {args.af2_chunk} {mpnn_dir} {af2_args}')
+        score_scripts = "af2,pyrosetta"
+
+    jobid_score_mpnn = run_pipeline_step(
+        f'{script_dir}score_designs.py --run "{score_scripts}" --chunk {args.af2_chunk} '\
+        f'{mpnn_dir} {af2_args}'
+    )
 
     if job_id_tmalign:
         print('Waiting for TM-align jobs to finish...')

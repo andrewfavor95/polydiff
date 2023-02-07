@@ -25,7 +25,7 @@ def main():
     parser.add_argument('--in_proc', dest='in_proc', action="store_true", default=False, help='Do not submit slurm array job, only generate job list.')
     parser.add_argument('--no_logs', dest='keep_logs', action="store_false", default=True, help='Don\'t keep slurm logs.')
     parser.add_argument('--pipeline', '-P', action='store_true', default=False, help='Pipeline mode: submit the next script to slurm with a dependency on jobs from this script.')
-    parser.add_argument('--skip_rosetta', dest='rosetta', action='store_false', default=True, help='Don\'t score with rosetta')
+    parser.add_argument('-r', '--run', default='af2', help='Comma-separated (no whitespace) list of scoring scripts to run (e.g. "af2,pyrosetta"). Can contain any of {"af2", pyrosetta", "chemnet"}')
 
     args, unknown = parser.parse_known_args()
     if len(unknown)>0:
@@ -34,32 +34,36 @@ def main():
     filenames = sorted(glob.glob(args.datadir+'/*.pdb'))
     if len(filenames)==0: sys.exit('No pdbs to score. Exiting.')
 
+    args.run = args.run.split(',')
+
     if args.chunk == -1:
         args.chunk = len(filenames)
 
     # AF2 predictions
-    job_fn = args.datadir + '/jobs.score.af2.list'
-    job_list_file = open(job_fn, 'w') if args.submit else sys.stdout
-    for i in np.arange(0,len(filenames),args.chunk):
-        tmp_fn = f'{args.datadir}/{args.tmp_pre}.{i}'
-        with open(tmp_fn,'w') as outf:
-            for j in np.arange(i,min(i+args.chunk, len(filenames))):
-                print(filenames[j], file=outf)
-        print(f'source activate /software/conda/envs/PPI_design; python {script_dir}/util/af2_metrics.py --use_ptm '\
-              f'--outcsv {args.datadir}/af2_metrics.csv.{i} '\
-              f'{tmp_fn}', file=job_list_file)
+    if 'af2' in args.run:
+        job_fn = args.datadir + '/jobs.score.af2.list'
+        job_list_file = open(job_fn, 'w') if args.submit else sys.stdout
+        for i in np.arange(0,len(filenames),args.chunk):
+            tmp_fn = f'{args.datadir}/{args.tmp_pre}.{i}'
+            with open(tmp_fn,'w') as outf:
+                for j in np.arange(i,min(i+args.chunk, len(filenames))):
+                    print(filenames[j], file=outf)
+            print(f'source activate /software/conda/envs/PPI_design; python {script_dir}/util/af2_metrics.py --use_ptm '\
+                  f'--outcsv {args.datadir}/af2_metrics.csv.{i} '\
+                  f'{tmp_fn}', file=job_list_file)
 
-    # submit job
-    if args.submit: 
-        job_list_file.close()
-        if args.J is not None:
-            job_name = args.J 
-        else:
-            job_name = 'af2_'+os.path.basename(args.datadir.strip('/'))
-        af2_job, proc = slurm_tools.array_submit(job_fn, p = args.p, gres=None if args.p=='cpu' else args.gres, log=args.keep_logs, J=job_name, in_proc=args.in_proc)
-        print(f'Submitted array job {af2_job} with {int(np.ceil(len(filenames)/args.chunk))} jobs to AF2-predict {len(filenames)} designs')
+        # submit job
+        if args.submit: 
+            job_list_file.close()
+            if args.J is not None:
+                job_name = args.J 
+            else:
+                job_name = 'af2_'+os.path.basename(args.datadir.strip('/'))
+            af2_job, proc = slurm_tools.array_submit(job_fn, p = args.p, gres=None if args.p=='cpu' else args.gres, log=args.keep_logs, J=job_name, in_proc=args.in_proc)
+            print(f'Submitted array job {af2_job} with {int(np.ceil(len(filenames)/args.chunk))} jobs to AF2-predict {len(filenames)} designs')
 
-    if args.rosetta:
+    # Rosetta metrics
+    if 'pyrosetta' in args.run:
         # pyrosetta metrics (rog, SS)
         job_fn = args.datadir + '/jobs.score.pyr.list'
         job_list_file = open(job_fn, 'w') if args.submit else sys.stdout
@@ -82,6 +86,32 @@ def main():
             pyr_job, proc = slurm_tools.array_submit(job_fn, p = 'cpu', gres=None, log=args.keep_logs, J=job_name, in_proc=args.in_proc)
             print(f'Submitted array job {pyr_job} with {int(np.ceil(len(filenames)/args.chunk))} jobs to get PyRosetta metrics for {len(filenames)} designs')
 
+    # Ligand metrics (chemnet)
+    if 'chemnet' in args.run:
+        job_fn = args.datadir + '/jobs.score.chemnet.list'
+        job_list_file = open(job_fn, 'w') if args.submit else sys.stdout
+        chemnet_script = '/home/jue/git/chemnet/arch.22-08-19/predict/DALigandDock_v02.py'                
+        for i in range(0, len(filenames), args.chunk):
+            tmp_fn = f'{args.datadir}/{args.tmp_pre}.chemnet.{i}'
+            with open(tmp_fn,'w') as outf:
+                for j in np.arange(i,min(i+args.chunk, len(filenames))):
+                    print(filenames[j], file=outf)
+            print(f'source activate dlchem; python {chemnet_script} '\
+                  f'-n 10 --ifile {tmp_fn} '\
+                  f'--odir {args.datadir}/chemnet/ '\
+                  f'--ocsv {args.datadir}/chemnet_scores.csv.{i} ',
+                  file=job_list_file)
+
+        # submit job
+        if args.submit:
+            job_list_file.close()
+            if args.J is not None:
+                job_name = args.J
+            else:
+                pre = 'chemnet_'
+                job_name = pre + os.path.basename(args.datadir.strip('/')) 
+            cn_job, proc = slurm_tools.array_submit(job_fn, p = args.p, gres=None if args.p=='cpu' else args.gres, log=args.keep_logs, J=job_name, in_proc=args.in_proc)
+            print(f'Submitted array job {cn_job} with {int(np.ceil(len(filenames)/args.chunk))} jobs to ChemNet-predict {len(filenames)} designs')
 
 if __name__ == "__main__":
     main()
