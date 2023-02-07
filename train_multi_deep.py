@@ -6,6 +6,7 @@ script_dir = os.path.dirname(os.path.realpath(__file__))
 aa_se3_path = os.path.join(script_dir, 'RF2-allatom/rf2aa/SE3Transformer')
 sys.path.insert(0, aa_se3_path)
 
+import dataclasses
 import time
 import pickle 
 import numpy as np
@@ -1081,9 +1082,10 @@ class Trainer():
                                     rfi_t,
                                     use_checkpoint=True,
                                     **({model_input_logger.LOG_ONLY_KEY: {'t':int(little_t), 'item': item}} if self.log_inputs else {}))
-                    logit_s, logit_aa_s, logits_pae, logits_pde, pred_crds, alphas, px0_allatom, pred_lddts, _, _, _ = rfo
+                    logit_s, logit_aa_s, logits_pae, logits_pde, pred_crds, alphas, px0_allatom, pred_lddts, _, _, _ = dataclasses.astuple(rfo)
 
                     # find closest homo-oligomer pairs
+                    true_crds = indep.xyz
                     true_crds, mask_crds = resolve_equiv_natives(pred_crds[-1], true_crds, mask_crds)
                     mask_crds[:,~masks_1d['loss_str_mask'][0],:] = False
 
