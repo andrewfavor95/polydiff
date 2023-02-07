@@ -257,7 +257,7 @@ def generate_sm_mask(prot_masks, is_sm):
 # Main mask generator function
 #####################################
 
-def generate_masks(msa, task, loader_params, chosen_dataset, full_chain=None, xyz=None, atom_mask=None, is_sm=None): #full_chain is for complexes, to signify which chain is complete
+def generate_masks(L, task, loader_params, chosen_dataset, full_chain=None, xyz=None, atom_mask=None, is_sm=None): #full_chain is for complexes, to signify which chain is complete
     '''
     Slimmed down function that outputs 1D masks for inputs and loss calculations.
     Input masks are defined as True=(unmasked)/False=masked (except for input_t1dconf, which is a scalar value, and seq2str_mask which is the msa mask for the seq2str task)
@@ -276,7 +276,6 @@ def generate_masks(msa, task, loader_params, chosen_dataset, full_chain=None, xy
         -loss_str_2d = additional coordinate pair masking to be applied on top of loss_str 1d masking.
     '''
 
-    L = msa.size()[2]
     input_seq_mask = torch.ones(L).bool()
     input_str_mask = torch.ones(L).bool()
     input_floating_mask = -1

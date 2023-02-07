@@ -5,6 +5,7 @@ import time
 from dataclasses import dataclass
 from torch.utils import data
 from torch import tensor
+from omegaconf import OmegaConf
 from collections import OrderedDict
 import os
 import csv
@@ -18,6 +19,7 @@ import sys
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'RF2-allatom'))
 import rf2aa.data_loader
 import rf2aa.util
+import rf2aa.tensor_util
 from rf2aa.tensor_util import assert_equal
 import rf2aa.kinematics
 
@@ -1515,6 +1517,7 @@ class DistilledDataset(data.Dataset):
                  diffusion_param,
                  preprocess_param,
                  model_param,
+                 conf,
                  homo=None,
                  p_homo_cut=0.5):
         
@@ -1538,6 +1541,10 @@ class DistilledDataset(data.Dataset):
         self.diffusion_param = diffusion_param
         self.preprocess_param = preprocess_param
         self.model_param = model_param
+
+        conf = OmegaConf.create(conf)
+        self.conf = conf
+        self.model_adaptor = aa_model.Model(conf)
 
     def __len__(self):
         return sum(len(d.ids) for d in self.dataset_configs.values())
@@ -1621,194 +1628,29 @@ class DistilledDataset(data.Dataset):
         else:
             raise Exception(f'chosen_dataset {chosen_dataset} not implemented')
         
-        if fixbb:
-            out = aa_model.adaptor_fix_bb(out)
+        assert fixbb
+        assert chosen_dataset != 'complex', f'complex requires passing same_chain to mask_generators, and this is not implemented'
 
-        (seq, msa, msa_masked, msa_full, mask_msa, true_crds, atom_mask, idx_pdb, xyz_t, t1d, mask_t, xyz_prev,
-        mask_prev, same_chain, unclamp, negative, atom_frames, bond_feats, chirals, ch_label, dataset_name, item) = out
-        #(seq, msa, msa_masked, msa_full, mask_msa, true_crds, atom_mask, idx_pdb, xyz_t, t1d, mask_t, xyz_prev, mask_prev, same_chain, unclamp, negative, atom_frames, bond_feats, chirals, is_sm) = out
-        # (seq, msa, msa_masked, msa_full, mask_msa, true_crds, atom_mask, idx_pdb, xyz_t, t1d,         xyz_prev, same_chain, unclamp, negative, complete_chain, atom_mask) = out
-        complete_chain = [None, None]
-        
-        if complete_chain[1] is not None:
-            chain_tensor, contacts = get_contacts(complete_chain, xyz_t)
-        else:
-            # make tensor of zeros to staple onto t1d for monomers (i.e. no contacts)
-            contacts = torch.zeros(xyz_t.shape[1])
-            
-        #### DJ/JW alteration: Pop any NaN residues from tensors for diffuion training 
-        print('Printing shapes')
-        print("seq ",seq.shape)
-        print("msa ",msa.shape)
-        print("msa_masked ",msa_masked.shape)
-        print("msa_full ",msa_full.shape)
-        print("mask_msa ",mask_msa.shape)
-        print("true_crds ",true_crds.shape)
-        print("atom_mask ",atom_mask.shape )
-        print("idx_pdb ",idx_pdb.shape)
-        print("xyz_t ",xyz_t.shape)
-        print("t1d ",t1d.shape)
-        print("xyz_prev ",xyz_prev.shape)
-        print("unclamp ",unclamp)
-        print("atom_mask ",atom_mask.shape)
-        print('same chain ',same_chain.shape)
-        print('chirals ',chirals.shape)
-        print('bond_feats ',bond_feats.shape)
-        print('ch label ', ch_label.shape)
+        indep, atom_mask, dataset_name = aa_model.adaptor_fix_bb_indep(out)
+        aa_model.pop_unoccupied(indep, atom_mask)
 
-
-        n_atoms = rf2aa.util.is_atom(seq[0]).sum()
-        assertpy.assert_that(len(atom_frames)).is_equal_to(n_atoms)
-        is_sm_prepop = rf2aa.util.is_atom(seq[0]) # (L)
-
-        pop = rf2aa.util.get_prot_sm_mask(atom_mask, seq[0])
-        ic(f'Removing {(~pop).sum()} residues / atoms')
-        N     = pop.sum()
-        pop2d = pop[None,:] * pop[:,None]
- 
-        seq         = seq[:,pop]
-        msa         = msa[:,:,pop]
-        msa_masked  = msa_masked[:,:,pop]
-        msa_full    = msa_full[:,:,pop]
-        mask_msa    = mask_msa[:,:,pop]
-        true_crds   = true_crds[pop]
-        atom_mask   = atom_mask[pop]
-        idx_pdb     = idx_pdb[pop]
-        xyz_t       = xyz_t[:,pop]
-        t1d         = t1d[:,pop]
-        xyz_prev    = xyz_prev[pop]
-        same_chain  = same_chain[pop2d].reshape(N,N)
-        contacts = contacts[pop]
-        mask_t = mask_t[:, pop]
-        bond_feats = bond_feats[pop2d].reshape(N,N)
-        mask_prev = mask_prev[pop]
-        ch_label = ch_label[pop]
-        pop_atoms = pop[is_sm_prepop]
-        n_atoms_missing_coordinates = (~pop_atoms).sum()
-        assertpy.assert_that(n_atoms_missing_coordinates).is_equal_to(0)
-        n_shift = (~pop).cumsum(dim=0)
-        chiral_indices = chirals[:,:-1]
-        chiral_shift = n_shift[chiral_indices.long()]
-        chirals[:,:-1] = chiral_indices - chiral_shift
-
-        # ic(pop_atoms.sum())
-        # ic(f'Removing {(~pop_atoms).sum()} atoms')
-        # atom_frames = atom_frames[pop_atoms]
-        # This may be an issue when a frame contains a popped atom.
-
-        if complete_chain[1] is not None:
-            complete_chain = chain_tensor[pop]
-        
-        # Assemble t1d here.
-        # Original d_t1d == 22 (20aa + missing + mask + template confidence)
-        # But, extra features can be added
-        # TODO I think this could be changed at a later date, to specify added features and stack them in a different order
-        """
-        # Masking this out, so now, if you're doing sequence diffusion, d_t1d == 23, and these last two features pertain to sequence diffusion, and if not, d_t1d=22
-        # This obviously needs to be made more flexible down the line
-        if self.preprocess_param['d_t1d'] == 23: 
-            #Concatenate on the contacts tensor onto t1d
-            t1d = torch.cat((t1d, contacts[None,...,None]), dim=-1)
-            if chosen_dataset != 'complex':
-                assert torch.sum(t1d[:,:,-1]) == 0 
-        """
         run_inference.seed_all(seed=mask_gen_seed)
-        is_sm = rf2aa.util.is_atom(seq[0]) # (L)
-        masks_1d = mask_generator.generate_masks(msa, task, self.params, chosen_dataset, complete_chain, xyz=true_crds, atom_mask=atom_mask, is_sm=is_sm)
+        L = indep.seq.shape[0]
+        masks_1d = mask_generator.generate_masks(L, task, self.params, chosen_dataset, None, xyz=indep.xyz, atom_mask=atom_mask[:, :rf2aa.chemical.NHEAVYPROT], is_sm=indep.is_sm)
+        is_diffused = ~masks_1d['input_str_mask'] # identical
+        t = random.randint(1, self.diffuser.T)
+        indep_diffused, t_list = aa_model.diffuse(self.conf, self.diffuser, indep, is_diffused, t)
+        aa_model.mask_indep(indep_diffused, is_diffused)
+        rfi = self.model_adaptor.prepro(indep_diffused, t, is_diffused)
 
-        #Concatenate on the contacts tensor onto t1d
-        n_t1d = t1d.shape[0]
+        if torch.sum(~is_diffused) > 0:
+            assert torch.mean(rfi.xyz[:,~is_diffused,1] - indep.xyz[None,~is_diffused,1]) < 0.001
 
-        if (not self.seq_diffuser is None) and torch.any(seq > 19):
-            #print('Found sequence index greater than 19 while doing sequence diffusion, skipping example')
-            #print(f'This is the offending sequence: {seq}')
-
-            # If there is a better way to return null values to the train cycle I am open to suggestions - NRB
-            #return [torch.tensor([]) for _ in range(20)]
-
-            print('Found sequence index greater than 19 while doing sequence diffusion, changing idx to ALA')
-            print(f'This is the offending sequence: {seq}')
-
-            # This error happens extremely rarely, 4 times in 25k examples so it is safe to do this changing
-            # It would be better to solve this error correctly though
-            seq = torch.where(seq > 19, 0, seq)
-
-            ic(f'Fixed sequence {seq}')
-        
-        seq, msa_masked, msa_full, xyz_t, t1d, mask_msa, little_t, true_crds = mask_inputs(seq,
-                                                                                    msa_masked,
-                                                                                    msa_full,
-                                                                                    xyz_t,
-                                                                                    t1d, mask_msa,
-                                                                                    atom_mask=atom_mask,
-                                                                                    is_sm=is_sm,
-                                                                                    diffuser=self.diffuser,
-                                                                                    seq_diffuser=self.seq_diffuser,
-                                                                                    predict_previous=self.preprocess_param['predict_previous'],
-                                                                                    true_crds_in=true_crds,
-                                                                                    preprocess_param=self.preprocess_param,
-                                                                                    diffusion_param=self.diffusion_param,
-                                                                                    model_param=self.model_param,
-                                                                                    **{k:v for k,v in masks_1d.items()})
-        '''
-            Current Dimensions:
-            
-            seq (torch.tensor)        : [n,I,L,22] noised one hot sequence
-            
-            msa_masked (torch.tensor) : [n,I,N_short,L,48] 
-            
-            msa_full (torch.tensor)   : [n,I,N_long,L,25]
-            
-            xyz_t (torch.tensor)      : [n,T,L,14,3] Noised true coordinates at t+1 and t
-            
-            t1d (torch.tensor)        : [n,T,L,22/23] Template 1D features at t+1 and t
-            
-            mask_msa (torch.tensor)   : [n,N_short,L] The msa mask at t 
-            
-            little_t (torch.tensor)   : [n] The timesteps t+1 and t
-            
-            true_crds (torch.tensor)  : [L,14,3] The true coordinates before noising
-        '''
-        if False:
-            ic(seq.shape)
-            ic(msa_masked.shape)
-            ic(msa_full.shape)
-            ic(xyz_t.shape)
-            ic(t1d.shape)
-            ic(mask_msa.shape)
-            ic(little_t.shape)
-            ic(true_crds.shape)
-
-        L = xyz_t.shape[2]
-
-        # get torsion angles from templates
-        seq_tmp = t1d[...,:-1].argmax(dim=-1).reshape(-1,L)
-        alpha, _, alpha_mask, _ = rf2aa.util.get_torsions(xyz_t.reshape(-1,L,rf2aa.chemical.NTOTAL,3), seq_tmp, self.ti_dev, self.ti_flip, self.ang_ref)
-        alpha_mask = torch.logical_and(alpha_mask, ~torch.isnan(alpha[...,0]))
-        alpha[torch.isnan(alpha)] = 0.0
-        alpha = alpha.reshape(-1,L,rf2aa.chemical.NTOTALDOFS,2)
-        alpha_mask = alpha_mask.reshape(-1,L,rf2aa.chemical.NTOTALDOFS,1)
-        alpha_t = torch.cat((alpha, alpha_mask), dim=-1).reshape(-1, L, 3*rf2aa.chemical.NTOTALDOFS) # [n,L,30]
-
-        alpha_t = alpha_t.unsqueeze(1) # [n,I,L,30]
-
-        # Get initial xyz_prev for the model - this is the diffused true coordinates
-        xyz_prev = xyz_t[:,0] # [n,L,14,3]
-
-        if torch.sum(masks_1d['input_str_mask']) > 0:
-            #assert torch.sum(xyz_prev[masks_1d['input_str_mask'],1]) - torch.sum(true_crds[masks_1d['input_str_mask'],1]) < 0.001
-            # TODO check this is correct - NRB
-            assert torch.mean(xyz_prev[:,masks_1d['input_str_mask'],1] - true_crds[None,masks_1d['input_str_mask'],1]) < 0.001
-        
-        # t2d_arr = []
-        # for i in [0,1]:
-        #     t2d, mask_t_2d = get_t2d(xyz_t[i], mask_t, msa[0,0], same_chain, atom_frames)
-        #     t2d_arr.append(torch.clone(t2d))
-        # t2d = torch.stack(t2d_arr)
-        t2d = -1
-        mask_t_2d = torch.ones(1,1,L,L).bool()
         run_inference.seed_all(mask_gen_seed)
-        return seq, msa, msa_masked, msa_full, mask_msa, true_crds, atom_mask, idx_pdb, xyz_t, t1d, t2d, alpha_t, xyz_prev, same_chain, unclamp, negative, masks_1d, task, chosen_dataset, little_t, mask_t, mask_prev, atom_frames, bond_feats, chirals, mask_t_2d, dataset_name, item, is_sm
+
+        return indep, rfi, dataset_name, sel_item, t, is_diffused
+
+        # return seq, msa, msa_masked, msa_full, mask_msa, true_crds, atom_mask, idx_pdb, xyz_t, t1d, t2d, alpha_t, xyz_prev, same_chain, unclamp, negative, masks_1d, task, chosen_dataset, little_t, mask_t, mask_prev, atom_frames, bond_feats, chirals, mask_t_2d, dataset_name, item, is_sm
 
 
 class DistributedWeightedSampler(data.Sampler):

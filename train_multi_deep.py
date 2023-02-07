@@ -142,6 +142,10 @@ class EMA(nn.Module):
 def get_datetime():
     return str(date.today()) + '_' + str(time.time())
 
+def no_batch_collate_fn(data):
+    assert len(data) == 1
+    return data[0]
+
 class Trainer():
     def __init__(self, model_name='BFF', ckpt_load_path=None,
                  n_epoch=100, lr=1.0e-4, l2_coeff=1.0e-2, port=None, interactive=False,
@@ -784,8 +788,8 @@ class Trainer():
         
         print('Making train sets')
         train_set = DistilledDataset(dataset_configs, 
-                                     self.loader_param, self.diffuser, self.seq_diffuser, self.ti_dev, self.ti_flip, self.ang_ref, 
-                                     self.diffusion_param, self.preprocess_param, self.model_param, homo)
+                                     self.loader_param, self.diffuser, self.seq_diffuser, self.ti_dev, self.ti_flip, self.ang_ref,
+                                     self.diffusion_param, self.preprocess_param, self.model_param, self.config_dict, homo)
         #get proportion of seq2str examples
         if 'seq2str' in self.loader_param['TASK_NAMES']:
             p_seq2str = self.loader_param['TASK_P'][self.loader_param['TASK_NAMES'].index('seq2str')]
@@ -800,7 +804,8 @@ class Trainer():
         
         print('THIS IS LOAD PARAM GOING INTO DataLoader inits')
         print(LOAD_PARAM)
-        train_loader = data.DataLoader(train_set, sampler=train_sampler, batch_size=self.batch_size, **LOAD_PARAM)
+
+        train_loader = data.DataLoader(train_set, sampler=train_sampler, batch_size=self.batch_size, collate_fn=no_batch_collate_fn, **LOAD_PARAM)
 
         # move some global data to cuda device
         self.ti_dev = self.ti_dev.to(gpu)
@@ -1004,33 +1009,14 @@ class Trainer():
         
         print('About to enter train loader loop')
         for loader_out in train_loader:
+            indep, rfi, dataset_name, item, little_t, is_diffused = loader_out
 
-            seq,\
-            msa,\
-            msa_masked,\
-            msa_full,\
-            mask_msa,\
-            true_crds,\
-            mask_crds,\
-            idx_pdb,\
-            xyz_t,\
-            t1d,\
-            t2d,\
-            alpha_t,\
-            xyz_prev,\
-            same_chain,\
-            unclamp,\
-            negative,\
-            masks_1d,\
-            chosen_task,\
-            chosen_dataset,\
-            little_t,\
-            mask_t, mask_prev, atom_frames, bond_feats, chirals, mask_t_2d, dataset_name, item, is_sm = loader_out
             ic(gpu, dataset_name, item)
 
             # Save trues for writing pdbs later.
+            xyz_prev = indep.xyz[None]
             xyz_prev_orig = xyz_prev.clone()
-            seq_unmasked = msa[:, 0, 0, :] # (B, L)
+            seq_unmasked = indep.seq[None]
             # Not relevant since we pop the residues this would be filtering
             #res_mask = ~((atom_mask_[:,:,:3].sum(dim=-1) < 3.0) * ~(is_atom(msa[:,i_cycle,0])))
 
@@ -1067,10 +1053,10 @@ class Trainer():
 
                 little_t (torch.tensor)   : [n] The timesteps t+1 and t
             '''
-            assert all([i > 0 for i in little_t])
+            assert little_t > 0
 
             # Checking whether this example was of poor quality and the dataloader just returned None - NRB
-            if seq.shape[1] == 0:
+            if indep.seq.shape[0] == 0:
                 ic('Train cycle received bad example, skipping')
                 continue
 
@@ -1097,47 +1083,27 @@ class Trainer():
             # torch.save(torch.clone(seq), 'seq.pt')
             # torch.save(torch.clone(atom_mask), 'atom_mask.pt')
 
-
-            is_motif = masks_1d['input_str_mask'].squeeze()
-
             # for saving pdbs
-            seq_original = torch.clone(seq)
+            seq_original = torch.clone(indep.seq)
 
             # Do diffusion + apply masks 
             start = time.time()
 
             # for saving pdbs
-            seq_masked = torch.clone(seq)
-            xyz_t_in = torch.clone(xyz_t)
+            seq_masked = torch.clone(indep.seq)
+            # xyz_t_in = torch.clone(xyz_t)
 
             # transfer inputs to device
-            B, _, N, L = msa.shape
-
-            idx_pdb = idx_pdb.to(gpu, non_blocking=True) # (B, L)
-            true_crds = true_crds.to(gpu, non_blocking=True) # (B, L, 27, 3)
-            mask_crds = mask_crds.to(gpu, non_blocking=True) # (B, L, 27)
-            same_chain = same_chain.to(gpu, non_blocking=True)
-
-            xyz_t = xyz_t.to(gpu, non_blocking=True)
-            t1d = t1d.to(gpu, non_blocking=True)
-            xyz_t = xyz_t.to(gpu, non_blocking=True)
-            xyz_prev = xyz_prev.to(gpu, non_blocking=True)
-            seq = seq.to(gpu, non_blocking=True)
-            msa = msa.to(gpu, non_blocking=True)
-            msa_masked = msa_masked.to(gpu, non_blocking=True)
-            msa_full = msa_full.to(gpu, non_blocking=True)
-            mask_msa = mask_msa.to(gpu, non_blocking=True)
-            xyz_prev = xyz_prev.to(gpu, non_blocking=True)
+            B, _, N, L = rfi.msa_latent.shape
+            rf2aa.tensor_util.to_device(rfi, gpu)
             alpha_prev = torch.zeros((B,L,rf2aa.chemical.NTOTALDOFS,2)).to(gpu, non_blocking=True)
-            mask_t_2d = mask_t_2d.to(gpu, non_blocking=True)
 
             counter += 1 
 
             N_cycle = np.random.randint(1, self.maxcycle+1) # number of recycling
 
             # get diffusion_mask for the displacement loss
-            diffusion_mask     = masks_1d['input_str_mask'].squeeze()
-            seq_diffusion_mask = masks_1d['input_seq_mask'].squeeze().to(gpu, non_blocking=True)
+            diffusion_mask     = ~is_diffused
 
             unroll_performed = False
 
@@ -1147,7 +1113,7 @@ class Trainer():
 
             # Some percentage of the time, provide the model with the model's prediction of x_0 | x_t+1
             # When little_t[0] == little_t[1] we are at t == T so we should not unroll
-            step_back = not (little_t[0] == little_t[1]) and (torch.tensor(self.preprocess_param['prob_self_cond']) > torch.rand(1))
+            step_back = not (little_t == self.config_dict['diffuser']['T']) and (torch.tensor(self.preprocess_param['prob_self_cond']) > torch.rand(1))
             ic(self.preprocess_param['prob_self_cond'], step_back)
             if step_back:
                 unroll_performed = True
@@ -1201,33 +1167,17 @@ class Trainer():
                                                                        use_checkpoint=False
                                                                        )
 
-            # Since we are not sequence self-conditioning, much of 2-terminal index is redundant.
-            # Let's assert that it's the same.
-            # Not true due to blosum
-            rf2aa.tensor_util.assert_equal(seq[:,0],seq[:,1])
-            # rf2aa.tensor_util.assert_equal(t1d[:,0],t1d[:,1]) # Last idx unequal due to confidence
-            # rf2aa.tensor_util.assert_equal(alpha_t[:,0],alpha_t[:,1]) # Unequal due to coming from different xyz_t
-            rf2aa.tensor_util.assert_equal(msa_masked[:,0],msa_masked[:,1])
-            rf2aa.tensor_util.assert_equal(msa_full[:,0],msa_full[:,1])
-            rf2aa.tensor_util.assert_equal(mask_msa[:,0],mask_msa[:,1])
+            # KEEEEEEEEEEEEEEEEEEP THIS, UNCOMMENT ONCE DOING SC
+            # # Since we are not sequence self-conditioning, much of 2-terminal index is redundant.
+            # # Let's assert that it's the same.
+            # # Not true due to blosum
+            # rf2aa.tensor_util.assert_equal(seq[:,0],seq[:,1])
+            # # rf2aa.tensor_util.assert_equal(t1d[:,0],t1d[:,1]) # Last idx unequal due to confidence
+            # # rf2aa.tensor_util.assert_equal(alpha_t[:,0],alpha_t[:,1]) # Unequal due to coming from different xyz_t
+            # rf2aa.tensor_util.assert_equal(msa_masked[:,0],msa_masked[:,1])
+            # rf2aa.tensor_util.assert_equal(msa_full[:,0],msa_full[:,1])
+            # rf2aa.tensor_util.assert_equal(mask_msa[:,0],mask_msa[:,1])
 
-            # From here on out we will operate with t = t
-            seq        = seq[:,1]
-            t1d        = t1d[:,1]
-            alpha_t    = alpha_t[:,1]
-            little_t   = little_t[1]
-            xyz_prev   = xyz_prev[:,1]
-            msa_masked = msa_masked[:,1]
-            msa_full   = msa_full[:,1]
-            mask_msa   = mask_msa[:,1]
-            seq_scalar = torch.argmax(seq[0], dim=-1)
-
-            # Only provide previous xyz - NRB
-            msa_prev   = None
-            pair_prev  = None
-            state_prev = None
-
-            ic(self.preprocess_param['str_self_cond'])
             if self.preprocess_param['str_self_cond']:
                 if unroll_performed:
                     # When doing self conditioning training, the model only receives px0_xyz information through template features
@@ -1244,10 +1194,6 @@ class Trainer():
                         # xyz_t[0], mask_t[0], seq_scalar[0], same_chain[0], atom_frames[0])
                         xyz_t[0], is_sm[0], atom_frames[0])
                     t2d = t2d[None] # Add batch dimension # [B,T,L,L,44]
-                else:
-                    xyz_t = torch.zeros_like(xyz_t[:,1])
-                    # t2d   = torch.zeros_like(t2d[:,1])
-                    t2d = torch.zeros(1,1,L,L,68)
             else:
                 # Default behavior, no str self conditioning
                 xyz_t = xyz_t[:,1]
@@ -1304,31 +1250,12 @@ class Trainer():
                 if counter%self.ACCUM_STEP != 0:
                     stack.enter_context(ddp_model.no_sync())
                 with torch.cuda.amp.autocast(enabled=USE_AMP):
-
-                    logit_s, logit_aa_s, logits_pae, logits_pde, pred_crds, alphas, px0_allatom, pred_lddts, _, _, _ = ddp_model(
-                                                                msa_masked[:,0],
-                                                                msa_full[:,0],
-                                                                seq_scalar,
-                                                                seq_scalar, # msa
-                                                                xyz_prev,
-                                                                alpha_prev,
-                                                                idx_pdb,
-                                                                bond_feats=bond_feats,
-                                                                chirals=chirals,
-                                                                atom_frames=atom_frames,
-                                                                t1d=t1d,
-                                                                t2d=t2d,
-                                                                xyz_t=xyz_t[...,1,:],
-                                                                alpha_t=alpha_t,
-                                                                mask_t=mask_t_2d,
-                                                                same_chain=same_chain,
-                                                                msa_prev=None,
-                                                                pair_prev=None,
-                                                                state_prev=None,
-                                                                is_motif=is_motif,
-                                                                use_checkpoint=True,
-                                                                **({model_input_logger.LOG_ONLY_KEY: {'t':int(little_t), 'item': item}} if self.log_inputs else {}),
-                                                                )
+                    rfo = aa_model.forward(
+                                    ddp_model,
+                                    rfi,
+                                    use_checkpoint=True,
+                                    **({model_input_logger.LOG_ONLY_KEY: {'t':int(little_t), 'item': item}} if self.log_inputs else {}))
+                    logit_s, logit_aa_s, logits_pae, logits_pde, pred_crds, alphas, px0_allatom, pred_lddts, _, _, _ = rfo
 
                     # find closest homo-oligomer pairs
                     true_crds, mask_crds = resolve_equiv_natives(pred_crds[-1], true_crds, mask_crds)

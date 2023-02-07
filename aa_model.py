@@ -1,4 +1,5 @@
 import torch
+import assertpy
 import torch.nn.functional as F
 import ipdb
 import dataclasses
@@ -20,6 +21,21 @@ from rf2aa.chemical import MASKINDEX
 import util
 import inference.utils
 
+
+NINDEL=1
+NTERMINUS=2
+NMSAFULL=NAATOKENS+NINDEL+NTERMINUS
+NMSAMASKED=NAATOKENS+NAATOKENS+NINDEL+NINDEL+NTERMINUS
+
+MSAFULL_N_TERM = NAATOKENS+NINDEL
+MSAFULL_C_TERM = MSAFULL_N_TERM+1
+
+MSAMASKED_N_TERM = 2*NAATOKENS + 2*NINDEL
+MSAMASKED_C_TERM = 2*NAATOKENS + 2*NINDEL + 1
+
+N_TERMINUS = 1
+C_TERMINUS = 2
+
 @dataclass
 class Indep:
     seq: torch.Tensor # [L]
@@ -32,6 +48,7 @@ class Indep:
     atom_frames: torch.Tensor
     same_chain: torch.Tensor
     is_sm: torch.Tensor
+    terminus_type: torch.Tensor
 
     def write_pdb(self, path):
         ic(self.xyz.shape, self.seq.shape)
@@ -62,6 +79,9 @@ class RFI:
     mask_t: torch.Tensor
     same_chain: torch.Tensor
     is_motif: torch.Tensor
+    msa_prev: torch.Tensor
+    pair_prev: torch.Tensor
+    state_prev: torch.Tensor
 
 @dataclass
 class RFO:
@@ -299,15 +319,15 @@ class Model:
 
         msa_masked[:,:,:,:NAATOKENS] = seq_one_hot[None, None]
         msa_masked[:,:,:,NAATOKENS:2*NAATOKENS] = seq_one_hot[None, None]
-        msa_masked[:,:,0,NAATOKENS*2+NINDEL*2] = 1.0
-        msa_masked[:,:,-1,NAATOKENS*2+NINDEL*2+1] = 1.0
+        msa_masked[:,:,:,MSAMASKED_N_TERM] = (indep.terminus_type == N_TERMINUS).float()
+        msa_masked[:,:,:,MSAMASKED_C_TERM] = (indep.terminus_type == C_TERMINUS).float()
 
         ### msa_full ###
         ################
         msa_full = torch.zeros((1,1,L,NAATOKENS+NINDEL+NTERMINUS))
         msa_full[:,:,:,:NAATOKENS] = seq_one_hot[None, None]
-        msa_full[:,:,0,NAATOKENS+NINDEL] = 1.0
-        msa_full[:,:,-1,NAATOKENS+NINDEL+1] = 1.0
+        msa_full[:,:,:,MSAFULL_N_TERM] = (indep.terminus_type == N_TERMINUS).float()
+        msa_full[:,:,:,MSAFULL_C_TERM] = (indep.terminus_type == C_TERMINUS).float()
 
         ### t1d ###
         ########### 
@@ -428,7 +448,7 @@ class Model:
             t1d=torch.cat((t1d, hotspot_tens[None,None,...,None].to(self.device)), dim=-1)
         
         # return msa_masked, msa_full, seq[None], torch.squeeze(xyz_t, dim=0), idx, t1d, t2d, xyz_t, alpha_t
-        mask_t = torch.ones(1,L,L).bool()
+        mask_t = torch.ones(1,1,L,L).bool()
         sctors = torch.zeros((1,L,rf2aa.chemical.NTOTALDOFS,2))
 
         xyz = torch.squeeze(xyz_t, dim=0)
@@ -436,6 +456,29 @@ class Model:
         # NO SELF COND
         xyz_t = torch.zeros(1,1,L,3)
         t2d = torch.zeros(1,1,L,L,68)
+
+        ic(xyz.shape)
+        # ic(
+        #     xyz[0, is_diffused][0][:,0], # nan 3:
+        #     xyz[0, indep.is_sm][0][:,0], # nan 14:
+        #     xyz[0, ~is_diffused * ~indep.is_sm][0][:,0], # nan 14:
+        # )
+
+        is_protein_motif = ~is_diffused * ~indep.is_sm
+        # idx_diffused = torch.nonzero(is_diffused)
+        # idx_protein_motif  = torch.nonzero(is_protein_motif)
+        # idx_sm = torch.nonzero(indep.is_sm)
+
+        # ic(
+        #     idx_diffused,
+        #     idx_protein_motif,
+        #     idx_sm
+        # )
+
+        # xyz = torch.nan_to_num(xyz)
+        xyz[0, is_diffused*~indep.is_sm,3:] = torch.nan
+        xyz[0, indep.is_sm,14:] = 0
+        xyz[0, is_protein_motif, 14:] = 0
 
         # Note: should be batched
         rfi = RFI(
@@ -455,7 +498,10 @@ class Model:
             alpha_t,
             mask_t[None],
             indep.same_chain[None],
-            ~is_diffused)
+            ~is_diffused,
+            None,
+            None,
+            None)
         return rfi
     
     def self_cond(self, indep, rfi, rfo):
@@ -522,11 +568,10 @@ def minifier(argument_map):
     argument_map['t2d'] = None
 
 
-def adaptor_fix_bb(out):
+def adaptor_fix_bb_indep(out):
     """
     adapts the outputs of RF2-allatom phase 3 dataloaders into fixed bb outputs
-    takes in a tuple with 22 items representing the RF2-allatom data outputs and returns a tuple of 22 items updated for the 
-    fixedbb tasks
+    takes in a tuple with 22 items representing the RF2-allatom data outputs and returns an Indep dataclass.
     """
     assert len(out) == 22, f"found {len(out)} elements in RF2-allatom output"
     (seq, msa, msa_masked, msa_full, mask_msa, true_crds, atom_mask, idx_pdb, xyz_t, t1d, mask_t, xyz_prev,
@@ -551,5 +596,141 @@ def adaptor_fix_bb(out):
         atom_frames = torch.zeros((0,3,2))
     if torch.sum(chirals) == 0:
         chirals = torch.zeros((0,5))
-    return seq, msa, msa_masked, msa_full, mask_msa, true_crds, atom_mask, idx_pdb, xyz_t, t1d, mask_t, xyz_prev, \
-        mask_prev, same_chain, unclamp, negative, atom_frames, bond_feats, chirals, ch_label, dataset_name, item
+
+    is_sm = rf2aa.util.is_atom(seq)
+
+    is_n_terminus = msa_full[0, 0, :, MSAFULL_N_TERM].bool()
+    is_c_terminus = msa_full[0, 0, :, MSAFULL_C_TERM].bool()
+    terminus_type = torch.zeros(msa_masked.shape[2], dtype=int)
+    terminus_type[is_n_terminus] = N_TERMINUS
+    terminus_type[is_c_terminus] = C_TERMINUS
+
+    indep = Indep(
+        rf2aa.tensor_util.assert_squeeze(seq), # [L]
+        true_crds[:,:14], # [L, 14, 3]
+        idx_pdb,
+
+        # SM specific
+        bond_feats,
+        chirals,
+        atom_frames,
+        same_chain,
+        rf2aa.tensor_util.assert_squeeze(is_sm),
+        terminus_type)
+    return indep, atom_mask, dataset_name
+
+def pop_unoccupied(indep, atom_mask):
+    """
+    Inplace operation.
+    Removes ligand atoms which are not present in the atom mask.
+    Removes residues which do not have N,C,Ca in the atom mask.
+    """
+    # n_atoms = rf2aa.util.is_atom(seq).sum()
+    n_atoms = indep.is_sm.sum()
+    assertpy.assert_that(len(indep.atom_frames)).is_equal_to(n_atoms)
+    # is_sm_prepop = rf2aa.util.is_atom(indep.seq) # (L)
+
+    pop = rf2aa.util.get_prot_sm_mask(atom_mask, indep.seq)
+    ic(atom_mask.shape, indep.seq.shape, pop.shape)
+    ic(f'Removing {(~pop).sum()} residues / atoms')
+    # pop = rf2aa.tensor_util.assert_squeeze(pop)
+    N     = pop.sum()
+    pop2d = pop[None,:] * pop[:,None]
+
+    indep.seq           = indep.seq[pop]
+    indep.xyz           = indep.xyz[pop]
+    indep.idx           = indep.idx[pop]
+    indep.bond_feats    = indep.bond_feats[pop2d].reshape(N,N)
+    indep.same_chain    = indep.same_chain[pop]
+    indep.is_sm         = indep.is_sm[pop]
+    indep.terminus_type = indep.terminus_type[pop]
+
+    n_shift = (~pop).cumsum(dim=0)
+    chiral_indices = indep.chirals[:,:-1]
+    chiral_shift = n_shift[chiral_indices.long()]
+    indep.chirals[:,:-1] = chiral_indices - chiral_shift
+
+def diffuse(conf, diffuser, indep, is_diffused, t):
+
+    if t == diffuser.T: 
+        t_list = [t,t]
+    else: 
+        t_list = [t+1,t]
+    indep_diffused = copy.deepcopy(indep)
+    ic(conf)
+    kwargs = {
+        'xyz'                     :indep.xyz,
+        'seq'                     :indep.seq,
+        'atom_mask'               :None,
+        'diffusion_mask'          :~is_diffused,
+        # 't_list'                  :[t],
+        't_list'                  :t_list,
+        'diffuse_sidechains'      :conf['preprocess']['sidechain_input'],
+        'include_motif_sidechains':conf['preprocess']['motif_sidechain_input'],
+        'is_sm': indep.is_sm
+    }
+    diffused_fullatoms, aa_masks, true_crds = diffuser.diffuse_pose(**kwargs)
+    ic(diffused_fullatoms.shape, indep.xyz.shape)
+
+    ############################################
+    ########### New Self Conditioning ##########
+    ############################################
+
+    # JW noticed that the frames returned from the diffuser are not from a single noising trajectory
+    # So we are going to take a denoising step from x_t+1 to get x_t and have their trajectories agree
+
+    # Only want to do this process when we are actually using self conditioning training
+    from diffusion import get_beta_schedule
+    from inference.utils import get_next_ca, get_next_frames
+    if conf['preprocess']['new_self_cond'] and t < 200: # Only can get t+1 if we are at t < 200
+
+        tmp_x_t_plus1 = diffused_fullatoms[0]
+
+        beta_schedule, _, alphabar_schedule = get_beta_schedule(
+                                    T=conf['diffuser']['T'],
+                                    b0=conf['diffuser']['b_0'],
+                                    bT=conf['diffuser']['b_T'],
+                                    schedule_type=conf['diffuser']['schedule_type'],
+                                    inference=False)
+
+        _, ca_deltas = get_next_ca(
+                                    xt=tmp_x_t_plus1,
+                                    px0=true_crds,
+                                    t=t+1,
+                                    diffusion_mask=~is_diffused,
+                                    crd_scale=conf['diffuser']['crd_scale'],
+                                    beta_schedule=beta_schedule,
+                                    alphabar_schedule=alphabar_schedule,
+                                    noise_scale=1)
+
+        # Noise scale ca hard coded for now. Maybe can eventually be piped down from inference configs? - NRB
+
+        frames_next = get_next_frames(
+                                    xt=tmp_x_t_plus1,
+                                    px0=true_crds,
+                                    t=t+1,
+                                    diffuser=diffuser,
+                                    so3_type=conf['diffuser']['so3_type'],
+                                    diffusion_mask=~is_diffused,
+                                    noise_scale=1) # Noise scale frame hard coded for now - NRB
+
+        frames_next = torch.from_numpy(frames_next) + ca_deltas[:,None,:]  # translate
+        
+        tmp_x_t = torch.zeros_like(tmp_x_t_plus1)
+        tmp_x_t[:,:3] = frames_next
+        
+        if conf['preprocess']['motif_sidechain_input']:
+            tmp_x_t[~is_diffused,:] = tmp_x_t_plus1[~is_diffused.squeeze()]
+        
+        diffused_fullatoms[1] = tmp_x_t
+
+    # rf2aa.tensor_util.assert_same_shape(diffused_fullatoms[1], indep.xyz)
+    indep_diffused.xyz = diffused_fullatoms[1, :, :14]
+    return indep_diffused, t_list
+
+def forward(model, rfi, **kwargs):
+    rfi_dict = dataclasses.asdict(rfi)
+    return RFO(*model(**{**rfi_dict, **kwargs}))
+
+def mask_indep(indep, is_diffused):
+    indep.seq[is_diffused] = MASKINDEX
