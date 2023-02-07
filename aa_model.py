@@ -65,14 +65,14 @@ class RFI:
 
 @dataclass
 class RFO:
-    logits: torch.Tensor
-    logits_aa: torch.Tensor
-    logits_pae: torch.Tensor
-    logits_pde: torch.Tensor
-    xyz: torch.Tensor
-    alpha_s: torch.Tensor
+    logits: torch.Tensor      # ([1, 61, L, L], [1, 61, L, L], [1, 37, L, L], [1, 19, L, L])
+    logits_aa: torch.Tensor   # [1, 80, 115]
+    logits_pae: torch.Tensor  # [1, 64, L, L]
+    logits_pde: torch.Tensor  # [1, 64, L, L]
+    xyz: torch.Tensor         # [40, 1, L, 3, 3]
+    alpha_s: torch.Tensor     # [40, 1, L, 20, 2]
     xyz_allatom: torch.Tensor # [1, L, 36, 3]
-    lddt: torch.Tensor
+    lddt: torch.Tensor        # [1, 50, L]
     msa: torch.Tensor
     pair: torch.Tensor
     state: torch.Tensor
