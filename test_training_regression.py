@@ -92,6 +92,9 @@ class TestDistributed(unittest.TestCase):
         ic('end 2')
         torch.distributed.destroy_process_group()
 
+    def test_regression(self):
+        os.environ['MASTER_PORT'] = '12319'
+        self.run_regression(arg_string, 'model_input_0', rewrite=False)
 
 class ModelInputs(unittest.TestCase):
     def test_no_self_cond(self):
@@ -121,6 +124,19 @@ class ModelInputs(unittest.TestCase):
         assert old_self_cond in self_cond_arg_string
         self_cond_arg_string = self_cond_arg_string.replace(old_self_cond, new_self_cond)
         run_regression(self, self_cond_arg_string, 'model_input_self_cond_t', call_number=2)
+
+        
+    def test_atomize_regression(self):
+        os.environ['MASTER_PORT'] = '12321'
+        self_cond_arg_string = arg_string[:]
+        old_task = '-diff_mask_probs get_triple_contact:1.0'
+        new_task = '-diff_mask_probs get_triple_contact_atomize:1.0'
+        # Since we are doing this the lazy way with string replacement rather
+        # than using a data structure for the arguments, assert that we're actually
+        # replacing something.
+        assert old_task in self_cond_arg_string
+        self_cond_arg_string = self_cond_arg_string.replace(old_task, new_task)
+        run_regression(self_cond_arg_string, 'model_input_atomize', call_number=3)
 
 class DataloaderToCalcLoss(unittest.TestCase):
     def test_no_self_cond_loss(self):
