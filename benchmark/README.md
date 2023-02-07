@@ -51,7 +51,7 @@ Step 2. MPNN
 
 Step 3. Score outputs:
 
-    ./score_designs.py --chunk 20 run1/mpnn/
+    ./score_designs.py --run af2,pyrosetta --chunk 20 run1/mpnn/
 
 Step 4. Compile metrics:
 
@@ -93,6 +93,10 @@ mol2 format and then run the following:
 
 You can use both MPNN and ligandMPNN on the same set of designs. These are
 indicated in the output CSV by a boolean column `mpnn` or `ligmpnn`.
+
+To use ChemNet to score designs, run `score_designs.py` with `chemnet` in the
+argument to `--run`, e.g. `--run af2,chemnet`. This is enabled by default if
+you run `pipeline.py` with `--use_ligand`.
 
 ### Diversity-adjusted success rate
 To obtain a final benchmark metric that represents success rate at varying
