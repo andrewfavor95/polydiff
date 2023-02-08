@@ -98,6 +98,13 @@ def main():
             chemnet = chemnet.rename(columns={'label':'name'})
             df_accum = df_accum.merge(chemnet, on='name', how='outer')
 
+        # rosetta ligand
+        tmp = pd.concat([
+            pd.read_csv(fn,index_col=None) for fn in glob.glob(mpnn_dir+'/rosettalig_scores.csv.*')
+        ])
+        if len(tmp)>0:
+            df_accum = df_accum.merge(tmp, on='name', how='outer')
+
         # mpnn likelihoods
         mpnn_scores = load_mpnn_scores(mpnn_dir)
         df_accum = df_accum.merge(mpnn_scores, on='name', how='outer')

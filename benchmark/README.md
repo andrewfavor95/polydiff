@@ -86,19 +86,28 @@ use LigandMPNN instead, include the flag `--use_ligand` to the `pipeline.py`,
 `mpnn_designs.py`, and `thread_mpnn.py` scripts. This assumes that you've set
 up the benchmark with a ligand input to `run_inference.py`.
 
-To generate a params file, export the small molecule ligand from PyMOL into
-mol2 format and then run the following:
+LigandMPNN requires a .params file as input, which contains Rosetta atom names
+that give some chemical context beyond just the element types. LigandMPNN does
+not use any other info from the params file (i.e. the ligand atom coordinates
+are still taken from the PDB). If you run `pipeline.py --use_ligand`, it will
+generate the params file automatically. To generate a params file yourself,
+export the small molecule ligand from PyMOL into mol2 format and run the
+following (this will use the ref2015 energy function):
 
-    /software/rosetta/main/source/scripts/python/public/molfile_to_params.py --keep-names --clobber  ../LIGANDNAME.mol2 -n LIGANDNAME 
+    /software/rosetta/main/source/scripts/python/public/molfile_to_params.py --keep-names ../LIGANDNAME.mol2 -n LIGANDNAME 
 
 You can use both MPNN and ligandMPNN on the same set of designs. These are
-indicated in the output CSV by a boolean column `mpnn` or `ligmpnn`.
+stored in different subfolders `mpnn/` and `ligmpnn/` and their designs are
+marked in the output CSV by a boolean column `mpnn` or `ligmpnn`.
 
-To use ChemNet to score designs, run `score_designs.py` with `chemnet` in the
-argument to `--run`, e.g. `--run af2,chemnet`. This is enabled by default if
-you run `pipeline.py` with `--use_ligand`.
+To use ChemNet or Rosetta ligand metrics to score designs, run
+`score_designs.py` with `chemnet` and/or `rosettalig` in the argument to
+`--run`, e.g. `--run af2,chemnet,rosettalig`. These are both enabled by default
+if you run `pipeline.py` with `--use_ligand`.
+
 
 ### Diversity-adjusted success rate
+
 To obtain a final benchmark metric that represents success rate at varying
 metric thresholds and structural diversities:
 

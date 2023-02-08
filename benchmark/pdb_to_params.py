@@ -40,7 +40,7 @@ def convert_all(indir):
             d = os.path.dirname(p)
             os.makedirs(d, exist_ok=True)
         convert(pdb, mol2_path, ligand)
-        params_from_mol2(mol2_path, ligandmpnn_params_path)
+        params_from_mol2(mol2_path, ligandmpnn_params_path, ligand)
 
 def convert(pdb, mol2, ligand):
     obConversion = openbabel.OBConversion()
@@ -60,13 +60,19 @@ def trim_suffix(s, suffix):
         s = s[:-(len(suffix))]
     return s
 
-def params_from_mol2(mol2, params):
+def params_from_mol2(mol2, params, ligand):
     params = trim_suffix(params, '.params')
-    proc = subprocess.run(f'/software/rosetta/main/source/scripts/python/public/molfile_to_params.py --keep-names --clobber  {mol2} -n {params}',
+
+    # the -n argument MUST be name of ligand, and this will ONLY output <ligandname>.params to the CWD
+    proc = subprocess.run(f'/software/rosetta/main/source/scripts/python/public/molfile_to_params.py --keep-names --clobber  {mol2} -n {ligand}',
         shell=True)
 
     if proc.returncode != 0:
         raise Exception(f'params_from_mol2({mol2}, {params} failed')
+
+    # move/rename the .params file after making it to be more tidy
+    os.rename(ligand+'.params', params+'.params')
+    print(f'Moved {ligand}.params to {params}.params')
 
 if __name__ == '__main__':
     fire.Fire(convert_all)

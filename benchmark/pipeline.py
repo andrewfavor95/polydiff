@@ -61,10 +61,7 @@ def main():
     if args.start_step in ['sweep', 'mpnn', 'thread_mpnn']:
         print('Threading MPNN sequences onto design models...')
         if args.use_ligand:
-            run_pipeline_step(
-                f'{script_dir}thread_mpnn.py --use_ligand --init_sc --outdir {outdir}/ligmpnn/ '\
-                f'--seqdir {outdir}/ligmpnn/seqs/ {outdir}'
-            )
+            run_pipeline_step(f'{script_dir}thread_mpnn.py --use_ligand {outdir}')
         else:
             run_pipeline_step(f'{script_dir}thread_mpnn.py {outdir}')
 
@@ -80,7 +77,7 @@ def main():
         )
     if args.use_ligand:
         mpnn_dir = f'{outdir}/ligmpnn'
-        score_scripts = "af2,pyrosetta,chemnet"
+        score_scripts = "af2,pyrosetta,chemnet,rosettalig"
     else:
         mpnn_dir = f'{outdir}/mpnn'
         score_scripts = "af2,pyrosetta"
