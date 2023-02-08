@@ -13,7 +13,6 @@ import sys, os, argparse, glob, tqdm, pickle
 import numpy as np
 import torch
 from icecream import ic
-import torch
 
 script_dir = os.path.dirname(os.path.realpath(__file__))+'/'
 sys.path.insert(0,script_dir+'/../')
@@ -21,6 +20,8 @@ sys.path.insert(0,script_dir+'/../RF2-allatom/')
 import inference.utils
 import rf2aa.parsers
 import rf2aa.chemical
+from rf2aa.parsers import load_ligand_from_pdb
+from rf2aa.util import kabsch
 
 
 script_dir = os.path.dirname(os.path.realpath(__file__))+'/'
@@ -124,7 +125,6 @@ def main():
                 print('writing file', args.outdir+name+f"_{i}.pdb")
                 seq = lines[2*i + 3].strip() # 2nd seq is 1st design
                 seq_num = torch.tensor([rf2aa.util.aa2num[rf2aa.util.aa_123[a]] for a in seq])
-
                 pdbstr = rf2aa.util.writepdb(
                     args.outdir+name+f"_{i}.pdb",
                     atoms = xyz,
