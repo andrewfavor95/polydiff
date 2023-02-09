@@ -637,6 +637,28 @@ def pop_unoccupied(indep, atom_mask):
     chiral_shift = n_shift[chiral_indices.long()]
     indep.chirals[:,:-1] = chiral_indices - chiral_shift
 
+    # # Recenter
+    # ic(indep.xyz.shape)
+    # ic("STARTING COORDS", indep.xyz[0,1,:])
+    # L, _, _ = indep.xyz.shape
+    # true_crds = torch.zeros((L,36,3))
+    # true_crds[...] = torch.nan
+    # true_crds[:,:14,:] = indep.xyz
+    # indep.xyz = get_init_xyz(true_crds[None, None], indep.is_sm).squeeze()
+    # indep.xyz = indep.xyz[:,:14]
+    # # raise Exception(indep.xyz.shape)
+
+def centre(indep, is_diffused):
+    xyz = indep.xyz
+    #Centre unmasked structure at origin, as in training (to prevent information leak)
+    if torch.sum(~is_diffused) != 0:
+        motif_com=xyz[~is_diffused,1,:].mean(dim=0) # This is needed for one of the potentials
+        xyz = xyz - motif_com
+    elif torch.sum(~is_diffused) == 0:
+        xyz = xyz - xyz[:,1,:].mean(dim=0)
+    indep.xyz = xyz
+
+
 def diffuse(conf, diffuser, indep, is_diffused, t):
 
     if t == diffuser.T: 

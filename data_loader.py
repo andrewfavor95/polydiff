@@ -1633,13 +1633,16 @@ class DistilledDataset(data.Dataset):
 
         # Convert template-based modeling inputs to a description of a single structure (the query structure).
         indep, atom_mask, dataset_name = aa_model.adaptor_fix_bb_indep(out)
+        ic(indep.xyz.shape)
         aa_model.pop_unoccupied(indep, atom_mask)
+        ic(indep.xyz.shape)
 
         # Mask the independent inputs.
         run_inference.seed_all(mask_gen_seed) # Reseed the RNGs for test stability.
         L = indep.seq.shape[0]
         masks_1d = mask_generator.generate_masks(L, task, self.params, chosen_dataset, None, xyz=indep.xyz, atom_mask=atom_mask[:, :rf2aa.chemical.NHEAVYPROT], is_sm=indep.is_sm)
         is_diffused = ~masks_1d['input_str_mask']
+        aa_model.centre(indep, is_diffused)
         t = random.randint(1, self.diffuser.T)
         indep_diffused_tp1_t, t_list = aa_model.diffuse(self.conf, self.diffuser, indep, is_diffused, t)
 
@@ -1655,7 +1658,9 @@ class DistilledDataset(data.Dataset):
                 assert torch.mean(rfi.xyz[:,~is_diffused,1] - indep.xyz[None,~is_diffused,1]) < 0.001
 
         run_inference.seed_all(mask_gen_seed) # Reseed the RNGs for test stability.
-        return indep, rfi_tp1_t, dataset_name, sel_item, t, is_diffused
+        ic(dataset_name, chosen_dataset)
+        ic(indep.xyz.shape)
+        return indep, rfi_tp1_t, chosen_dataset, sel_item, t, is_diffused, task
         # return seq, msa, msa_masked, msa_full, mask_msa, true_crds, atom_mask, idx_pdb, xyz_t, t1d, t2d, alpha_t, xyz_prev, same_chain, unclamp, negative, masks_1d, task, chosen_dataset, little_t, mask_t, mask_prev, atom_frames, bond_feats, chirals, mask_t_2d, dataset_name, item, is_sm
 
 

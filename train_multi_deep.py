@@ -338,6 +338,7 @@ class Trainer():
                   w_lddt=1.0, w_blen=1.0, w_bang=1.0, w_lj=0.0, w_hb=0.0,
                   lj_lin=0.75, use_H=False, w_disp=0.0, w_motif_disp=0.0, w_ax_ang=0.0, w_frame_dist=0.0, eps=1e-6, backprop_non_displacement_on_given=False):
 
+        ic(true.shape)
         #NB t is 1-indexed
         t_idx = t-1
  
@@ -1010,7 +1011,7 @@ class Trainer():
         
         print('About to enter train loader loop')
         for loader_out in train_loader:
-            indep, rfi_tp1_t, dataset_name, item, little_t, is_diffused = loader_out
+            indep, rfi_tp1_t, dataset_name, item, little_t, is_diffused, task = loader_out
             rfi_tp1, rfi_t = rfi_tp1_t
 
             ic(gpu, dataset_name, item)
@@ -1038,7 +1039,7 @@ class Trainer():
             seq_original = torch.clone(indep.seq)
 
             # transfer inputs to device
-            B, _, N, L = rfi_t.msa_latent.shape
+            B, _, L, _ = rfi_t.msa_latent.shape
             rf2aa.tensor_util.to_device(rfi_t, gpu)
 
             counter += 1 
@@ -1083,36 +1084,49 @@ class Trainer():
                                     use_checkpoint=True,
                                     **({model_input_logger.LOG_ONLY_KEY: {'t':int(little_t), 'item': item}} if self.log_inputs else {}))
                     logit_s, logit_aa_s, logits_pae, logits_pde, pred_crds, alphas, px0_allatom, pred_lddts, _, _, _ = dataclasses.astuple(rfo)
+                    ic(logit_aa_s.shape)
 
                     # find closest homo-oligomer pairs
-                    true_crds = indep.xyz
+                    ic(indep.xyz.shape)
+                    true_crds = torch.zeros((1,L,36,3))
+                    true_crds[0,:,:14,:] = indep.xyz
+                    ic(true_crds[0,0,1,:])
+                    # true_crds = indep.xyz[None]
+                    mask_crds = ~torch.isnan(true_crds).any(dim=-1)
+                    ic(true_crds.shape, mask_crds.shape)
                     true_crds, mask_crds = resolve_equiv_natives(pred_crds[-1], true_crds, mask_crds)
-                    mask_crds[:,~masks_1d['loss_str_mask'][0],:] = False
-
+                    mask_crds[:,is_diffused,:] = False
                     # processing labels for distogram orientograms
                     mask_BB = ~(mask_crds[:,:,:3].sum(dim=-1) < 3.0) # ignore residues having missing BB atoms for loss calculation
                     mask_2d = mask_BB[:,None,:] * mask_BB[:,:,None] # ignore pairs having missing residues
-                    mask_2d = mask_2d*masks_1d['loss_str_mask_2d'].to(mask_2d.device)
+                    ic(mask_2d.shape)
+                    mask_2d = (mask_2d* (~is_diffused[:, None]* ~is_diffused[None, :])).to(mask_2d.device)
                     assert torch.sum(mask_2d) > 0, "mask_2d is blank"
                     c6d, _ = xyz_to_c6d(true_crds)
-                    c6d = c6d_to_bins2(c6d, same_chain, negative=negative)
+                    ic(indep.same_chain.shape, indep.same_chain)
+                    negative = torch.tensor([False])
+                    c6d = c6d_to_bins2(c6d, indep.same_chain[None], negative=negative)
 
                     prob = self.active_fn(logit_s[0]) # distogram
-                    acc_s = self.calc_acc(prob, c6d[...,0], idx_pdb, mask_2d)
-
-                    # Changes which do not make a difference to the loss gradients.
-                    seq_diffusion_mask[:] = True
-                    mask_crds[:] = False
-                    true_crds[:,:,14:] = 0
-                    #xyz_t = torch.normal(10, 20, xyz_t.shape, dtype=xyz_t.dtype)
-                    xyz_t[:] = 0
-                    seq[:,0] = 0
+                    acc_s = self.calc_acc(prob, c6d[...,0], indep.idx[None], mask_2d)
+                    # msa = indep.seq[None]
+                    label_aa_s = indep.seq[None, None]
+                    # mask_aa_s = indep.seq[None, None]
+                    mask_aa_s = is_diffused[None, None]
+                    mask_msa = indep.seq[None]
+                    same_chain = indep.same_chain[None]
+                    seq_diffusion_mask = torch.ones(L).bool()
+                    seq_t = indep.seq[None]
+                    xyz_t = rfi_t.xyz_t
+                    unclamp = torch.tensor([False])
+                    ic(dataset_name) # sm_compl_asmb
+                    ic(true_crds.shape)
                     loss, loss_s, loss_dict = self.calc_loss(logit_s, c6d,
-                            logit_aa_s, msa[:, i_cycle], mask_msa[:,i_cycle], None,
+                            logit_aa_s, label_aa_s, mask_aa_s, None,
                             pred_crds, alphas, true_crds, mask_crds,
                             mask_BB, mask_2d, same_chain,
-                            pred_lddts, idx_pdb, chosen_dataset[0], chosen_task[0], diffusion_mask=diffusion_mask,
-                            seq_diffusion_mask=seq_diffusion_mask, seq_t=seq[:,0], xyz_in=xyz_t, unclamp=unclamp, 
+                            pred_lddts, indep.idx[None], dataset_name, task, diffusion_mask=diffusion_mask,
+                            seq_diffusion_mask=seq_diffusion_mask, seq_t=seq_t, xyz_in=xyz_t, unclamp=unclamp,
                             negative=negative, t=int(little_t), **self.loss_param)
                     # Force all model parameters to participate in loss. Truly a cursed workaround.
                     loss += 0.0 * (logits_pae.mean() + logits_pde.mean() + alphas.mean() + pred_lddts.mean())
