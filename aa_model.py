@@ -212,6 +212,10 @@ class Model:
         same_chain[Ls[0]:, Ls[0]:] = 1
         is_sm = torch.zeros(sum(Ls)).bool()
         is_sm[Ls[0]:] = True
+        assert len(Ls) <= 2, 'multi chain inference not implemented yet'
+        terminus_type = torch.zeros(sum(Ls))
+        terminus_type[0] = N_TERMINUS
+        terminus_type[Ls[0]-1] = C_TERMINUS
 
         indep = Indep(
             seq,
@@ -222,7 +226,8 @@ class Model:
             chirals,
             atom_frames,
             same_chain,
-            is_sm)
+            is_sm,
+            terminus_type)
         return indep
 
 
@@ -277,11 +282,17 @@ class Model:
 
         o.idx = torch.tensor([i for _, i in contig_map.hal])
 
+        o.terminus_type = torch.zeros(L_mapped)
+        o.terminus_type[0] = N_TERMINUS
+        o.terminus_type[n_prot-1] = C_TERMINUS
+
         # is_diffused = torch.
         is_diffused_prot = ~torch.from_numpy(contig_map.inpaint_str)
         is_diffused_sm = torch.zeros(n_sm).bool()
         is_diffused = torch.cat((is_diffused_prot, is_diffused_sm))
 
+        # To see the shapes of the indep struct with contig inserted
+        # print(rf2aa.tensor_util.info(rf2aa.tensor_util.to_ordered_dict(o)))
         return o, is_diffused
 
 
@@ -502,7 +513,7 @@ class Model:
             t2d,
             xyz_t,
             alpha_t,
-            mask_t[None],
+            mask_t,
             indep.same_chain[None],
             ~is_diffused,
             None,
@@ -574,16 +585,6 @@ def adaptor_fix_bb_indep(out):
         true_crds = true_crds[0]
         atom_mask = atom_mask[0]
     
-    #update template features
-    xyz_t = torch.clone(true_crds)[None]
-    mask_t = torch.clone(atom_mask)[None]
-    seq_mask_shifted = torch.clone(seq)
-    seq_mask_shifted[seq_mask_shifted>=MASKINDEX] -= 1
-    f1d_t = torch.nn.functional.one_hot(seq_mask_shifted, num_classes=NAATOKENS-1)
-    conf = torch.ones_like(seq[:1])[...,None]
-    f1d_t = torch.cat((f1d_t, conf), dim=-1)
-    t1d = f1d_t.float()
-
     # our dataloaders return torch.zeros(L...) for atom frames and chirals when there are none, this updates it to use common shape 
     if torch.sum(atom_frames) == 0:
         atom_frames = torch.zeros((0,3,2))
@@ -618,15 +619,12 @@ def pop_unoccupied(indep, atom_mask):
     Removes ligand atoms which are not present in the atom mask.
     Removes residues which do not have N,C,Ca in the atom mask.
     """
-    # n_atoms = rf2aa.util.is_atom(seq).sum()
     n_atoms = indep.is_sm.sum()
     assertpy.assert_that(len(indep.atom_frames)).is_equal_to(n_atoms)
-    # is_sm_prepop = rf2aa.util.is_atom(indep.seq) # (L)
 
     pop = rf2aa.util.get_prot_sm_mask(atom_mask, indep.seq)
     ic(atom_mask.shape, indep.seq.shape, pop.shape)
     ic(f'Removing {(~pop).sum()} residues / atoms')
-    # pop = rf2aa.tensor_util.assert_squeeze(pop)
     N     = pop.sum()
     pop2d = pop[None,:] * pop[:,None]
 
@@ -642,17 +640,6 @@ def pop_unoccupied(indep, atom_mask):
     chiral_indices = indep.chirals[:,:-1]
     chiral_shift = n_shift[chiral_indices.long()]
     indep.chirals[:,:-1] = chiral_indices - chiral_shift
-
-    # # Recenter
-    # ic(indep.xyz.shape)
-    # ic("STARTING COORDS", indep.xyz[0,1,:])
-    # L, _, _ = indep.xyz.shape
-    # true_crds = torch.zeros((L,36,3))
-    # true_crds[...] = torch.nan
-    # true_crds[:,:14,:] = indep.xyz
-    # indep.xyz = get_init_xyz(true_crds[None, None], indep.is_sm).squeeze()
-    # indep.xyz = indep.xyz[:,:14]
-    # # raise Exception(indep.xyz.shape)
 
 def centre(indep, is_diffused):
     xyz = indep.xyz
@@ -759,7 +746,6 @@ def self_cond(indep, rfi, rfo):
     t2d, mask_t_2d_remade = util.get_t2d(
         xyz_t[0], indep.is_sm, rfi.atom_frames[0])
     t2d = t2d[None] # Add batch dimension # [B,T,L,L,44]
-    # xyz_t = xyz_t[...,1,:]
     rfi_sc.xyz_t = xyz_t[:,:,:,1]
     rfi_sc.t2d = t2d
     return rfi_sc
