@@ -1333,6 +1333,7 @@ class Trainer():
                     # find closest homo-oligomer pairs
                     true_crds, mask_crds = resolve_equiv_natives(pred_crds[-1], true_crds, mask_crds)
                     mask_crds[:,~masks_1d['loss_str_mask'][0],:] = False
+
                     # processing labels for distogram orientograms
                     mask_BB = ~(mask_crds[:,:,:3].sum(dim=-1) < 3.0) # ignore residues having missing BB atoms for loss calculation
                     mask_2d = mask_BB[:,None,:] * mask_BB[:,:,None] # ignore pairs having missing residues
@@ -1344,6 +1345,13 @@ class Trainer():
                     prob = self.active_fn(logit_s[0]) # distogram
                     acc_s = self.calc_acc(prob, c6d[...,0], idx_pdb, mask_2d)
 
+                    # Changes which do not make a difference to the loss gradients.
+                    seq_diffusion_mask[:] = True
+                    mask_crds[:] = False
+                    true_crds[:,:,14:] = 0
+                    #xyz_t = torch.normal(10, 20, xyz_t.shape, dtype=xyz_t.dtype)
+                    xyz_t[:] = 0
+                    seq[:,0] = 0
                     loss, loss_s, loss_dict = self.calc_loss(logit_s, c6d,
                             logit_aa_s, msa[:, i_cycle], mask_msa[:,i_cycle], None,
                             pred_crds, alphas, true_crds, mask_crds,

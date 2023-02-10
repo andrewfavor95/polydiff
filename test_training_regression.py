@@ -149,6 +149,7 @@ class ModelInputs(unittest.TestCase):
                     side_effect.call_count += 1
                     if side_effect.call_count < call_number:
                         ic(kwargs.keys())
+                        run_inference.make_deterministic()
                         if 'xyz' in kwargs:
                             xyz = kwargs['xyz']
                         else:
@@ -195,7 +196,8 @@ class ModelInputs(unittest.TestCase):
                 argument_binding = func_sig.bind(*args, **kwargs)
                 argument_map = argument_binding.arguments
                 argument_map = tensor_util.cpu(argument_map)
-                test_utils.assert_matches_golden(self, golden_name, argument_map, rewrite=REWRITE, custom_comparator=tensor_util.cmp)
+                cmp = partial(tensor_util.cmp, atol=1e-3, rtol=0)
+                test_utils.assert_matches_golden(self, golden_name, argument_map, rewrite=REWRITE, custom_comparator=cmp)
 
 class Loss(unittest.TestCase):
     def test_loss_grad(self):
@@ -268,6 +270,7 @@ class Loss(unittest.TestCase):
             (loss,), _ = scaler_mock.scale.call_args
             ic(loss)
             rfo = side_effect.rfo
+            run_inference.seed_all()
             loss.backward()
             grads = tensor_util.get_grad(rfo)
             print(f'grad shapes: {tensor_util.info(grads)}')

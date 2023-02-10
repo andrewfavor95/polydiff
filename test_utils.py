@@ -44,7 +44,7 @@ def assert_matches_golden(t, name, got, rewrite=False, processor_specific=False,
     # want = p.read_text()
     want = read(p)
     if custom_comparator:
-        diff = custom_comparator(want, got)
+        diff = custom_comparator(got, want)
         ic(diff)
         if not diff:
             return
