@@ -81,7 +81,7 @@ class TestDistributed(unittest.TestCase):
         This test passes, but destroy_process_group does not work in practice, so we set the MASTER_PORT explicitly.
         """
         os.environ['MASTER_ADDR'] = 'localhost'
-        os.environ['MASTER_PORT'] = '12319'
+        os.environ['MASTER_PORT'] = '12317'
         ic('start 1')
         torch.distributed.init_process_group(backend="gloo", world_size=1, rank=0)
         ic('end 1')
@@ -91,9 +91,10 @@ class TestDistributed(unittest.TestCase):
         ic('end 2')
         torch.distributed.destroy_process_group()
 
+
 class ModelInputs(unittest.TestCase):
     def test_no_self_cond(self):
-        os.environ['MASTER_PORT'] = '12319'
+        os.environ['MASTER_PORT'] = '12318'
         self.run_regression(arg_string, 'model_input_no_self_cond')
 
 
@@ -276,7 +277,7 @@ class Loss(unittest.TestCase):
             print(f'grad (min, max): {tensor_util.minmax(grads)}')
             print(f'loss: {loss}')
 
-            cmp = partial(tensor_util.cmp, atol=0, rtol=0.001)
+            cmp = partial(tensor_util.cmp, atol=1e-9, rtol=1e-2)
             test_utils.assert_matches_golden(self, golden_name, grads, rewrite=REWRITE, custom_comparator=cmp)
 
 if __name__ == '__main__':

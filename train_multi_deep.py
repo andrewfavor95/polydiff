@@ -29,6 +29,7 @@ import rf2aa.tensor_util
 from rf2aa.tensor_util import assert_equal
 from rf2aa.util_module import ComputeAllAtomCoords
 from rf2aa.RoseTTAFoldModel import RoseTTAFoldModule
+import run_inference
 import aa_model
 from data_loader import (
     get_train_valid_set, loader_pdb, loader_fb, loader_complex, loader_pdb_fixbb, loader_fb_fixbb, loader_complex_fixbb, loader_cn_fixbb, default_dataset_configs,
@@ -338,7 +339,8 @@ class Trainer():
                   w_lddt=1.0, w_blen=1.0, w_bang=1.0, w_lj=0.0, w_hb=0.0,
                   lj_lin=0.75, use_H=False, w_disp=0.0, w_motif_disp=0.0, w_ax_ang=0.0, w_frame_dist=0.0, eps=1e-6, backprop_non_displacement_on_given=False):
 
-        ic(true.shape)
+        run_inference.seed_all()
+
         #NB t is 1-indexed
         t_idx = t-1
  
@@ -1011,10 +1013,10 @@ class Trainer():
         
         print('About to enter train loader loop')
         for loader_out in train_loader:
-            indep, rfi_tp1_t, dataset_name, item, little_t, is_diffused, task = loader_out
+            indep, rfi_tp1_t, chosen_dataset, item, little_t, is_diffused, chosen_task = loader_out
             rfi_tp1, rfi_t = rfi_tp1_t
 
-            ic(gpu, dataset_name, item)
+            ic(gpu, chosen_dataset, chosen_task, item)
 
             N_cycle = np.random.randint(1, self.maxcycle+1) # number of recycling
 
@@ -1083,49 +1085,61 @@ class Trainer():
                                     rfi_t,
                                     use_checkpoint=True,
                                     **({model_input_logger.LOG_ONLY_KEY: {'t':int(little_t), 'item': item}} if self.log_inputs else {}))
-                    logit_s, logit_aa_s, logits_pae, logits_pde, pred_crds, alphas, px0_allatom, pred_lddts, _, _, _ = dataclasses.astuple(rfo)
-                    ic(logit_aa_s.shape)
+                    logit_s, logit_aa_s, logits_pae, logits_pde, pred_crds, alphas, px0_allatom, pred_lddts, _, _, _ = rfo.unsafe_astuple()
 
-                    # find closest homo-oligomer pairs
-                    ic(indep.xyz.shape)
-                    true_crds = torch.zeros((1,L,36,3))
+                    is_diffused = is_diffused.to(gpu)
+                    indep.seq = indep.seq.to(gpu)
+                    indep.is_sm = indep.is_sm.to(gpu)
+                    indep.xyz = indep.xyz.to(gpu)
+                    indep.same_chain = indep.same_chain.to(gpu)
+                    indep.idx = indep.idx.to(gpu)
+                    true_crds = torch.zeros((1,L,36,3)).to(gpu)
                     true_crds[0,:,:14,:] = indep.xyz
-                    ic(true_crds[0,0,1,:])
-                    # true_crds = indep.xyz[None]
                     mask_crds = ~torch.isnan(true_crds).any(dim=-1)
-                    ic(true_crds.shape, mask_crds.shape)
                     true_crds, mask_crds = resolve_equiv_natives(pred_crds[-1], true_crds, mask_crds)
-                    mask_crds[:,is_diffused,:] = False
-                    # processing labels for distogram orientograms
-                    mask_BB = ~(mask_crds[:,:,:3].sum(dim=-1) < 3.0) # ignore residues having missing BB atoms for loss calculation
+                    mask_crds[:,~is_diffused,:] = False
+                    mask_BB = ~indep.is_sm[None]
                     mask_2d = mask_BB[:,None,:] * mask_BB[:,:,None] # ignore pairs having missing residues
-                    ic(mask_2d.shape)
-                    mask_2d = (mask_2d* (~is_diffused[:, None]* ~is_diffused[None, :])).to(mask_2d.device)
                     assert torch.sum(mask_2d) > 0, "mask_2d is blank"
                     c6d, _ = xyz_to_c6d(true_crds)
-                    ic(indep.same_chain.shape, indep.same_chain)
                     negative = torch.tensor([False])
                     c6d = c6d_to_bins2(c6d, indep.same_chain[None], negative=negative)
 
                     prob = self.active_fn(logit_s[0]) # distogram
+                    ic(prob.device, c6d.device, indep.idx.device, mask_2d.device)
                     acc_s = self.calc_acc(prob, c6d[...,0], indep.idx[None], mask_2d)
-                    # msa = indep.seq[None]
                     label_aa_s = indep.seq[None, None]
-                    # mask_aa_s = indep.seq[None, None]
                     mask_aa_s = is_diffused[None, None]
                     mask_msa = indep.seq[None]
                     same_chain = indep.same_chain[None]
                     seq_diffusion_mask = torch.ones(L).bool()
-                    seq_t = indep.seq[None]
-                    xyz_t = rfi_t.xyz_t
+                    seq_t = torch.nn.functional.one_hot(indep.seq, 80)[None].float()
+                    xyz_t = rfi_t.xyz[None]
                     unclamp = torch.tensor([False])
-                    ic(dataset_name) # sm_compl_asmb
-                    ic(true_crds.shape)
+
+                    # Useful logging
+                    if False:
+                        is_protein_motif = ~is_diffused * ~indep.is_sm
+                        idx_diffused = torch.nonzero(is_diffused)
+                        idx_protein_motif  = torch.nonzero(is_protein_motif)
+                        idx_sm = torch.nonzero(indep.is_sm)
+
+                        ic(
+                            idx_diffused,
+                            idx_protein_motif,
+                            idx_sm
+                        )
+
+                    seq_diffusion_mask[:] = True
+                    mask_crds[:] = False
+                    true_crds[:,:,14:] = 0
+                    xyz_t[:] = 0
+                    seq_t[:] = 0
                     loss, loss_s, loss_dict = self.calc_loss(logit_s, c6d,
                             logit_aa_s, label_aa_s, mask_aa_s, None,
                             pred_crds, alphas, true_crds, mask_crds,
                             mask_BB, mask_2d, same_chain,
-                            pred_lddts, indep.idx[None], dataset_name, task, diffusion_mask=diffusion_mask,
+                            pred_lddts, indep.idx[None], chosen_dataset, chosen_task, diffusion_mask=diffusion_mask,
                             seq_diffusion_mask=seq_diffusion_mask, seq_t=seq_t, xyz_in=xyz_t, unclamp=unclamp,
                             negative=negative, t=int(little_t), **self.loss_param)
                     # Force all model parameters to participate in loss. Truly a cursed workaround.
@@ -1227,12 +1241,15 @@ class Trainer():
 
             save_pdb = np.random.randint(0,self.n_write_pdb) == 0
             if save_pdb:
-                _,_,L,_ = seq.shape
+                # Not yet working post-indep refactor since rf2aa.util can only write PDBs with 3,23,or 36 atoms, and we use 14 currently.
+                # Should be a simple fix.
+                continue
+                (L,) = indep.seq.shape
                 res_mask = torch.ones((1, L)).bool()
                 pdb_dir = os.path.join(self.outdir, 'training_pdbs')
                 os.makedirs(pdb_dir, exist_ok=True)
                 prefix = f'{pdb_dir}/test_epoch_{epoch}_{counter}_{chosen_task[0]}_{chosen_dataset[0]}_t_{int( little_t )}'
-                bond_feats = indep.bond_feats
+                bond_feats = indep.bond_feats[None]
                 rf2aa.util.writepdb(f'{prefix}_input.pdb',
                     torch.nan_to_num(xyz_prev_orig[res_mask][:,:23]), seq_unmasked[res_mask],
                     bond_feats=bond_feats[:, res_mask[0]][:, :, res_mask[0]])

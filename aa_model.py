@@ -97,6 +97,12 @@ class RFO:
     pair: torch.Tensor
     state: torch.Tensor
 
+    # dataclass.astuple returns a deepcopy of the dataclass in which
+    # gradients of member tensors are detached, so we define a 
+    # custom unpacker here.
+    def unsafe_astuple(self):
+        return tuple([self.__dict__[field.name] for field in dataclasses.fields(self)])
+
     def get_seq_logits(self):
         return self.logits_aa.permute(0,2,1)
     
@@ -667,13 +673,11 @@ def diffuse(conf, diffuser, indep, is_diffused, t):
         t_list = [t+1,t]
     indep_diffused_t = copy.deepcopy(indep)
     indep_diffused_tplus1 = copy.deepcopy(indep)
-    ic(conf)
     kwargs = {
         'xyz'                     :indep.xyz,
         'seq'                     :indep.seq,
         'atom_mask'               :None,
         'diffusion_mask'          :~is_diffused,
-        # 't_list'                  :[t],
         't_list'                  :t_list,
         'diffuse_sidechains'      :conf['preprocess']['sidechain_input'],
         'include_motif_sidechains':conf['preprocess']['motif_sidechain_input'],

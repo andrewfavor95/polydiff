@@ -45,7 +45,6 @@ def assert_matches_golden(t, name, got, rewrite=False, processor_specific=False,
     want = read(p)
     if custom_comparator:
         diff = custom_comparator(got, want)
-        ic(diff)
         if not diff:
             return
         try:
@@ -54,7 +53,7 @@ def assert_matches_golden(t, name, got, rewrite=False, processor_specific=False,
             fail_msg = json.dumps(loaded, indent=4)
         except Exception as e:
             ic('failed to pretty print output', e)
-            fail_msg = json.dumps(diff.pop('tensors unequal'), indent=4) + '\n' + str(diff) 
+            fail_msg = json.dumps(diff.pop('tensors unequal', ''), indent=4) + '\n' + str(diff) 
         t.fail(fail_msg)
     else:
         t.assertEqual(got, want)
