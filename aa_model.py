@@ -22,6 +22,7 @@ import util
 import inference.utils
 import networkx as nx
 import itertools
+import random
 
 
 NINDEL=1
@@ -889,7 +890,12 @@ class AtomizeResidues:
                                 rf2aa.util.atomize_protein(res_idx, self.seq, self.true_crds, self.atom_mask, n_res_atomize=1)
                 
                 natoms = seq_atomize.shape[0]
-                is_atom_motif = self.choose_random_atom_motif(natoms, p=.5)
+                if self.is_sm.any():
+                    is_atom_motif = self.choose_sm_contact_motif(xyz_atomize)
+                    ic(is_atom_motif)
+                else:
+                    is_atom_motif = self.choose_contiguous_atom_motif(bond_feats_atomize)
+                    ic(is_atom_motif)
                 # update the chirals to be after all the other residues
                 chirals_atomize[:, :-1] += L
 
@@ -1042,34 +1048,6 @@ class AtomizeResidues:
 
         loss_str_mask_2d = loss_seq_mask[None, :] * loss_seq_mask[:, None]
         self.masks_1d["loss_str_mask_2d"] = loss_str_mask_2d
-
-    @staticmethod
-    def choose_sc_contiguous_atom_motif(bond_feats_atomize):
-        """
-        given a residue to be atomized, chooses a random contiguous portion of the residue to treat as the motif
-        #### DOENST WORK RIGHT NOW ######
-        """
-        natoms = bond_feats_atomize.shape[0]
-        # choose atoms to be given as the motif 
-        is_atom_motif = torch.zeros((natoms))
-        sc_bond_graph = nx.from_numpy_matrix(bond_feats_atomize.numpy()[5:, 5:]) # first four indices are backbone atoms
-
-        # tip atom defined by atom with the lowest degree; if there are multiple sample from them
-        sc_atoms_by_degree = sorted(sc_bond_graph.degree, key=lambda x: x[1]) # list of tuples [(index, degree)]
-        # group by 
-        sc_atoms_min_degree = [list(i[1])[0] for i in itertools.groupby(sc_atoms_by_degree, key=lambda x: x[1])][0]
-        tip_atom = np.random.choice(sc_atoms_min_degree)
-        num_motif_atoms = np.random.randint(2, natoms-5) # exclude backbone atoms, this is why we need to skip gly, ala
-        # find all the sets of side chain atoms that could be provided as the motif for this tip atom
-        all_paths = []
-        for target in sc_bond_graph.nodes:
-            all_paths.extend(list(nx.all_simple_paths(sc_bond_graph, tip_atom, target, num_motif_atoms-1)))
-
-        #TODO: make sure this function works, currently cant produce a path to itself
-        chosen_motif_indices = torch.tensor(np.random.choice(all_paths))
-        is_atom_motif[chosen_motif_indices] = 1
-
-        return is_atom_motif
     
     @staticmethod
     def choose_random_atom_motif(natoms, p=0.5):
@@ -1077,6 +1055,34 @@ class AtomizeResidues:
         selects each atom to be in the motif with a probability p 
         """
         return torch.rand((natoms)) > p
+
+    def choose_sm_contact_motif(self, xyz_atomize):
+        """
+        chooses atoms to be the motif based on the atoms that are closest to the small molecule
+        """
+        dist = torch.cdist(self.true_crds[self.is_sm, 1, :], xyz_atomize)
+        closest_sm_atoms = torch.min(dist, dim=-2)[0][0] # min returns a tuple of values and indices, we want the values
+        contacts = closest_sm_atoms < 4
+        # if no atoms are closer than 4 angstroms, choose the closest three atoms
+        if torch.sum(contacts) == 0:
+            min_indices = torch.argsort(closest_sm_atoms)[:3]
+            contacts[min_indices] = 1
+        return contacts
+    
+    @staticmethod
+    def choose_contiguous_atom_motif(bond_feats_atomize):
+        """
+        chooses a contiguous 3 or 4 atom motif
+        """
+        natoms = bond_feats_atomize.shape[0]
+        # choose atoms to be given as the motif 
+        is_atom_motif = torch.zeros((natoms),dtype=bool)
+        bond_graph = nx.from_numpy_matrix(bond_feats_atomize.numpy())
+        paths = rf2aa.util.find_all_paths_of_length_n(bond_graph, 2)
+        paths.extend(rf2aa.util.find_all_paths_of_length_n(bond_graph, 3))
+        chosen_path = random.choice(paths)
+        is_atom_motif[torch.tensor(chosen_path)] = 1
+        return is_atom_motif
 
     def return_input_tensors(self):
         return self.seq.long(), \

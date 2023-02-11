@@ -1430,7 +1430,9 @@ def default_dataset_configs(loader_param, debug=False):
             dataloader_params[k_rf2aa] = v
 
     train_ID_dict, valid_ID_dict, weights_dict, train_dict, valid_dict, homo, chid2hash, chid2taxid = \
-            rf2aa.data_loader.get_train_valid_set(dataloader_params, no_match_okay=debug, diffusion_training=True)
+            rf2aa.data_loader.get_train_valid_set({**rf2aa.data_loader.default_dataloader_params, \
+            #**loader_param, 
+            **{'DATAPKL': loader_param['DATAPKL_AA'], 'MAXMONOMERLENGTH': loader_param['MAX_LENGTH']}}, no_match_okay=debug, diffusion_training=True)
 
     # pdb_IDs, pdb_weights, pdb_dict = pdb_items
     # fb_IDs, fb_weights, fb_dict = fb_items
