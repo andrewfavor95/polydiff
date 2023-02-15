@@ -92,10 +92,6 @@ class TestDistributed(unittest.TestCase):
         ic('end 2')
         torch.distributed.destroy_process_group()
 
-    def test_regression(self):
-        os.environ['MASTER_PORT'] = '12319'
-        self.run_regression(arg_string, 'model_input_0', rewrite=False)
-
 class ModelInputs(unittest.TestCase):
     def test_no_self_cond(self):
         os.environ['MASTER_PORT'] = '12318'

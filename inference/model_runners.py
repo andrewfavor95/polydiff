@@ -284,6 +284,12 @@ class Sampler:
         # HACK: TODO: save this in the model config
         self.loss_param = {'lj_lin': 0.75}
         model = RoseTTAFoldModule(
+            symmetrize_repeats=None, 
+            repeat_length=None,
+            symmsub_k=None,
+            sym_method=None,
+            main_block=None,
+            copy_main_block_template=None,
             **self._conf.model,
             aamask=self.aamask,
             atom_type_index=self.atom_type_index,
@@ -771,10 +777,11 @@ class NRBStyleSelfCond(Sampler):
                 rfo = self.model_adaptor.forward(
                                     rfi,
                                     return_infer=True,
-                                    **{model_input_logger.LOG_ONLY_KEY: {
-                                        't':t,
-                                        'output_prefix':self.output_prefix,
-                                    }})
+                                    # **{model_input_logger.LOG_ONLY_KEY: {
+                                    #     't':t,
+                                    #     'output_prefix':self.output_prefix,
+                                    # }}
+                                    )
 
                 if self.symmetry is not None and self.inf_conf.symmetric_self_cond:
                     raise Exception('not implemented')

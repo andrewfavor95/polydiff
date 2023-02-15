@@ -1650,8 +1650,11 @@ class DistilledDataset(data.Dataset):
         # Convert template-based modeling inputs to a description of a single structure (the query structure).
         indep, atom_mask, dataset_name = aa_model.adaptor_fix_bb_indep(out)
         ic(indep.xyz.shape)
-        aa_model.pop_unoccupied(indep, atom_mask)
+        ic(indep.seq)
+        ic(indep.atom_frames)
+        atom_mask = aa_model.pop_unoccupied(indep, atom_mask)
         ic(indep.xyz.shape)
+        ic(atom_mask.shape)
 
         # Mask the independent inputs.
         run_inference.seed_all(mask_gen_seed) # Reseed the RNGs for test stability.
@@ -1660,6 +1663,11 @@ class DistilledDataset(data.Dataset):
         if masks_1d['is_atomize_example'] and torch.sum(masks_1d['input_str_mask']*~indep.is_sm) > 5: # if triple contact doesn't find residues, reverts to mask_simple DON'T atomize here
             print("Triple contact not found, not atomizing this example")
             masks_1d['is_atomize_example'] = False
+        if masks_1d['is_atomize_example']:
+            atomizer = aa_model.AtomizeResidues(indep, masks_1d)
+            atomizer.featurize_atomized_residues(atom_mask)
+            indep, masks_1d = atomizer.return_input_tensors()
+
         is_diffused = ~masks_1d['input_str_mask']
         aa_model.centre(indep, is_diffused)
         t = random.randint(1, self.diffuser.T)

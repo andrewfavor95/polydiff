@@ -942,6 +942,12 @@ class Trainer():
 
     def init_model(self, device):
         model = RoseTTAFoldModule(
+            symmetrize_repeats=None, 
+            repeat_length=None,
+            symmsub_k=None,
+            sym_method=None,
+            main_block=None,
+            copy_main_block_template=None,
             **self.model_param,
             aamask=self.aamask,
             atom_type_index=self.atom_type_index,
