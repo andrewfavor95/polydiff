@@ -86,6 +86,12 @@ model:
     use_atom_frames: -1
     freeze_track_motif: -1
   freeze_track_motif: False
+  symmetrize_repeats: False
+  repeat_length: null
+  symmsub_k: null
+  sym_method: mean
+  copy_main_block_template: False
+  main_block: null
 
 diffuser:
   T: 200
