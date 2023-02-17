@@ -1348,59 +1348,6 @@ def loader_complex_fixbb(item, L_s, taxID, assem, params, negative=False, pick_t
            xyz_t.float(), f1d_t.float(), xyz_prev.float(), \
            chain_idx, False, False, complete_chain, mask #complete chain is [chainA or B, length of first chain]
 
-# class Dataset(data.Dataset):
-#     def __init__(self, IDs, loader, item_dict, params, homo, unclamp_cut=0.9, pick_top=True, p_homo_cut=-1.0):
-#         self.IDs = IDs
-#         self.item_dict = item_dict
-#         self.loader = loader
-#         self.params = params
-#         self.homo = homo
-#         self.pick_top = pick_top
-#         self.unclamp_cut = unclamp_cut
-#         self.p_homo_cut = p_homo_cut
-
-#     def __len__(self):
-#         return len(self.IDs)
-
-#     def __getitem__(self, index):
-#         ID = self.IDs[index]
-#         sel_idx = np.random.randint(0, len(self.item_dict[ID]))
-#         p_unclamp = np.random.rand()
-#         if p_unclamp > self.unclamp_cut:
-#             out = self.loader(sel_item[0], self.params, self.homo,
-#                               unclamp=True, 
-#                               pick_top=self.pick_top, 
-#                               p_homo_cut=self.p_homo_cut)
-#         else:
-#             out = self.loader(sel_item[0], self.params, self.homo, 
-#                               pick_top=self.pick_top,
-#                               p_homo_cut=self.p_homo_cut)
-#         return out
-
-# class DatasetComplex(data.Dataset):
-#     def __init__(self, IDs, loader, item_dict, params, pick_top=True, negative=False):
-#         self.IDs = IDs
-#         self.item_dict = item_dict
-#         self.loader = loader
-#         self.params = params
-#         self.pick_top = pick_top
-#         self.negative = negative
-
-#     def __len__(self):
-#         return len(self.IDs)
-
-#     def __getitem__(self, index):
-#         ID = self.IDs[index]
-#         sel_idx = np.random.randint(0, len(self.item_dict[ID]))
-#         out = self.loader(sel_item[0],
-#                           sel_item[1],
-#                           sel_item[2],
-#                           sel_item[3],
-#                           self.params,
-#                           pick_top = self.pick_top,
-#                           negative = self.negative)
-#         return out
-
 
 @dataclass
 class WeightedDataset:
@@ -1429,32 +1376,10 @@ def default_dataset_configs(loader_param, debug=False):
         if v is not None:
             dataloader_params[k_rf2aa] = v
 
-    train_ID_dict, valid_ID_dict, weights_dict, train_dict, valid_dict, homo, chid2hash, chid2taxid = \
+    train_ID_dict, _, weights_dict, train_dict, _, homo, chid2hash, chid2taxid = \
             rf2aa.data_loader.get_train_valid_set({**rf2aa.data_loader.default_dataloader_params, \
             #**loader_param, 
             **{'DATAPKL': loader_param['DATAPKL_AA'], 'MAXMONOMERLENGTH': loader_param['MAX_LENGTH']}}, no_match_okay=debug, diffusion_training=True)
-
-    # pdb_IDs, pdb_weights, pdb_dict = pdb_items
-    # fb_IDs, fb_weights, fb_dict = fb_items
-    # compl_IDs, compl_weights, compl_dict = compl_items
-    # neg_IDs, neg_weights, neg_dict = neg_items
-    # na_compl_IDs, na_compl_weights, na_compl_dict = na_compl_items
-    # na_neg_IDs, na_neg_weights, na_neg_dict = na_neg_items
-    # rna_IDs, rna_weights, rna_dict = rna_items
-    # sm_compl_IDs, sm_compl_weights, sm_compl_dict = sm_compl_items
-
-    #define dataset & data loader
-    #TODO: can we delete these all together? should match the aa case (except for chris norn and negative dataset)
-    # pdb_items, fb_items, compl_items, neg_items, cn_items, valid_pdb, valid_homo, valid_compl, valid_neg, valid_cn, homo = get_train_valid_set(loader_param)
-    # pdb_IDs, pdb_weights, pdb_dict = pdb_items
-    # fb_IDs, fb_weights, fb_dict = fb_items
-    # compl_IDs, compl_weights, compl_dict = compl_items
-    # neg_IDs, neg_weights, neg_dict = neg_items
-    # cn_IDs, cn_weights, cn_dict = cn_items
-
-    # sm_compl_loader_fixbb = partial(rf2aa.data_loader.loader_sm_compl,
-    #     init_protein_tmpl=False, init_ligand_tmpl=False,
-    #     init_protein_xyz=False, init_ligand_xyz=False, fixbb=True)
 
     #all the pdb sets use the default rf2aa loader_pdb, but the fixbb adaptor will not be applied to the seq2str task
     pdb_config = WeightedDataset(train_ID_dict["pdb"], train_dict["pdb"], {
@@ -1649,26 +1574,23 @@ class DistilledDataset(data.Dataset):
 
         # Convert template-based modeling inputs to a description of a single structure (the query structure).
         indep, atom_mask, dataset_name = aa_model.adaptor_fix_bb_indep(out)
-        ic(indep.xyz.shape)
-        ic(indep.seq)
-        ic(indep.atom_frames)
         atom_mask = aa_model.pop_unoccupied(indep, atom_mask)
-        ic(indep.xyz.shape)
-        ic(atom_mask.shape)
 
         # Mask the independent inputs.
         run_inference.seed_all(mask_gen_seed) # Reseed the RNGs for test stability.
         L = indep.seq.shape[0]
         masks_1d = mask_generator.generate_masks(L, task, self.params, chosen_dataset, None, xyz=indep.xyz, atom_mask=atom_mask[:, :rf2aa.chemical.NHEAVYPROT], is_sm=indep.is_sm)
-        if masks_1d['is_atomize_example'] and torch.sum(masks_1d['input_str_mask']*~indep.is_sm) > 5: # if triple contact doesn't find residues, reverts to mask_simple DON'T atomize here
+        if masks_1d['is_atomize_example'] and torch.sum(masks_1d['input_str_mask']*~indep.is_sm) > 8: # if triple contact doesn't find residues, reverts to mask_simple DON'T atomize here
             print("Triple contact not found, not atomizing this example")
             masks_1d['is_atomize_example'] = False
         if masks_1d['is_atomize_example']:
             atomizer = aa_model.AtomizeResidues(indep, masks_1d)
             atomizer.featurize_atomized_residues(atom_mask)
             indep, masks_1d = atomizer.return_input_tensors()
-
+        is_masked_seq = ~masks_1d['input_seq_mask']
         is_diffused = ~masks_1d['input_str_mask']
+        if not masks_1d["is_atomize_example"]:
+            assert torch.all(is_masked_seq==is_diffused), "if no residues have been atomized, all nodes that are being diffused should be masked in sequence space"        
         aa_model.centre(indep, is_diffused)
         t = random.randint(1, self.diffuser.T)
         indep_diffused_tp1_t, t_list = aa_model.diffuse(self.conf, self.diffuser, indep, is_diffused, t)
@@ -1676,7 +1598,7 @@ class DistilledDataset(data.Dataset):
         # Compute all strictly dependent model inputs from the independent inputs.
         rfi_tp1_t = []
         for indep_diffused, t in zip(indep_diffused_tp1_t, t_list):
-            aa_model.mask_indep(indep_diffused, is_diffused)
+            aa_model.mask_indep(indep_diffused, is_masked_seq)
             rfi = self.model_adaptor.prepro(indep_diffused, t, is_diffused)
             rfi_tp1_t.append(rfi)
 
@@ -1688,7 +1610,6 @@ class DistilledDataset(data.Dataset):
         ic(dataset_name, chosen_dataset)
         ic(indep.xyz.shape)
         return indep, rfi_tp1_t, chosen_dataset, sel_item, t, is_diffused, task
-        # return seq, msa, msa_masked, msa_full, mask_msa, true_crds, atom_mask, idx_pdb, xyz_t, t1d, t2d, alpha_t, xyz_prev, same_chain, unclamp, negative, masks_1d, task, chosen_dataset, little_t, mask_t, mask_prev, atom_frames, bond_feats, chirals, mask_t_2d, dataset_name, item, is_sm
 
 
 class DistributedWeightedSampler(data.Sampler):

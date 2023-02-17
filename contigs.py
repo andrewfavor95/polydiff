@@ -10,7 +10,7 @@ class ContigMap():
     Default chain outputs are inpainted chains as A (and B, C etc if multiple chains), and all fragments of receptor chain on the next one (generally B)
     Output chains can be specified. Sequence must be the same number of elements as in contig string
     '''
-    def __init__(self, parsed_pdb, contigs=None, contig_atoms=None, inpaint_seq=None, inpaint_str=None, length=None, ref_idx=None, hal_idx=None, idx_rf=None, inpaint_seq_tensor=None, inpaint_str_tensor=None, topo=False):
+    def __init__(self, parsed_pdb, contigs=None, inpaint_seq=None, inpaint_str=None, length=None, ref_idx=None, hal_idx=None, idx_rf=None, inpaint_seq_tensor=None, inpaint_str_tensor=None, topo=False):
         #sanity checks
         if contigs is None and ref_idx is None:
             sys.exit("Must either specify a contig string or precise mapping")
@@ -38,7 +38,6 @@ class ContigMap():
         if ref_idx is None:
             #using default contig generation, which outputs in rosetta-like format
             self.contigs=contigs
-            self.contig_atoms=contig_atoms
             self.sampled_mask,self.contig_length,self.n_inpaint_chains = self.get_sampled_mask()
             self.receptor_chain = self.chain_order[self.n_inpaint_chains]
             self.receptor, self.receptor_hal, self.receptor_rf, self.inpaint, self.inpaint_hal, self.inpaint_rf= self.expand_sampled_mask()
