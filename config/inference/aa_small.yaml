@@ -1,0 +1,12 @@
+defaults:
+  - debug
+
+inference:
+  output_prefix: debug/aa_small
+  model_runner: NRBStyleSelfCond
+  input_pdb: 'benchmark/input/gaa.pdb'
+
+contigmap:
+  contigs: ['1,A518-518,1']
+  length: 3-3
+

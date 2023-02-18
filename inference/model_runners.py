@@ -284,12 +284,6 @@ class Sampler:
         # HACK: TODO: save this in the model config
         self.loss_param = {'lj_lin': 0.75}
         model = RoseTTAFoldModule(
-            symmetrize_repeats=None, 
-            repeat_length=None,
-            symmsub_k=None,
-            sym_method=None,
-            main_block=None,
-            copy_main_block_template=None,
             **self._conf.model,
             aamask=self.aamask,
             atom_type_index=self.atom_type_index,
@@ -840,12 +834,13 @@ class NRBStyleSelfCond(Sampler):
                 include_motif_sidechains=self.preprocess_conf.motif_sidechain_input,
             )
         else:
-            x_t_1 = torch.clone(px0).to(self.device)
+            px0 = px0.cpu()
+            px0[~self.is_diffused] = indep.xyz[~self.is_diffused]
+            x_t_1 = torch.clone(px0)
             seq_t_1 = pseq_0
 
             # Dummy tors_t_1 prediction. Not used in final output.
             tors_t_1 = torch.ones((self.is_diffused.shape[-1], 10, 2))
-            px0 = px0.to(self.device)
 
         px0 = px0.cpu()
         x_t_1 = x_t_1.cpu()

@@ -58,6 +58,19 @@ def assert_matches_golden(t, name, got, rewrite=False, processor_specific=False,
     else:
         t.assertEqual(got, want)
 
+def assertEqual(t, custom_comparator, got, want):
+    diff = custom_comparator(got, want)
+    if not diff:
+        return
+    try:
+        jsoned = diff.to_json()
+        loaded = json.loads(jsoned)
+        fail_msg = json.dumps(loaded, indent=4)
+    except Exception as e:
+        ic('failed to pretty print output', e)
+        fail_msg = json.dumps(diff.pop('tensors unequal', ''), indent=4) + '\n' + str(diff) 
+    t.fail(fail_msg)
+
 
 def processor():
     o = subprocess.run(['lscpu | grep "Model name"'], capture_output=True, shell=True)
