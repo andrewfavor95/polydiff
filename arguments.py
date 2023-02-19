@@ -118,6 +118,7 @@ def get_args(in_args=None):
             help='Path to pickled dataset to load for training on. If path doesn\'t exist, will write new pickle with that name.')
     data_group.add_argument('-spoof_item', type=str, default='', 
             help='Path to pickled dataset to load for training on. If path doesn\'t exist, will write new pickle with that name.')
+    data_group.add_argument('-mol_dir', type=str, default=None)
 
     # Diffusion args 
     diff_group = parser.add_argument_group("diffusion parameters")

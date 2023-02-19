@@ -1,6 +1,7 @@
 import torch
 import assertpy
 import torch.nn.functional as F
+import copy
 import time
 from dataclasses import dataclass
 from torch.utils import data
@@ -120,6 +121,7 @@ def set_data_loader_params(args):
         "MASK_MAX_PROPORTION":args.mask_max_proportion,
         "MASK_BROKEN_PROPORTION":args.mask_broken_proportion,
         "SPOOF_ITEM":args.spoof_item,
+        "MOL_DIR":None,
     }
     for param in PARAMS:
         if hasattr(args, param.lower()):
@@ -1413,10 +1415,19 @@ def default_dataset_configs(loader_param, debug=False):
     #     valid_na_neg, valid_rna, valid_sm_compl, valid_sm_compl_ligclus, valid_sm_compl_strict, 
     #     valid_sm, valid_pep, homo
     # ) = rf2aa.data_loader.get_train_valid_set({**rf2aa.data_loader.default_dataloader_params, **loader_param, **{'DATAPKL': loader_param['DATAPKL_AA']}}, no_match_okay=debug)
+    ic(loader_param)
+    dataloader_params = copy.deepcopy(rf2aa.data_loader.default_dataloader_params)
+    overrides = [
+        ['DATAPKL_AA', 'DATAPKL'],
+        ['MOL_DIR', 'MOL_DIR']]
+    for k_diff, k_rf2aa in overrides:
+        v = loader_param.get(k_diff, None)
+        ic(k_diff, k_rf2aa, v)
+        if v is not None:
+            dataloader_params[k_rf2aa] = v
+
     train_ID_dict, valid_ID_dict, weights_dict, train_dict, valid_dict, homo, chid2hash, chid2taxid = \
-            rf2aa.data_loader.get_train_valid_set({**rf2aa.data_loader.default_dataloader_params, \
-            #**loader_param, 
-            **{'DATAPKL': loader_param['DATAPKL_AA']}}, no_match_okay=debug, diffusion_training=True)
+            rf2aa.data_loader.get_train_valid_set(dataloader_params, no_match_okay=debug, diffusion_training=True)
 
     # pdb_IDs, pdb_weights, pdb_dict = pdb_items
     # fb_IDs, fb_weights, fb_dict = fb_items
