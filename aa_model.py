@@ -174,7 +174,7 @@ class Model:
             if not len(stream):
                 raise Exception(f'ligand {ligand} not found in pdb: {pdb}')
 
-            mol, msa_sm, ins_sm, xyz_sm, mask_sm = parsers.parse_mol("".join(stream), filetype="pdb", string=True)
+            mol, msa_sm, ins_sm, xyz_sm, _ = parsers.parse_mol("".join(stream), filetype="pdb", string=True)
             a3m_sm = {"msa": msa_sm.unsqueeze(0), "ins": ins_sm.unsqueeze(0)}
             G = rf2aa.util.get_nxgraph(mol)
             atom_frames = rf2aa.util.get_atom_frames(msa_sm, G)
@@ -817,8 +817,9 @@ class AtomizeResidues:
             # check if all the atoms in the residue are resolved, if not dont atomize
             if not torch.all(allatom_mask[residue]==atom_mask[res_idx]):
                 continue
-            N_term = res_idx-1 < 0
-            C_term = res_idx+1 > self.indep.idx.shape[0]-1
+            N_term = res_idx ==  0
+            C_term = res_idx == self.indep.idx.shape[0]-1
+
             if N_term:
                 C_resolved = self.indep.idx[res_idx+1]-self.indep.idx[res_idx] == 1
                 N_resolved = True
@@ -873,9 +874,11 @@ class AtomizeResidues:
             #update same_chain every iteration
             same_chain_new = torch.zeros((L+natoms, L+natoms))
             same_chain_new[:L, :L] = self.indep.same_chain
-            residues_in_prot_chain = self.indep.same_chain[res_idx].nonzero()
+            residues_in_prot_chain = self.indep.same_chain[res_idx].squeeze().nonzero()
+
             same_chain_new[L:, residues_in_prot_chain] = 1
             same_chain_new[residues_in_prot_chain, L:] = 1
+            same_chain_new[L:, L:] = 1
 
             self.indep.bond_feats = bond_feats_new
             self.indep.same_chain = same_chain_new
@@ -932,7 +935,7 @@ class AtomizeResidues:
         pop[is_atomized_residue] = 0
         pop = pop.bool()
         self.indep.seq         = self.indep.seq[pop]
-        self.indep.xyz   = self.indep.xyz[pop]
+        self.indep.xyz         = self.indep.xyz[pop]
         self.indep.idx     = self.indep.idx[pop]
         self.indep.same_chain  = self.indep.same_chain[pop][:, pop]
         self.indep.bond_feats = self.indep.bond_feats[pop][:, pop].long()

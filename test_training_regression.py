@@ -132,7 +132,7 @@ class ModelInputs(unittest.TestCase):
         # replacing something.
         assert old_task in self_cond_arg_string
         self_cond_arg_string = self_cond_arg_string.replace(old_task, new_task)
-        run_regression(self_cond_arg_string, 'model_input_atomize', call_number=3)
+        run_regression(self, self_cond_arg_string, 'model_input_atomize', call_number=3)
 
 class DataloaderToCalcLoss(unittest.TestCase):
     def test_no_self_cond_loss(self):
