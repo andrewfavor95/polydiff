@@ -96,12 +96,7 @@ class TestDistributed(unittest.TestCase):
 class ModelInputs(unittest.TestCase):
     def test_no_self_cond(self):
         os.environ['MASTER_PORT'] = '12318'
-        self.run_regression(arg_string, 'model_input_no_self_cond')
-
-
-    def test_no_self_cond_loss(self):
-        os.environ['MASTER_PORT'] = '12319'
-        self.run_regression(arg_string, 'loss_no_self_cond', call_number=2, assert_loss=True)
+        run_regression(self, arg_string, 'model_input_no_self_cond')
 
     def test_self_cond_tp1(self):
         os.environ['MASTER_PORT'] = '12320'
@@ -113,7 +108,7 @@ class ModelInputs(unittest.TestCase):
         # replacing something.
         assert old_self_cond in self_cond_arg_string
         self_cond_arg_string = self_cond_arg_string.replace(old_self_cond, new_self_cond)
-        self.run_regression(self_cond_arg_string, 'model_input_self_cond_tp1')
+        run_regression(self, self_cond_arg_string, 'model_input_self_cond_tp1')
 
     def test_self_cond_t(self):
         os.environ['MASTER_PORT'] = '12321'
@@ -125,80 +120,85 @@ class ModelInputs(unittest.TestCase):
         # replacing something.
         assert old_self_cond in self_cond_arg_string
         self_cond_arg_string = self_cond_arg_string.replace(old_self_cond, new_self_cond)
-        self.run_regression(self_cond_arg_string, 'model_input_self_cond_t', call_number=2)
+        run_regression(self, self_cond_arg_string, 'model_input_self_cond_t', call_number=2)
+
+class DataloaderToCalcLoss(unittest.TestCase):
+    def test_no_self_cond_loss(self):
+        os.environ['MASTER_PORT'] = '12319'
+        run_regression(self, arg_string, 'loss_no_self_cond', call_number=2, assert_loss=True)
 
 
-    # Example regression test, with one faked return value from the model.
-    def run_regression(self, arg_string, golden_name, call_number=1, assert_loss=False):
-        # This test must be run on a CPU.
-        assert torch.cuda.device_count() == 0
-        run_inference.make_deterministic()
-        # Uncomment to assert test is checking the appropriate things.
-        # run_inference.make_deterministic(1)
-        from arguments import get_args
+# Example regression test, with one faked return value from the model.
+def run_regression(self, arg_string, golden_name, call_number=1, assert_loss=False):
+    # This test must be run on a CPU.
+    assert torch.cuda.device_count() == 0
+    run_inference.make_deterministic()
+    # Uncomment to assert test is checking the appropriate things.
+    # run_inference.make_deterministic(1)
+    from arguments import get_args
 
-        split_args = shlex.split(arg_string)
-        all_args = get_args(split_args)
+    split_args = shlex.split(arg_string)
+    all_args = get_args(split_args)
 
-        func_sig = signature(RoseTTAFoldModule.forward)
-        train = train_multi_deep.make_trainer(*all_args)
-        loss_func_sig = signature(train.calc_loss)
-        with mock.patch.object(train, "init_model") as submethod_mocked:
-            with mock.patch.object(train, "calc_loss") as calc_loss_mocked:
+    func_sig = signature(RoseTTAFoldModule.forward)
+    train = train_multi_deep.make_trainer(*all_args)
+    loss_func_sig = signature(train.calc_loss)
+    with mock.patch.object(train, "init_model") as submethod_mocked:
+        with mock.patch.object(train, "calc_loss") as calc_loss_mocked:
 
-                def side_effect(*args, **kwargs):
-                    side_effect.call_count += 1
-                    if side_effect.call_count < call_number:
-                        ic(kwargs.keys())
-                        run_inference.make_deterministic()
-                        if 'xyz' in kwargs:
-                            xyz = kwargs['xyz']
-                        else:
-                            xyz = args[4] # [1, L, 36 3]
-                        L = xyz.shape[1]
-                        px0_xyz = xyz[None,:,:,:3].repeat(40, 1, 1, 1, 1)
-                        px0_xyz = torch.normal(0, 1, px0_xyz.shape) + px0_xyz
-                        logits = (
-                            torch.normal(0, 1, (1, 61, L, L)),
-                            torch.normal(0, 1, (1, 61, L, L)),
-                            torch.normal(0, 1, (1, 37, L, L)),
-                            torch.normal(0, 1, (1, 19, L, L)),
-                        )
-                        logits_aa = torch.normal(0, 1, (1, 80, L))
-                        logits_pae = torch.normal(0, 1, (1, 64, L, L))
-                        logits_pde = torch.normal(0, 1, (1, 64, L, L))
-                        alpha_s = torch.normal(0, 1, (40, 1, L, 20, 2))
-                        xyz_allatom = torch.normal(0, 1, (1, L, 36, 3))
-                        lddt = torch.normal(0, 1, (1, 50, L))
-                        return logits, logits_aa, logits_pae, logits_pde, px0_xyz, alpha_s, xyz_allatom, lddt, None, None, None
+            def side_effect(*args, **kwargs):
+                side_effect.call_count += 1
+                if side_effect.call_count < call_number:
+                    ic(kwargs.keys())
+                    run_inference.make_deterministic()
+                    if 'xyz' in kwargs:
+                        xyz = kwargs['xyz']
                     else:
-                        raise CallException('called')
-                side_effect.call_count = 0
-                mymock_method = mock.MagicMock()
-                mymock_method.side_effect = side_effect
-                calc_loss_mocked.side_effect = CallException('called calc_loss')
+                        xyz = args[4] # [1, L, 36 3]
+                    L = xyz.shape[1]
+                    px0_xyz = xyz[None,:,:,:3].repeat(40, 1, 1, 1, 1)
+                    px0_xyz = torch.normal(0, 1, px0_xyz.shape) + px0_xyz
+                    logits = (
+                        torch.normal(0, 1, (1, 61, L, L)),
+                        torch.normal(0, 1, (1, 61, L, L)),
+                        torch.normal(0, 1, (1, 37, L, L)),
+                        torch.normal(0, 1, (1, 19, L, L)),
+                    )
+                    logits_aa = torch.normal(0, 1, (1, 80, L))
+                    logits_pae = torch.normal(0, 1, (1, 64, L, L))
+                    logits_pde = torch.normal(0, 1, (1, 64, L, L))
+                    alpha_s = torch.normal(0, 1, (40, 1, L, 20, 2))
+                    xyz_allatom = torch.normal(0, 1, (1, L, 36, 3))
+                    lddt = torch.normal(0, 1, (1, 50, L))
+                    return logits, logits_aa, logits_pae, logits_pde, px0_xyz, alpha_s, xyz_allatom, lddt, None, None, None
+                else:
+                    raise CallException('called')
+            side_effect.call_count = 0
+            mymock_method = mock.MagicMock()
+            mymock_method.side_effect = side_effect
+            calc_loss_mocked.side_effect = CallException('called calc_loss')
 
-                submethod_mocked.return_value = mymock_method, mock.MagicMock(), mock.MagicMock(), mock.MagicMock(), 0
-                train.group_name = golden_name
-                try:
-                    train.run_model_training(torch.cuda.device_count())
-                except CallException:
-                    print("Called!")
-                torch.distributed.destroy_process_group()
+            submethod_mocked.return_value = mymock_method, mock.MagicMock(), mock.MagicMock(), mock.MagicMock(), 0
+            train.group_name = golden_name
+            try:
+                train.run_model_training(torch.cuda.device_count())
+            except CallException:
+                print("Called!")
+            torch.distributed.destroy_process_group()
 
-                mocked_method = mymock_method
-                if assert_loss:
-                    mocked_method = calc_loss_mocked
-                    func_sig = loss_func_sig
+            mocked_method = mymock_method
+            if assert_loss:
+                mocked_method = calc_loss_mocked
+                func_sig = loss_func_sig
 
-                args, kwargs = mocked_method.call_args
-                if not assert_loss:
-                    args = (None,) + args
-                argument_binding = func_sig.bind(*args, **kwargs)
-                argument_map = argument_binding.arguments
-                argument_map = tensor_util.cpu(argument_map)
-                cmp = partial(tensor_util.cmp, atol=1e-3, rtol=0)
-                test_utils.assert_matches_golden(self, golden_name, argument_map, rewrite=REWRITE, custom_comparator=cmp)
+            args, kwargs = mocked_method.call_args
+            if not assert_loss:
+                args = (None,) + args
+            argument_binding = func_sig.bind(*args, **kwargs)
+            argument_map = argument_binding.arguments
+            argument_map = tensor_util.cpu(argument_map)
+            cmp = partial(tensor_util.cmp, atol=1e-3, rtol=0)
+            test_utils.assert_matches_golden(self, golden_name, argument_map, rewrite=REWRITE, custom_comparator=cmp)
 
 class Loss(unittest.TestCase):
     def test_loss_grad(self):
