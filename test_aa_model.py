@@ -73,12 +73,10 @@ class AAModelTestCase(unittest.TestCase):
         atomized_residue_lengths = torch.sum(atom_mask[input_str_mask], dim=-1)
         if terminus:
             self.assertEqual(residue_atom_bonds_indices.shape[0], 2, msg="terminal contiguous motifs should only have 1 bond to protein ((i, j), (j, i))")
-            self.assertEqual(residue_atom_bonds_indices[0,0], residue_atom_bonds_indices[1,1], msg="terminal contiguous motifs should only have 1 bond to protein ((i, j), (j, i))")
-            self.assertEqual(residue_atom_bonds_indices[0,1], residue_atom_bonds_indices[1,0], msg="terminal contiguous motifs should only have 1 bond to protein ((i, j), (j, i))")
         elif discontiguous:
             num_residue_atom_bonds = 4*atomized_residue_lengths.shape[0] # 2 bonds for each atomized residue and then two orderings (i, j), (j, i)
             self.assertEqual(residue_atom_bonds_indices.shape[0], num_residue_atom_bonds, msg="nonterminal dicontiguous motif has correct bonds to protein")
-            rf2aa.tensor_util.assert_equal(residue_atom_bonds, residue_atom_bonds.T)
+        rf2aa.tensor_util.assert_equal(residue_atom_bonds, residue_atom_bonds.T)
         atomized_residue_lengths = torch.sum(atom_mask[input_str_mask], dim=-1)
         
         if not discontiguous:
