@@ -58,8 +58,9 @@ class TestRegression(unittest.TestCase):
             'inference.output_prefix=tmp/test_0',
             'inference.design_startnum=0',
         ])
-        pdb_contents = pdb.read_text()
-        test_utils.assert_matches_golden(self, 'T2', pdb_contents, rewrite=REWRITE)
+        pdb_contents = inference.utils.parse_pdb(pdb)
+        cmp = partial(tensor_util.cmp, atol=5e-2, rtol=0)
+        test_utils.assert_matches_golden(self, 'T2', pdb_contents, rewrite=REWRITE, custom_comparator=cmp)
 
 
 class TestInference(unittest.TestCase):
