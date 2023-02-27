@@ -7,6 +7,7 @@ import os, argparse, glob
 import numpy as np
 import pandas as pd
 from icecream import ic
+from tqdm import tqdm
 
 def main():
     parser = argparse.ArgumentParser()
@@ -18,7 +19,7 @@ def main():
 
     print('loading run metadata (base metrics)')
     records = []
-    for fn in filenames:
+    for fn in tqdm(filenames):
         name = os.path.basename(fn).replace('.trb','')
         trb = np.load(fn, allow_pickle=True)
 

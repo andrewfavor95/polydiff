@@ -30,7 +30,7 @@ def main():
 
     # subdivide designs
     if args.subdivide == 'none':
-        filenames_list = sorted(glob.glob(args.datadir+'/*.pdb'))
+        filenames_list = [('none', sorted(glob.glob(args.datadir+'/*.pdb')))]
     elif args.subdivide == 'cond':
         pattern = re.compile('.*(cond\d+).*')
         conditions = np.unique([pattern.findall(fn)[0] for fn in glob.glob(args.datadir+'/*.pdb')])

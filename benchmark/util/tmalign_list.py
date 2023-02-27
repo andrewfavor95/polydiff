@@ -3,8 +3,11 @@ import numpy as np
 
 p = argparse.ArgumentParser()
 p.add_argument('list', help='List of pairs of PDBs')
+p.add_argument('--cautious', action='store_true', default=False, help='List of pairs of PDBs')
 args = p.parse_args()
 args.out = args.list+'.out'
+
+assert not (args.cautious and os.path.exists(args.out))
 
 with open(args.list) as f:
     pairs = [l.strip().split() for l in f.readlines()]

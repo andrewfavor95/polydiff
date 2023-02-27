@@ -28,7 +28,7 @@ import rf2aa.chemical
 from rf2aa.parsers import load_ligand_from_pdb
 
 
-def parse_args():
+def parse_args(in_args):
     argparser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 
     argparser.add_argument( "--pdb", type=str, default="", help='The name of a pdb file to run this metric on.' )
@@ -38,15 +38,15 @@ def parse_args():
     argparser.add_argument( "--suffix", type=str, default="_FR", help='suffix to add, need to include _ sign' )
     argparser.add_argument( "--use_genpot", type=bool, default="False", help='use genpot? default use beta_nov16' )
     argparser.add_argument( "--cache", type=str, default="./tmp/", help='cache directory for psipred SSpred etc' )
-    args = argparser.parse_args()    
+    argparser.add_argument( "--constraint_sd", type=float, default=1.0, help='strength of the constraints' )
+    args = argparser.parse_args(in_args)
 
     if args.pdb is None and args.list is None:
         sys.exit('ERROR: one of --pdb or --list is required.')
 
     return args
 
-def main():
-    args = parse_args()
+def main(args):
 
     if args.pdb:
         filenames = [args.pdb]
@@ -117,7 +117,7 @@ def main():
         t0 = time.time()
             
         pose = pose_from_file(fn)
-        designed_pose = design(pose, dat['H_bond_atoms'], dat['lig_res_num'])
+        designed_pose = design(pose, dat['H_bond_atoms'], dat['lig_res_num'], args.constraint_sd)
 
         outname = f"{args.outdir}{dat['tag']}{args.suffix}"
         designed_pose.dump_pdb(f'{outname}.pdb')
@@ -137,7 +137,7 @@ def main():
         df.to_csv(args.outcsv)
 
 
-def design(pose, heavy_atms, ligand_res_number):
+def design(pose, heavy_atms, ligand_res_number, constraint_sd):
 
     t0 = time.time()
    
@@ -498,7 +498,7 @@ def design(pose, heavy_atms, ligand_res_number):
     design_task.setup()
     print('setup xml')
 
-    cst_list = get_all_atom_close_csts( pose, ligand_res_number, bb_only=False, sd=1.0, no_ligand_cst=True)
+    cst_list = get_all_atom_close_csts( pose, ligand_res_number, bb_only=False, sd=constraint_sd, no_ligand_cst=False)
     for cst in cst_list:
         pose.add_constraint(cst)
     print('added cst')
@@ -565,7 +565,7 @@ def get_all_atom_close_csts(pose, ligand_res_number, bb_only=False, sd=1.0, no_l
                     continue    
                 best_dist = 11
                 cst = ""
-                for at_j in range(1, pose.residue(resj).natoms() + 1):
+                for at_j in range(1, pose.residue(ligand).natoms() + 1):
                     if "H" in pose.residue(ligand).atom_name(at_j).strip():
                         continue
                     if pose.residue(resi).xyz("CA").distance_squared(pose.residue(ligand).xyz(pose.residue(ligand).atom_name(at_j).strip())) >= 100:
@@ -647,5 +647,6 @@ def score_dict_from_pdb(fn):
     return record
 
 if __name__ == '__main__':
-    main()
+    args = parse_args(None)
+    main(args)
 

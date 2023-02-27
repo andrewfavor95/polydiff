@@ -427,6 +427,7 @@ def main():
         if not os.path.exists(trbname):
             # strip the mpnn suffix
             trbname = re.sub('_\d+\.trb$', '.trb', trbname)
+        assert os.path.exists(trbname), f'{trbname} does not exist'
         if os.path.exists(trbname): 
             trb = np.load(trbname,allow_pickle=True)
 

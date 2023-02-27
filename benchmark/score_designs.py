@@ -26,12 +26,17 @@ def main():
     parser.add_argument('--no_logs', dest='keep_logs', action="store_false", default=True, help='Don\'t keep slurm logs.')
     parser.add_argument('--pipeline', '-P', action='store_true', default=False, help='Pipeline mode: submit the next script to slurm with a dependency on jobs from this script.')
     parser.add_argument('-r', '--run', default='af2', help='Comma-separated (no whitespace) list of scoring scripts to run (e.g. "af2,pyrosetta"). Can contain any of {"af2", pyrosetta", "chemnet", "rosettalig"}')
+    parser.add_argument('--trb_dir', type=str, help='Folder containing .trb files (if not same as pdb folder)')
+    parser.add_argument('--filenames', type=str, help='A path to a list of PDBs to score, rather than scoring everything in datadir')
 
     args, unknown = parser.parse_known_args()
     if len(unknown)>0:
         print(f'WARNING: Unknown arguments {unknown}')
 
-    filenames = sorted(glob.glob(args.datadir+'/*.pdb'))
+    if args.filenames:
+        filenames = [l.strip() for l in open(args.filenames).readlines()]
+    else:
+        filenames = sorted(glob.glob(args.datadir+'/*.pdb'))
     if len(filenames)==0: sys.exit('No pdbs to score. Exiting.')
 
     args.run = args.run.split(',')
@@ -50,6 +55,7 @@ def main():
                     print(filenames[j], file=outf)
             print(f'source activate /software/conda/envs/PPI_design; python {script_dir}/util/af2_metrics.py --use_ptm '\
                   f'--outcsv {args.datadir}/af2_metrics.csv.{i} '\
+                  f'--trb_dir {args.trb_dir} '\
                   f'{tmp_fn}', file=job_list_file)
 
         # submit job

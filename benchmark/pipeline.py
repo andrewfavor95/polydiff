@@ -24,7 +24,12 @@ def main():
     parser.add_argument('--af2_gres', type=str, default='',help='--gres argument for alphfold.  If set to the empty string, the arguments used for hyperparameter sweeping are passed to the score_designs.py script')
     parser.add_argument('--in_proc', dest='in_proc', action="store_true", default=False, help='Do not submit slurm array job, run on current node.')
     parser.add_argument('--af2_chunk', dest='af2_chunk', default=100, type=int, help='Do not submit slurm array job, run on current node.')
+    parser.add_argument('--score_scripts', dest='score_scripts', default=None)
     args, unknown = parser.parse_known_args()
+    score_scripts = "af2,pyrosetta"
+    if args.use_ligand:
+        score_scripts = "af2,pyrosetta,chemnet,rosettalig"
+    score_scripts = args.score_scripts or score_scripts
     passed_on_args = '--in_proc' if args.in_proc else ''
     global IN_PROC
     IN_PROC = args.in_proc
@@ -65,27 +70,27 @@ def main():
         else:
             run_pipeline_step(f'{script_dir}thread_mpnn.py {outdir}')
 
-    print('Initiating scoring')
-    af2_args = arg_str
-    if args.af2_gres:
-        af2_args = f' --gres {args.af2_gres}'
-    af2_args += f' {passed_on_args}'
-    if args.af2_unmpnned:
-        jobid_score = run_pipeline_step(
-            f'{script_dir}score_designs.py --run "af2,pyrosetta" --chunk {args.af2_chunk} '\
-            f'{outdir}/ {af2_args}'
-        )
-    if args.use_ligand:
-        mpnn_dir = f'{outdir}/ligmpnn'
-        score_scripts = "af2,pyrosetta,chemnet,rosettalig"
-    else:
-        mpnn_dir = f'{outdir}/mpnn'
-        score_scripts = "af2,pyrosetta"
+    if args.start_step in ['sweep', 'mpnn', 'thread_mpnn', 'score']:
+        print('Initiating scoring')
+        af2_args = arg_str
+        if args.af2_gres:
+            af2_args = f' --gres {args.af2_gres}'
+        af2_args += f' --trb_dir {outdir}'
+        af2_args += f' {passed_on_args}'
+        if args.af2_unmpnned:
+            jobid_score = run_pipeline_step(
+                f'{script_dir}score_designs.py --run "af2,pyrosetta" --chunk {args.af2_chunk} '\
+                f'{outdir}/ {af2_args}'
+            )
+        if args.use_ligand:
+            mpnn_dir = f'{outdir}/ligmpnn'
+        else:
+            mpnn_dir = f'{outdir}/mpnn'
 
-    jobid_score_mpnn = run_pipeline_step(
-        f'{script_dir}score_designs.py --run "{score_scripts}" --chunk {args.af2_chunk} '\
-        f'{mpnn_dir} {af2_args}'
-    )
+        jobid_score_mpnn = run_pipeline_step(
+            f'{script_dir}score_designs.py --run "{score_scripts}" --chunk {args.af2_chunk} '\
+            f'{mpnn_dir} {af2_args}'
+        )
 
     if job_id_tmalign:
         print('Waiting for TM-align jobs to finish...')

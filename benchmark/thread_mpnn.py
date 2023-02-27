@@ -61,14 +61,15 @@ def main():
         parsed_pdb = inference.utils.parse_pdb(fn)
         xyz_prot = torch.tensor(parsed_pdb['xyz'])
         mask_prot = torch.tensor(parsed_pdb['mask'])
+        with open(args.datadir+'/'+name+'.trb','rb') as f:
+            trb = pickle.load(f)
+        idx_motif = trb['con_hal_idx0']
         idx_prot = torch.tensor([x[1] for x in parsed_pdb['pdb_idx']])
 
         L_prot, N_atoms_prot = xyz_prot.shape[:2]
         Ls = [L_prot]
 
         if args.use_ligand:
-            with open(args.datadir+'/'+name+'.trb','rb') as f:
-                trb = pickle.load(f)
             lig_name = trb['config']['inference']['ligand']
 
             # load ligand from design
@@ -110,6 +111,7 @@ def main():
 
         mask = torch.zeros((L, rf2aa.chemical.NTOTAL)).bool()
         mask[:L_prot, :4] = mask_prot[:, :4] # omit sidechain atoms
+        mask[idx_motif, :14] = mask_prot[idx_motif, :14]
         mask[L_prot:, 1] = mask_sm[0]
 
         bond_feats = torch.zeros((L,L))
@@ -126,7 +128,7 @@ def main():
                 seq = lines[2*i + 3].strip() # 2nd seq is 1st design
                 seq_num = torch.tensor([rf2aa.util.aa2num[rf2aa.util.aa_123[a]] for a in seq])
                 pdbstr = rf2aa.util.writepdb(
-                    args.outdir+name+f"_{i}.pdb",
+                    os.path.join(args.outdir, name+f"_{i}.pdb"),
                     atoms = xyz,
                     atom_mask = mask,
                     seq = torch.cat([seq_num, msa_sm]).long(),
