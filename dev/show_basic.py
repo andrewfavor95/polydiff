@@ -20,7 +20,7 @@ def main(
     if not keep:
         analyze.sak.clear(cmd)
         cmd.do('@~/.pymolrc')
-    structures = analyze.show_motif_simple(srow, srow['name'], traj_types=['des'], show_af2=False)
+    structures = analyze.show_motif_simple(srow, srow['name'], traj_types=['des', 'X0', 'Xt'], show_af2=False)
     native = structures['native']
     des = structures['trajs'][0]
     cmd.hide('everything', native.name)

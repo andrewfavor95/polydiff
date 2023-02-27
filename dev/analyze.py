@@ -257,6 +257,10 @@ def load_af2(row, name=None):
     cmd.load(path, name)
     return name
 
+def get_ligmpnn_path(row):
+    rundir = row['rundir']
+    return os.path.join(rundir, 'ligmpnn', f"{row['name']}_{row['mpnn_index']}.pdb")
+
 
 def to_resi(chain_idx):
     return f'resi {"+".join(str(i) for _, i in chain_idx)}'
@@ -1023,8 +1027,8 @@ def show_paper_pocket_af2(row, b=None, des=True, ligand=False, traj_types=None, 
         cmd.color('paper_teal', f'{native.name} and (elem C or name n)')
         cmd.hide('everything', f'{native.name} and not {native.motif_sele()}')
         # trb = get_trb(row)
-        cmd.show('licorice', f'resn {row["inference.ligand"]}')
-        cmd.color('orange', f'resn {row["inference.ligand"]} and elem C')
+        cmd.show('licorice', f'{native.name} and resn {row["inference.ligand"]}')
+        cmd.color('orange', f'{native.name} and resn {row["inference.ligand"]} and elem C')
 
     cmd.set('cartoon_transparency', 0)
     if show_af2:
@@ -1137,3 +1141,33 @@ def add_ligand_dist(df, c_alpha=False):
     return df.merge(designs[groupers + [name]], on=groupers, how='inner')
 
 
+
+def show_df(data, cols=['af2_pae_mean', 'rmsd_af2_des'], n=999):
+    i=1
+    for _, row in itertools.islice(data.iterrows(), n):
+        rmsd_too_high = row['rmsd_af2_des'] > 2
+        pae_too_high =  row['af2_pae_mean'] > 5
+        sc = not rmsd_too_high and not pae_too_high
+        key_val = [f'i_{i}']
+        for k in cols:
+            v = row[k]
+            if not isinstance(v, str):
+                v = f'{v:.1f}'
+            key_val.append(f'{k}_{v}')
+            print(key_val)
+        design_name = '__'.join(key_val)
+        print(design_name)
+        structures = show_paper_pocket_af2(row, design_name)
+        for s in structures:
+            if s:
+                cmd.set('grid_slot', i, s.name)
+        i += 1
+        af2, af2_scaffold, des, motif = structures
+        cmd.super(f'{des.name} and name ca', f'{af2.name} and name ca')
+        if rmsd_too_high and pae_too_high:
+            cmd.color('purple', af2_scaffold.name)
+        elif rmsd_too_high: 
+            cmd.color('red', af2_scaffold.name)
+        elif pae_too_high: 
+            cmd.color('blue', af2_scaffold.name)
+    cmd.set('grid_mode', 1)
