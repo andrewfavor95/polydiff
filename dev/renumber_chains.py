@@ -11,6 +11,9 @@ import fire
 from pdbtools import *
 
 def main(input_dir, output_dir=None, prefix='', cautious=True):
+    '''
+    For each PDB in the input directory, create a PDB where the ligand is on chain B.
+    '''
     if output_dir is None:
         output_dir = os.path.join(input_dir, 'renumbered_chains')
     print(output_dir)

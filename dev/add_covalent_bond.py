@@ -70,6 +70,10 @@ def get_hetatm(pdb, chain, atom_id):
     raise Exception('atom not found')
 
 def main(input_dir, ref_ch, ref_res, ref_prot_atom, ref_het_atom, output_dir=None, prefix='', cautious=False):
+    '''
+    For each PDB in the input directory, create a PDB with a protein-ligand bond specified by
+    ref_ch, ref_res, ref_prot_atom, and ref_het_atom.
+    '''
     if output_dir is None:
         output_dir = os.path.join(input_dir, 'bonded')
     print(output_dir)

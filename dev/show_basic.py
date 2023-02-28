@@ -9,6 +9,10 @@ def main(
     rf_diffusion_dir='/home/ahern/projects/dev_rf_diffusion',
     keep=False
     ):
+    '''
+    Shows a diffusion trajectory, native motif, and AF2 (if present) for a given design.
+    If the design pdb is /dir/pdb_0.pdb, call this function with design=/dir/pdb_0
+    '''
 
     sys.path.insert(0, rf_diffusion_dir)
     from dev import analyze

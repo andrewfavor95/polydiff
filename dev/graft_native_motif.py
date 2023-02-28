@@ -48,6 +48,9 @@ def get_trb(pdb):
     return pdb[:-4] + '.trb'
 
 def main(input_dir, output_dir=None, prefix=''):
+    '''
+    For each PDB in the input directory, create a PDB with the native motif sidechains grafted onto the design.
+    '''
     if output_dir is None:
         output_dir = os.path.join(input_dir, 'grafted')
     print(output_dir)

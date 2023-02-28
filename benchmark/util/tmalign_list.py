@@ -3,7 +3,7 @@ import numpy as np
 
 p = argparse.ArgumentParser()
 p.add_argument('list', help='List of pairs of PDBs')
-p.add_argument('--cautious', action='store_true', default=False, help='List of pairs of PDBs')
+p.add_argument('--cautious', action='store_true', default=False, help='If the expected output already exists, do no recreate it')
 args = p.parse_args()
 args.out = args.list+'.out'
 
