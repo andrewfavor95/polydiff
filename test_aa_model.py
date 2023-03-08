@@ -48,13 +48,12 @@ class AAModelTestCase(unittest.TestCase):
         input_indep = copy.deepcopy(indep)
         input_mask = copy.deepcopy(input_str_mask)
 
-        masks_1d = {"input_str_mask": input_str_mask}
-        atomizer = AtomizeResidues(indep, masks_1d)
+        atomizer = AtomizeResidues(indep, input_str_mask)
         atom_mask = rf2aa.util.allatom_mask[indep.seq]
         atom_mask[:, 14:] = False # no Hs
         atomizer.featurize_atomized_residues(atom_mask)
-        indep, masks_1d = atomizer.return_input_tensors()
-        num_atoms = torch.sum(atom_mask[input_str_mask])
+        indep, input_str_mask, input_seq_mask = atomizer.return_input_tensors()
+        num_atoms = torch.sum(atom_mask[input_mask])
 
         # original length, remove the residue nodes that are popped and add new atom nodes for those residues
         new_protein_L = L - torch.sum(input_mask)
@@ -70,14 +69,13 @@ class AAModelTestCase(unittest.TestCase):
         # assert some edge cases are handled correctly in same_chain and bond_feats
         residue_atom_bonds = (indep.bond_feats == 6)
         residue_atom_bonds_indices = residue_atom_bonds.nonzero()
-        atomized_residue_lengths = torch.sum(atom_mask[input_str_mask], dim=-1)
+        atomized_residue_lengths = torch.sum(atom_mask[input_mask], dim=-1)
         if terminus:
             self.assertEqual(residue_atom_bonds_indices.shape[0], 2, msg="terminal contiguous motifs should only have 1 bond to protein ((i, j), (j, i))")
         elif discontiguous:
             num_residue_atom_bonds = 4*atomized_residue_lengths.shape[0] # 2 bonds for each atomized residue and then two orderings (i, j), (j, i)
             self.assertEqual(residue_atom_bonds_indices.shape[0], num_residue_atom_bonds, msg="nonterminal dicontiguous motif has correct bonds to protein")
         rf2aa.tensor_util.assert_equal(residue_atom_bonds, residue_atom_bonds.T)
-        atomized_residue_lengths = torch.sum(atom_mask[input_str_mask], dim=-1)
         
         if not discontiguous:
             for i in range(atomized_residue_lengths.shape[0]-1):

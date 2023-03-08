@@ -35,6 +35,7 @@ inference:
   deterministic: False
   zero_weights: False
   ligand: null
+  atomized_output: False
 
 contigmap:
   contigs: ['20', 'A3-23', '30']

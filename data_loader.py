@@ -38,8 +38,6 @@ import pandas as pd
 import run_inference
 import aa_model
 
-import run_inference
-import aa_model
 
 base_dir = "/projects/ml/TrRosetta/PDB-2021AUG02"
 compl_dir = "/projects/ml/RoseTTAComplex"
@@ -1584,13 +1582,16 @@ class DistilledDataset(data.Dataset):
             print("Triple contact not found, not atomizing this example")
             masks_1d['is_atomize_example'] = False
         if masks_1d['is_atomize_example']:
-            atomizer = aa_model.AtomizeResidues(indep, masks_1d)
+            atomizer = aa_model.AtomizeResidues(indep, masks_1d['input_str_mask'])
             atomizer.featurize_atomized_residues(atom_mask)
-            indep, masks_1d = atomizer.return_input_tensors()
-        is_masked_seq = ~masks_1d['input_seq_mask']
-        is_diffused = ~masks_1d['input_str_mask']
+            indep, input_str_mask, input_seq_mask = atomizer.return_input_tensors()
+        else:
+            input_seq_mask = masks_1d['input_seq_mask']
+            input_str_mask = masks_1d['input_str_mask']
+        is_masked_seq = ~input_seq_mask
+        is_diffused = ~input_str_mask
         if not masks_1d["is_atomize_example"]:
-            assert torch.all(is_masked_seq==is_diffused), "if no residues have been atomized, all nodes that are being diffused should be masked in sequence space"        
+            assert torch.all(is_masked_seq==is_diffused), "if no residues have been atomized, all residues that are being diffused should be masked in sequence space"
         aa_model.centre(indep, is_diffused)
         t = random.randint(1, self.diffuser.T)
         indep_diffused_tp1_t, t_list = aa_model.diffuse(self.conf, self.diffuser, indep, is_diffused, t)

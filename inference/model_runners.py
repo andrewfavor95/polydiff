@@ -345,8 +345,9 @@ class Sampler:
         self.contig_map = self.construct_contig(self.target_feats)
 
         indep = self.model_adaptor.make_indep(self._conf.inference.input_pdb, self._conf.inference.ligand)
-        indep, is_diffused = self.model_adaptor.insert_contig(indep, self.contig_map)
+        indep, is_diffused, is_seq_masked = self.model_adaptor.insert_contig(indep, self.contig_map)
         self.is_diffused = is_diffused
+        self.is_seq_masked = is_seq_masked
         if self.diffuser_conf.partial_T:
             raise Exception('not implemented')
 
@@ -369,6 +370,7 @@ class Sampler:
             t_list=t_list,
             diffuse_sidechains=self.preprocess_conf.sidechain_input,
             include_motif_sidechains=self.preprocess_conf.motif_sidechain_input)
+
         xT = fa_stack[-1].squeeze()[:,:14,:]
         xt = torch.clone(xT)
         indep.xyz = xt
@@ -746,7 +748,6 @@ class NRBStyleSelfCond(Sampler):
                 indep.seq, num_classes=rf2aa.chemical.NAATOKENS).to(self.device).float()
         seq_t = torch.clone(seq_init)
         seq_in = torch.clone(seq_init)
-
         # B,N,L = xyz_t.shape[:3]
 
         ##################################
@@ -806,8 +807,8 @@ class NRBStyleSelfCond(Sampler):
 
             pseq_0 = torch.nn.functional.one_hot(
                 sampled_seq, num_classes=rf2aa.chemical.NAATOKENS).to(self.device).float()
-
-            pseq_0[~self.is_diffused] = seq_init[~self.is_diffused].to(self.device) # [L,22]
+            
+            pseq_0[~self.is_seq_masked] = seq_init[~self.is_seq_masked].to(self.device) # [L,22]
         else:
             # Sequence Diffusion
             pseq_0 = logits.squeeze()

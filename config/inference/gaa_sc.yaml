@@ -3,11 +3,13 @@ defaults:
 
 inference:
   output_prefix: debug/gaa
+  ckpt_path: /home/rohith/rf_diffusion/models/BFF_4.pt
   model_runner: NRBStyleSelfCond
   input_pdb: 'benchmark/input/gaa.pdb'
   ligand: 'LG1'
 
 contigmap:
   contigs: ['10-100,A518-518,10-100,A616-616,10-100,A404-404,10-100']
+  contig_atoms: "{'A518':'CG,OD1,OD2', 'A616':'CG,OD1,OD2','A404':'CG,OD1,OD2'}"
   length: 200-200
 

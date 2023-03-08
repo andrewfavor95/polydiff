@@ -108,46 +108,6 @@ def rename_ligand_atoms(ref_fn, out_fn):
     into output (design) pdb."""
 
     def is_H(atomname):
-        """Returns true if the first non-numeric character of `atomname` is 'H'
-        and any subsequent letter is uppercase."""
-        letters = ''.join([c for c in atomname.strip() if c.isalpha()])
-        return letters.startswith('H') and letters.isupper() # True for "HB", False for "Hg"
-
-    # get input ligand lines
-    with open(ref_fn) as f:
-        input_lig_lines = [line.strip() for line in f.readlines()
-                           if line.startswith('HETATM') and not is_H(line[12:16])]
-
-    # get output pdb file lines
-    with open(out_fn) as f:
-        lines = [line.strip() for line in f.readlines()]
-
-    # replace output ligand atom and residue names with those from input ligand
-    lines2 = []
-    i_input = 0
-    for line in lines:
-        if line.startswith('HETATM'):
-            # col 12-15: atom name; col 17-19: ligand name
-            lines2.append(line[:12] + input_lig_lines[i_input][12:20] + line[20:]) 
-            i_input += 1
-        else:
-            lines2.append(line)
-
-    # write new output pdb file
-    with open(out_fn,'w') as f:
-        for line in lines2:
-            print(line, file=f)
-
-
-        # TEMPORARY HACK (jue): Rename ligand and ligand atoms
-        if sampler._conf.inference.ligand:
-            rename_ligand_atoms(sampler._conf.inference.input_pdb, out_prefix+'.pdb')
-
-def rename_ligand_atoms(ref_fn, out_fn):
-    """Copies names of ligand residue and ligand heavy atoms from input pdb
-    into output (design) pdb."""
-
-    def is_H(atomname):
         """Returns true if a string starts with 'H' followed by non-letters (numbers)"""
         letters = ''.join([c for c in atomname.strip() if c.isalpha()])
         return letters=='H'
@@ -172,57 +132,94 @@ def rename_ligand_atoms(ref_fn, out_fn):
         for line in lines2:
             print(line, file=f)
 
+
 def sample_one(sampler, simple_logging=False):
-        # For intermediate output logging
-        indep = sampler.sample_init()
+    # For intermediate output logging
+    indep = sampler.sample_init()
 
-        denoised_xyz_stack = []
-        px0_xyz_stack = []
-        seq_stack = []
+    denoised_xyz_stack = []
+    px0_xyz_stack = []
+    seq_stack = []
 
-        rfo = None
+    rfo = None
 
-        # Loop over number of reverse diffusion time steps.
-        for t in range(int(sampler.t_step_input), sampler.inf_conf.final_step-1, -1):
-            if simple_logging:
-                e = '.'
-                if t%10 == 0:
-                    e = t
-                print(f'{e}', end='')
-            px0, x_t, seq_t, tors_t, plddt, rfo = sampler.sample_step(
-                t, indep, rfo)
-            # assert_that(indep.xyz.shape).is_equal_to(x_t.shape)
-            rf2aa.tensor_util.assert_same_shape(indep.xyz, x_t)
-            indep.xyz = x_t
-                
-            aa_model.assert_has_coords(indep.xyz, indep)
-            # missing_backbone = torch.isnan(indep.xyz).any(dim=-1)[...,:3].any(dim=-1)
-            # prot_missing_bb = missing_backbone[~indep.is_sm]
-            # sm_missing_ca = torch.isnan(indep.xyz).any(dim=-1)[...,1]
-            # try:
-            #     assert not prot_missing_bb.any(), f'{t}:prot_missing_bb {prot_missing_bb}'
-            #     assert not sm_missing_ca.any(), f'{t}:sm_missing_ca {sm_missing_ca}'
-            # except Exception as e:
-            #     print(e)
-            #     import ipdb
-            #     ipdb.set_trace()
-            px0_xyz_stack.append(px0)
-            denoised_xyz_stack.append(x_t)
-            seq_stack.append(seq_t)
-        
-        # Flip order for better visualization in pymol
-        denoised_xyz_stack = torch.stack(denoised_xyz_stack)
-        denoised_xyz_stack = torch.flip(denoised_xyz_stack, [0,])
-        px0_xyz_stack = torch.stack(px0_xyz_stack)
-        px0_xyz_stack = torch.flip(px0_xyz_stack, [0,])
+    # Loop over number of reverse diffusion time steps.
+    for t in range(int(sampler.t_step_input), sampler.inf_conf.final_step-1, -1):
+        if simple_logging:
+            e = '.'
+            if t%10 == 0:
+                e = t
+            print(f'{e}', end='')
+        px0, x_t, seq_t, tors_t, plddt, rfo = sampler.sample_step(
+            t, indep, rfo)
+        # assert_that(indep.xyz.shape).is_equal_to(x_t.shape)
+        rf2aa.tensor_util.assert_same_shape(indep.xyz, x_t)
+        indep.xyz = x_t
+            
+        aa_model.assert_has_coords(indep.xyz, indep)
+        # missing_backbone = torch.isnan(indep.xyz).any(dim=-1)[...,:3].any(dim=-1)
+        # prot_missing_bb = missing_backbone[~indep.is_sm]
+        # sm_missing_ca = torch.isnan(indep.xyz).any(dim=-1)[...,1]
+        # try:
+        #     assert not prot_missing_bb.any(), f'{t}:prot_missing_bb {prot_missing_bb}'
+        #     assert not sm_missing_ca.any(), f'{t}:sm_missing_ca {sm_missing_ca}'
+        # except Exception as e:
+        #     print(e)
+        #     import ipdb
+        #     ipdb.set_trace()
 
-        return indep, denoised_xyz_stack, px0_xyz_stack, seq_stack
+        px0_xyz_stack.append(px0)
+        denoised_xyz_stack.append(x_t)
+        seq_stack.append(seq_t)
+    
+    # deatomize features, if applicable
+    if (sampler.model_adaptor.atomizer is not None) and (not sampler.inf_conf.atomized_output):
+        indep, px0_xyz_stack, denoised_xyz_stack, seq_stack = \
+            deatomize_sampler_outputs(sampler, indep, px0_xyz_stack, denoised_xyz_stack, seq_stack)
+           
+    # Flip order for better visualization in pymol
+    denoised_xyz_stack = torch.stack(denoised_xyz_stack)
+    denoised_xyz_stack = torch.flip(denoised_xyz_stack, [0,])
+    px0_xyz_stack = torch.stack(px0_xyz_stack)
+    px0_xyz_stack = torch.flip(px0_xyz_stack, [0,])
+
+    return indep, denoised_xyz_stack, px0_xyz_stack, seq_stack
+
+def deatomize_sampler_outputs(sampler, indep, px0_xyz_stack, denoised_xyz_stack, seq_stack):
+    """Converts atomized residues back to residue-as-residue representation in
+    the outputs of a single design trajectory.
+
+    NOTE: `indep` will have `idx`, `bond_features`, `same_chain` updated to
+    de-atomized versions, but other features will remain unchanged (and
+    therefore become inconsistent).
+    """
+    px0_xyz_stack_new = []
+    denoised_xyz_stack_new = []
+    seq_stack_new = []
+    for i in range(len(px0_xyz_stack)):
+        seq_, xyz_, idx_, bond_feats_, same_chain_ = \
+            sampler.model_adaptor.atomizer.get_deatomized_features(seq_stack[i], px0_xyz_stack[i])
+        px0_xyz_stack_new.append(xyz_)
+
+        seq_, xyz_, idx_, bond_feats_, same_chain_ = \
+            sampler.model_adaptor.atomizer.get_deatomized_features(seq_stack[i], denoised_xyz_stack[i])
+        denoised_xyz_stack_new.append(xyz_)
+        seq_stack_new.append(seq_)
+
+    # these features are assumed to be the same on every iteration so just take the final one
+    indep.idx = idx_
+    indep.bond_feats = bond_feats_
+    indep.same_chain = same_chain_
+
+    return indep, px0_xyz_stack_new, denoised_xyz_stack_new, seq_stack_new
+
 
 def save_outputs(sampler, out_prefix, indep, denoised_xyz_stack, px0_xyz_stack, seq_stack):
     log = logging.getLogger(__name__)
     # Save outputs 
     os.makedirs(os.path.dirname(out_prefix), exist_ok=True)
     final_seq = seq_stack[-1]
+    ic(final_seq)
 
     if sampler._conf.seq_diffuser.seqdiff is not None:
         # When doing sequence diffusion the model does not make predictions beyond category 19
@@ -237,9 +234,10 @@ def save_outputs(sampler, out_prefix, indep, denoised_xyz_stack, px0_xyz_stack, 
     final_seq = torch.where((final_seq == 20) | (final_seq==21), 0, final_seq)
 
     # determine lengths of protein and ligand for correct chain labeling in output pdb
-    sm_mask = rf2aa.util.is_atom(final_seq)
-    chain_Ls = [len(sm_mask)-sm_mask.sum(), sm_mask.sum()] # assumes 1 protein followed by 1 ligand
-    
+    # sm_mask = rf2aa.util.is_atom(final_seq)
+    # chain_Ls = [len(sm_mask)-sm_mask.sum(), sm_mask.sum()] # assumes 1 protein followed by 1 ligand
+    chain_Ls = rf2aa.util.Ls_from_same_chain_2d(indep.same_chain)
+
     # pX0 last step
     out = f'{out_prefix}.pdb'
     aa_model.write_traj(out, denoised_xyz_stack[0:1], final_seq, indep.bond_feats, chain_Ls=chain_Ls)

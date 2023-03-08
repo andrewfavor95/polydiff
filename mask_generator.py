@@ -213,7 +213,7 @@ def get_diffusion_mask(
     
     L = xyz.shape[0]
     is_atomize_example = False
-    if random.uniform(0,1) < full_prop: #unconditional diffusion
+    if random.uniform(0,1) < full_prop: # unconditional diffusion
         is_motif = torch.zeros(L).bool()
         is_motif[is_sm] = True
         return is_motif, is_atomize_example

@@ -61,6 +61,21 @@ class TestRegression(unittest.TestCase):
         pdb_contents = inference.utils.parse_pdb(pdb)
         cmp = partial(tensor_util.cmp, atol=5e-2, rtol=0)
         test_utils.assert_matches_golden(self, 'T2', pdb_contents, rewrite=REWRITE, custom_comparator=cmp)
+    
+    def test_partial_sidechain(self):
+        run_inference.make_deterministic()
+        pdb, _ = infer([
+            'diffuser.T=2',
+            'inference.num_designs=1',
+            'inference.output_prefix=tmp/test_3',
+            'inference.design_startnum=0',
+            "contigmap.contigs=['1,A518-518,1']",
+            "+contigmap.contig_atoms=\"{'A518':'CG,OD1,OD2'}\"",
+            'contigmap.length=3-3'
+        ])
+        pdb_contents = inference.utils.parse_pdb(pdb)
+        cmp = partial(tensor_util.cmp, atol=5e-2, rtol=0)
+        test_utils.assert_matches_golden(self, 'partial_sc', pdb_contents, rewrite=REWRITE, custom_comparator=cmp)
 
 
 class TestInference(unittest.TestCase):
@@ -141,10 +156,9 @@ class TestInference(unittest.TestCase):
         is_motif_ref = torch.tensor(trb['con_ref_idx0'])
         n_motif = len(is_motif)
         
-
         input_motif_xyz = input_feats['xyz'][is_motif_ref]
         output_motif_xyz = output_feats['xyz'][is_motif]
-        atom_mask = input_feats['mask'][is_motif]
+        atom_mask = input_feats['mask'][is_motif_ref] # rk. should this be is_motif_ref?
         self.assertEqual(n_motif, 2)
 
         # Backbone only
@@ -163,6 +177,40 @@ class TestInference(unittest.TestCase):
                 torch.tensor(input_motif_xyz)[None],
                 torch.tensor(output_motif_xyz)[None],
                 torch.tensor(atom_mask)[None])
+        self.assertLess(rmsd, 0.02)
+
+    def test_partial_sidechain(self):
+        """
+        test that network atomizes protein
+        """
+        output_pdb, conf = infer([
+            'diffuser.T=3',
+            'inference.num_designs=1',
+            'inference.output_prefix=tmp/test_2',
+            "contigmap.contigs=['1,A518-518,1']",
+            "+contigmap.contig_atoms=\"{'A518':'CG,OD1,OD2'}\"",
+            'inference.design_startnum=0',
+            'inference.atomized_output=True',
+            'contigmap.length=3-3'
+        ])
+
+        input_feats = inference.utils.parse_pdb(conf.inference.input_pdb)
+        output_feats = inference.utils.parse_pdb(output_pdb)
+
+        trb = get_trb(conf)
+        is_motif = torch.tensor(trb['con_hal_idx0'])
+        is_motif_ref = torch.tensor(trb['con_ref_idx0'])
+        
+        input_motif_xyz = input_feats['xyz'][is_motif_ref]
+        atom_mask = input_feats['mask'][is_motif_ref]
+        output_xyz = trb['indep']['xyz']
+        is_sm = trb['indep']['is_sm']
+        
+        residue_to_atomize = input_motif_xyz[atom_mask]
+        post_atomized = output_xyz[is_sm, 1]
+        self.assertEqual(residue_to_atomize.shape, post_atomized.shape)
+        # hard coded to choose the atoms that are the motif 
+        rmsd, _ = rf2aa.util.kabsch(torch.tensor(residue_to_atomize)[-3:], torch.tensor(post_atomized)[-3:])
         self.assertLess(rmsd, 0.02)
 
 
