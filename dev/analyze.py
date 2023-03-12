@@ -45,17 +45,17 @@ def read_metrics(df_path, add_contig_rmsd=True):
     df['run'] = df['name'].apply(lambda x: x.split('_')[0])
     # df = df[df['run'] =='run2'].reset_index()
     import re
-    df['benchmark'] = [n[n.index('_')+1:n.index('_cond')] for n in df.name]
+    # df['benchmark'] = [n[n.index('_')+1:n.index('_cond')] for n in df.name]
 
     df['run'] = [n[:n.index('_')] for n in df.name]
     # For backwards compatibility
     model_key = 'inference.ckpt_path'
     if model_key not in df.columns:
         model_key = 'inference.ckpt_override_path'
-
-    models = df[model_key].unique()
-    common = common_prefix(models)
-    df['model'] = df[model_key].apply(lambda x: x[len(common):])
+    if model_key in df.columns:
+        models = df[model_key].unique()
+        common = common_prefix(models)
+        df['model'] = df[model_key].apply(lambda x: x[len(common):])
     #get_epoch  = lambda x: re.match('.*_(\w+).*', x).groups()[0]
 
     #df['model'] = df['inference.ckpt_path'].apply(get_epoch)
@@ -70,7 +70,7 @@ def combine(*df_paths, names=None):
         df = read_metrics(p)
         #_, base = os.path.split(p)
         root, _ = os.path.splitext(p)
-        root = root.split('/')[-2]
+        root = root.split('/')[-3]
         df['source'] = names[i] if names else root
         to_cat.append(df)
     return pd.concat(to_cat)
@@ -505,9 +505,9 @@ def show_motif(row, strat, traj_types='X0', show_af2=True, show_true=False):
     #return ructure(t,[]) for t,m in zip(trajs, traj_motifs)], 
     #return trajs, traj_motifs, whole_native, native, native
 
-def only_backbones():
+def only_backbones(o=False):
     cmd.hide('all')
-    cmd.show('licorice', '(name ca or name c or name n)')
+    cmd.show('licorice', f'(name ca or name c or name n{" or name o" if o else ""})')
 
 
 def get_spread(bench_des, key='contig_rmsd_af2'):
@@ -580,6 +580,11 @@ def make_row_from_traj(traj_prefix):
     
     synth_row['rundir'], synth_row['name'] = os.path.split(traj_prefix)
     synth_row['mpnn_index'] = 0
+    if '/mpnn/' in traj_prefix:
+        synth_row['mpnn_index'] = int(traj_prefix.split('_')[-1])
+        synth_row['rundir'] = os.path.dirname(synth_row['rundir'])
+        synth_row['name'] = '_'.join(synth_row['name'].split('_')[:-1])
+        
     synth_row['mpnn'] = True
     trb = get_trb(synth_row)
     # synth_row.update(trb['config'])
@@ -827,7 +832,7 @@ def get_native(row):
     native = utils.process_target(input_pdb, center=False, parse_hetatom=True)
     #print(native.keys())
     het_names = set([i['name'].strip() for i in native['info_het']])
-    assert len(het_names) == 1, f'more than 1 het: {het_names}'
+    assert len(het_names) <= 1, f'more than 1 het: {het_names}'
     return native['xyz_27'][:,:14], native['xyz_het']
     # return native['xyz_27'][native_motif_idx][:,:14]
 
@@ -1142,8 +1147,9 @@ def add_ligand_dist(df, c_alpha=False):
 
 
 
-def show_df(data, cols=['af2_pae_mean', 'rmsd_af2_des'], n=999):
+def show_df(data, cols=['af2_pae_mean', 'rmsd_af2_des'], traj_types=None, n=999):
     i=1
+    all_structures = []
     for _, row in itertools.islice(data.iterrows(), n):
         rmsd_too_high = row['rmsd_af2_des'] > 2
         pae_too_high =  row['af2_pae_mean'] > 5
@@ -1157,7 +1163,8 @@ def show_df(data, cols=['af2_pae_mean', 'rmsd_af2_des'], n=999):
             print(key_val)
         design_name = '__'.join(key_val)
         print(design_name)
-        structures = show_paper_pocket_af2(row, design_name)
+        structures = show_paper_pocket_af2(row, design_name, traj_types=traj_types)
+        all_structures.append(structures)
         for s in structures:
             if s:
                 cmd.set('grid_slot', i, s.name)
@@ -1171,3 +1178,10 @@ def show_df(data, cols=['af2_pae_mean', 'rmsd_af2_des'], n=999):
         elif pae_too_high: 
             cmd.color('blue', af2_scaffold.name)
     cmd.set('grid_mode', 1)
+    return all_structures
+
+def set_remote_cmd(remote_ip):
+    cmd = sak.get_cmd(f'http://{remote_ip}:9123')
+    sak.make_network_cmd(cmd)
+    return cmd
+

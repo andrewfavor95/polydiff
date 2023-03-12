@@ -7,6 +7,7 @@
 import sys, os, argparse, itertools, json, glob
 import numpy as np
 import slurm_tools
+from icecream import ic
 
 def get_args():
     parser = argparse.ArgumentParser()

@@ -134,6 +134,93 @@ def filter_het(pdb_lines, ligand):
             raise Exception(f'line {l} references atom ids in the target ligand {ligand} and another atom')
     return lines
 
+def make_indep(pdb, ligand=None):
+    # self.target_feats = iu.process_target(self.inf_conf.input_pdb, parse_hetatom=True, center=False)
+    # init_protein_tmpl=False, init_ligand_tmpl=False, init_protein_xyz=False, init_ligand_xyz=False,
+    #     parse_hetatm=False, n_cycle=10, random_noise=5.0)
+    chirals = torch.Tensor()
+    atom_frames = torch.zeros((0,3,2))
+
+    xyz_prot, mask_prot, idx_prot, seq_prot = parsers.parse_pdb(pdb, seq=True)
+
+    target_feats = inference.utils.parse_pdb(pdb)
+    xyz_prot, mask_prot, idx_prot, seq_prot = target_feats['xyz'], target_feats['mask'], target_feats['idx'], target_feats['seq']
+    xyz_prot[:,14:] = 0 # remove hydrogens
+    mask_prot[:,14:] = False
+    xyz_prot = torch.tensor(xyz_prot)
+    mask_prot = torch.tensor(mask_prot)
+    protein_L, nprotatoms, _ = xyz_prot.shape
+    msa_prot = torch.tensor(seq_prot)[None].long()
+    ins_prot = torch.zeros(msa_prot.shape).long()
+    a3m_prot = {"msa": msa_prot, "ins": ins_prot}
+    if ligand:
+        with open(pdb, 'r') as fh:
+            stream = [l for l in fh if "HETATM" in l or "CONECT" in l]
+        stream = filter_het(stream, ligand)
+        if not len(stream):
+            raise Exception(f'ligand {ligand} not found in pdb: {pdb}')
+
+        mol, msa_sm, ins_sm, xyz_sm, _ = parsers.parse_mol("".join(stream), filetype="pdb", string=True)
+        a3m_sm = {"msa": msa_sm.unsqueeze(0), "ins": ins_sm.unsqueeze(0)}
+        G = rf2aa.util.get_nxgraph(mol)
+        atom_frames = rf2aa.util.get_atom_frames(msa_sm, G)
+        N_symmetry, sm_L, _ = xyz_sm.shape
+        Ls = [protein_L, sm_L]
+        a3m = merge_a3m_hetero(a3m_prot, a3m_sm, Ls)
+        msa = a3m['msa'].long()
+        chirals = get_chirals(mol, xyz_sm[0])
+        if chirals.numel() !=0:
+            chirals[:,:-1] += protein_L
+    else:
+        Ls = [msa_prot.shape[-1], 0]
+        N_symmetry = 1
+        msa = msa_prot
+
+    xyz = torch.full((N_symmetry, sum(Ls), NTOTAL, 3), np.nan).float()
+    mask = torch.full(xyz.shape[:-1], False).bool()
+    xyz[:, :Ls[0], :nprotatoms, :] = xyz_prot.expand(N_symmetry, Ls[0], nprotatoms, 3)
+    if ligand:
+        xyz[:, Ls[0]:, 1, :] = xyz_sm
+    xyz = xyz[0]
+    mask[:, :protein_L, :nprotatoms] = mask_prot.expand(N_symmetry, Ls[0], nprotatoms)
+    idx_sm = torch.arange(max(idx_prot),max(idx_prot)+Ls[1])+200
+    idx_pdb = torch.concat([torch.tensor(idx_prot), idx_sm])
+    
+    seq = msa[0]
+    
+    # seq, msa_seed_orig, msa_seed, msa_extra, mask_msa = MSAFeaturize(msa, ins, 
+    #     p_mask=0.0, params={'MAXLAT': 128, 'MAXSEQ': 1024, 'MAXCYCLE': n_cycle}, tocpu=True)
+    bond_feats = torch.zeros((sum(Ls), sum(Ls))).long()
+    bond_feats[:Ls[0], :Ls[0]] = rf2aa.util.get_protein_bond_feats(Ls[0])
+    if ligand:
+        bond_feats[Ls[0]:, Ls[0]:] = rf2aa.util.get_bond_feats(mol)
+
+
+    same_chain = torch.zeros((sum(Ls), sum(Ls))).long()
+    same_chain[:Ls[0], :Ls[0]] = 1
+    same_chain[Ls[0]:, Ls[0]:] = 1
+    is_sm = torch.zeros(sum(Ls)).bool()
+    is_sm[Ls[0]:] = True
+    assert len(Ls) <= 2, 'multi chain inference not implemented yet'
+    terminus_type = torch.zeros(sum(Ls))
+    terminus_type[0] = N_TERMINUS
+    terminus_type[Ls[0]-1] = C_TERMINUS
+
+    xyz = get_init_xyz(xyz[None, None], is_sm).squeeze()
+
+    indep = Indep(
+        seq,
+        xyz,
+        idx_pdb,
+        # SM specific
+        bond_feats,
+        chirals,
+        atom_frames,
+        same_chain,
+        is_sm,
+        terminus_type)
+    return indep
+
 
 class Model:
 
@@ -147,92 +234,6 @@ class Model:
         rfi_dict = dataclasses.asdict(rfi)
         # assert set(rfi_dict.keys()) - set()
         return RFO(*self.model(**{**rfi_dict, **kwargs}))
-
-    def make_indep(self, pdb, parse_hetatm):
-        # self.target_feats = iu.process_target(self.inf_conf.input_pdb, parse_hetatom=True, center=False)
-        # init_protein_tmpl=False, init_ligand_tmpl=False, init_protein_xyz=False, init_ligand_xyz=False,
-        #     parse_hetatm=False, n_cycle=10, random_noise=5.0)
-        chirals = torch.Tensor()
-        atom_frames = torch.zeros((0,3,2))
-
-        xyz_prot, mask_prot, idx_prot, seq_prot = parsers.parse_pdb(pdb, seq=True)
-
-        target_feats = inference.utils.parse_pdb(pdb)
-        xyz_prot, mask_prot, idx_prot, seq_prot = target_feats['xyz'], target_feats['mask'], target_feats['idx'], target_feats['seq']
-        xyz_prot[:,14:] = 0 # remove hydrogens
-        mask_prot[:,14:] = False
-        xyz_prot = torch.tensor(xyz_prot)
-        mask_prot = torch.tensor(mask_prot)
-        protein_L, nprotatoms, _ = xyz_prot.shape
-        msa_prot = torch.tensor(seq_prot)[None].long()
-        ins_prot = torch.zeros(msa_prot.shape).long()
-        a3m_prot = {"msa": msa_prot, "ins": ins_prot}
-        if parse_hetatm:
-            with open(pdb, 'r') as fh:
-                stream = [l for l in fh if "HETATM" in l or "CONECT" in l]
-            ligand = self.conf.inference.ligand
-            stream = filter_het(stream, ligand)
-            if not len(stream):
-                raise Exception(f'ligand {ligand} not found in pdb: {pdb}')
-
-            mol, msa_sm, ins_sm, xyz_sm, _ = parsers.parse_mol("".join(stream), filetype="pdb", string=True)
-            a3m_sm = {"msa": msa_sm.unsqueeze(0), "ins": ins_sm.unsqueeze(0)}
-            G = rf2aa.util.get_nxgraph(mol)
-            atom_frames = rf2aa.util.get_atom_frames(msa_sm, G)
-            N_symmetry, sm_L, _ = xyz_sm.shape
-            Ls = [protein_L, sm_L]
-            a3m = merge_a3m_hetero(a3m_prot, a3m_sm, Ls)
-            msa = a3m['msa'].long()
-            chirals = get_chirals(mol, xyz_sm[0])
-            if chirals.numel() !=0:
-                chirals[:,:-1] += protein_L
-        else:
-            Ls = [msa_prot.shape[-1], 0]
-            N_symmetry = 1
-            msa = msa_prot
-
-        xyz = torch.full((N_symmetry, sum(Ls), NTOTAL, 3), np.nan).float()
-        mask = torch.full(xyz.shape[:-1], False).bool()
-        xyz[:, :Ls[0], :nprotatoms, :] = xyz_prot.expand(N_symmetry, Ls[0], nprotatoms, 3)
-        if parse_hetatm:
-            xyz[:, Ls[0]:, 1, :] = xyz_sm
-        xyz = xyz[0]
-        mask[:, :protein_L, :nprotatoms] = mask_prot.expand(N_symmetry, Ls[0], nprotatoms)
-        idx_sm = torch.arange(max(idx_prot),max(idx_prot)+Ls[1])+200
-        idx_pdb = torch.concat([torch.tensor(idx_prot), idx_sm])
-        
-        seq = msa[0]
-        
-        # seq, msa_seed_orig, msa_seed, msa_extra, mask_msa = MSAFeaturize(msa, ins, 
-        #     p_mask=0.0, params={'MAXLAT': 128, 'MAXSEQ': 1024, 'MAXCYCLE': n_cycle}, tocpu=True)
-        bond_feats = torch.zeros((sum(Ls), sum(Ls))).long()
-        bond_feats[:Ls[0], :Ls[0]] = rf2aa.util.get_protein_bond_feats(Ls[0])
-        if parse_hetatm:
-            bond_feats[Ls[0]:, Ls[0]:] = rf2aa.util.get_bond_feats(mol)
-
-
-        same_chain = torch.zeros((sum(Ls), sum(Ls))).long()
-        same_chain[:Ls[0], :Ls[0]] = 1
-        same_chain[Ls[0]:, Ls[0]:] = 1
-        is_sm = torch.zeros(sum(Ls)).bool()
-        is_sm[Ls[0]:] = True
-        assert len(Ls) <= 2, 'multi chain inference not implemented yet'
-        terminus_type = torch.zeros(sum(Ls))
-        terminus_type[0] = N_TERMINUS
-        terminus_type[Ls[0]-1] = C_TERMINUS
-
-        indep = Indep(
-            seq,
-            xyz,
-            idx_pdb,
-            # SM specific
-            bond_feats,
-            chirals,
-            atom_frames,
-            same_chain,
-            is_sm,
-            terminus_type)
-        return indep
 
 
     def insert_contig(self, indep, contig_map, partial_T=False):
@@ -573,8 +574,8 @@ def pad_dim(x, dim, new_l):
     padding = padding[::-1]
     return F.pad(x, pad=tuple(padding), value=0)
 
-def write_traj(path, xyz_stack, seq, bond_feats, **kwargs):
-    xyz23 = pad_dim(xyz_stack, 2, 23)
+def write_traj(path, xyz_stack, seq, bond_feats, natoms=23, **kwargs):
+    xyz23 = pad_dim(xyz_stack, 2, natoms)
     with open(path, 'w') as fh:
         for i, xyz in enumerate(xyz23):
             rf2aa.util.writepdb_file(fh, xyz, seq, bond_feats=bond_feats[None], modelnum=i, **kwargs)
@@ -602,7 +603,6 @@ def adaptor_fix_bb_indep(out):
         atom_mask = atom_mask[0]
     
     # our dataloaders return torch.zeros(L...) for atom frames and chirals when there are none, this updates it to use common shape 
-    ic(atom_frames)
     if torch.all(atom_frames == 0):
         atom_frames = torch.zeros((0,3,2))
     if torch.all(chirals == 0):

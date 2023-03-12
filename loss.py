@@ -16,10 +16,8 @@ torch.autograd.set_detect_anomaly(True)
 # 3. bond geometry loss
 # 4. predicted lddt loss
 
-def frame_distance_loss(R_pred, R_true, eps=1e-8, gamma=0.99):
-    """
-    Calculates squared L2 loss on frames
-    """
+def frame_distance_err(R_pred, R_true, eps=1e-8):
+
     I,B,L = R_pred.shape[:3]
     assert len(R_true.shape) == 3
     assert B == 1
@@ -32,6 +30,14 @@ def frame_distance_loss(R_pred, R_true, eps=1e-8, gamma=0.99):
 
     # Squared L2 (squared Frobenius) norm of deviation from mm and eye (I,)
     err = torch.square((mm - eye_repeated)+eps).sum(dim=(-1,-2)).mean(dim=-1).squeeze()
+    return err
+
+def frame_distance_loss(R_pred, R_true, eps=1e-8, gamma=0.99):
+    """
+    Calculates squared L2 loss on frames
+    """
+    I,B,L = R_pred.shape[:3]
+    err = frame_distance_err(R_pred, R_true, eps)
 
     # decay on loss over iterations
     w_loss = torch.pow(torch.full((I,), gamma, device=R_pred.device), torch.arange(I, device=R_pred.device))

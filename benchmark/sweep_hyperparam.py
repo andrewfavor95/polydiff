@@ -31,6 +31,7 @@ def main():
     parser.add_argument('--out', type=str, default='out/out',help='Path prefix for output files')
     parser.add_argument('--benchmark_json', type=str, default='benchmarks.json', help='Path to non-standard custom json file of benchmarks')
     parser.add_argument('--use_ligand', default=False, action='store_true', help='Use LigandMPNN instead of regular MPNN.')
+    parser.add_argument('--pilot', dest='pilot', action="store_true", default=False)
 
     args, unknown = parser.parse_known_args()
     if len(unknown)>0:
@@ -39,6 +40,10 @@ def main():
     if args.num_per_job > args.num_per_condition:
         sys.exit('ERROR: --num_per_job cannot be greater than --num_per_condition '\
                  '(different conditions can\'t be in the same job.)')
+    
+    if args.pilot:
+        args.num_per_condition = 1
+        args.num_per_job = 1
 
     args_vals = [] # argument names and lists of values for passing to design script
 
@@ -144,6 +149,8 @@ def main():
     # submit job
     if args.submit:
         job_fn = prune_jobs_list(job_fn)
+        if args.pilot:
+            job_fn = pilot_jobs_list(job_fn)
 
         if args.J is not None:
             job_name = args.J
@@ -154,6 +161,13 @@ def main():
         slurm_job, proc = slurm_tools.array_submit(job_fn, p = args.p, gres=args.gres, log=args.keep_logs, J=job_name, t=args.t, in_proc=args.in_proc)
         print(f'Submitted array job {slurm_job} with {len(arg_combos)*args.num_per_condition/args.num_per_job} jobs to make {len(arg_combos)*args.num_per_condition} designs')
 
+def pilot_jobs_list(jobs_path):
+    pilot_path = os.path.join(os.path.split(jobs_path)[0], 'jobs.list.pilot')
+    with open(jobs_path, 'r') as fh:
+        jobs = fh.readlines()
+    with open(pilot_path, 'w') as fh:
+        fh.write(jobs[0])
+    return pilot_path
         
 def prune_jobs_list(jobs_path):
     pruned_path = os.path.join(os.path.split(jobs_path)[0], 'jobs.list.pruned')

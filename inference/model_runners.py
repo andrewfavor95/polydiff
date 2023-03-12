@@ -312,6 +312,10 @@ class Sampler:
             seq_len = target_feats['seq'].shape[0]
             self.contig_conf.contigs = [f'{self.ppi_conf.binderlen}',f'B{self.ppi_conf.binderlen+1}-{seq_len}']
         self._log.info(f'Using contig: {self.contig_conf.contigs}')
+        # self.contig_conf.contigs = ['']
+        if self.contig_conf.contigs == 'whole':
+            L = len(target_feats["pdb_idx"])
+            self.contig_conf.contigs = [f'{L}-{L}']
         return ContigMap(target_feats, **self.contig_conf)
 
     def construct_denoiser(self, L, visible):
@@ -343,22 +347,22 @@ class Sampler:
 
         # moved this here as should be updated each iteration of diffusion
         self.contig_map = self.construct_contig(self.target_feats)
+        L = len(self.target_feats['pdb_idx'])
 
-        indep = self.model_adaptor.make_indep(self._conf.inference.input_pdb, self._conf.inference.ligand)
-        indep, is_diffused, is_seq_masked = self.model_adaptor.insert_contig(indep, self.contig_map)
-        self.is_diffused = is_diffused
-        self.is_seq_masked = is_seq_masked
+        indep_orig = aa_model.make_indep(self._conf.inference.input_pdb, self._conf.inference.ligand)
+        indep, self.is_diffused, self.is_seq_masked = self.model_adaptor.insert_contig(indep_orig, self.contig_map)
+        self.t_step_input = self._conf.diffuser.T
         if self.diffuser_conf.partial_T:
-            raise Exception('not implemented')
-
+            mappings = self.contig_map.get_mappings()
+            assert L == len(self.is_diffused), f'partial diffusion is only supported for entire chains L: {L} len(is_diffused): {len(self.is_diffused)} is_diffused: {is_diffused}'
+            assert (mappings['con_hal_idx0'] == mappings['con_ref_idx0']).all(), 'all positions in the input PDB must correspond to the same index in the output pdb'
+            indep = indep_orig
+            indep.seq[self.is_seq_masked] = rf2aa.chemical.MASKINDEX
         # Diffuse the contig-mapped coordinates 
         if self.diffuser_conf.partial_T:
+            self.t_step_input = self.diffuser_conf.partial_T
             assert self.diffuser_conf.partial_T <= self.diffuser_conf.T
-            self.t_step_input = int(self.diffuser_conf.partial_T)
-        else:
-            self.t_step_input = int(self.diffuser_conf.T)
         t_list = np.arange(1, self.t_step_input+1)
-
         atom_mask = None
         seq_one_hot = None
         fa_stack, aa_masks, xyz_true = self.diffuser.diffuse_pose(
@@ -366,7 +370,7 @@ class Sampler:
             seq_one_hot,
             atom_mask,
             indep.is_sm,
-            diffusion_mask=~is_diffused,
+            diffusion_mask=~self.is_diffused,
             t_list=t_list,
             diffuse_sidechains=self.preprocess_conf.sidechain_input,
             include_motif_sidechains=self.preprocess_conf.motif_sidechain_input)
@@ -375,32 +379,10 @@ class Sampler:
         xt = torch.clone(xT)
         indep.xyz = xt
 
-        if self.diffuser_conf.partial_T and self.seq_diffuser is None:
-            raise Exception('not implemented')
-            is_motif = self.mask_seq.squeeze()
-            is_shown_at_t = torch.tensor(aa_masks[-1])
-            visible = is_motif | is_shown_at_t
-            if self.diffuser_conf.partial_T:
-                seq_t[visible] = seq_orig[visible]
-        else:
-            # Sequence diffusion
-            visible = ~is_diffused
-
-        self.denoiser = self.construct_denoiser(len(self.contig_map.ref), visible=visible)
+        self.denoiser = self.construct_denoiser(len(self.contig_map.ref), visible=~self.is_diffused)
         if self.symmetry is not None:
             raise Exception('not implemented')
             xt, seq_t = self.symmetry.apply_symmetry(xt, seq_t)
-        
-        if return_forward_trajectory:
-            forward_traj = torch.cat([xyz_true[None], fa_stack[:,:,:]])
-            if self.seq_diffuser is None:
-                # aa_masks[:, diffusion_mask.squeeze()] = True
-                # return xt, forward_traj
-                return indep, forward_traj
-            else:
-                raise Exception('not implemented')
-                # Seq Diffusion
-                return xt, seq_t, forward_traj, diffused_seq_stack, seq_orig
         
         self.msa_prev = None
         self.pair_prev = None

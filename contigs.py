@@ -88,38 +88,31 @@ class ContigMap():
             contig_list = self.contigs[0].strip().split()
             sampled_mask = []
             sampled_mask_length = 0
-            #allow receptor chain to be last in contig string
-            if all([i[0].isalpha() for i in contig_list[-1].split(",")]):
-                contig_list[-1] = f'{contig_list[-1]},0'
             for con in contig_list:
-                if (all([i[0].isalpha() for i in con.split(",")[:-1]]) and con.split(",")[-1] == '0') or self.topo is True:
-                    #receptor chain
-                    sampled_mask.append(con)
-                else:
-                    inpaint_chains += 1
-                    #chain to be inpainted. These are the only chains that count towards the length of the contig
-                    subcons = con.split(",")
-                    subcon_out = []
-                    for subcon in subcons:
-                        if subcon[0].isalpha():
-                            subcon_out.append(subcon)
-                            if '-' in subcon:
-                                sampled_mask_length += (int(subcon.split("-")[1])-int(subcon.split("-")[0][1:])+1)
-                            else:
-                                sampled_mask_length += 1
-
+                inpaint_chains += 1
+                #chain to be inpainted. These are the only chains that count towards the length of the contig
+                subcons = con.split(",")
+                subcon_out = []
+                for subcon in subcons:
+                    if subcon[0].isalpha():
+                        subcon_out.append(subcon)
+                        if '-' in subcon:
+                            sampled_mask_length += (int(subcon.split("-")[1])-int(subcon.split("-")[0][1:])+1)
                         else:
-                            if '-' in subcon:
-                                length_inpaint=random.randint(int(subcon.split("-")[0]),int(subcon.split("-")[1]))
-                                subcon_out.append(f'{length_inpaint}-{length_inpaint}')
-                                sampled_mask_length += length_inpaint
-                            elif subcon == '0':
-                                subcon_out.append('0')
-                            else:
-                                length_inpaint=int(subcon)
-                                subcon_out.append(f'{length_inpaint}-{length_inpaint}')
-                                sampled_mask_length += int(subcon)
-                    sampled_mask.append(','.join(subcon_out))
+                            sampled_mask_length += 1
+
+                    else:
+                        if '-' in subcon:
+                            length_inpaint=random.randint(int(subcon.split("-")[0]),int(subcon.split("-")[1]))
+                            subcon_out.append(f'{length_inpaint}-{length_inpaint}')
+                            sampled_mask_length += length_inpaint
+                        elif subcon == '0':
+                            subcon_out.append('0')
+                        else:
+                            length_inpaint=int(subcon)
+                            subcon_out.append(f'{length_inpaint}-{length_inpaint}')
+                            sampled_mask_length += int(subcon)
+                sampled_mask.append(','.join(subcon_out))
             #check length is compatible 
             if self.length is not None:
                 if sampled_mask_length >= self.length[0] and sampled_mask_length < self.length[1]:

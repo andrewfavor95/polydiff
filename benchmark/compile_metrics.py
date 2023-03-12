@@ -84,9 +84,8 @@ def main():
             df_accum = df_accum.merge(tmp, on='name', how='outer')
 
         # chemnet
-        tmp = pd.concat([
-            pd.read_csv(fn,index_col=None) for fn in glob.glob(mpnn_dir+'/chemnet_scores.csv.*')
-        ])
+        chemnet_dfs = [pd.read_csv(fn,index_col=None) for fn in glob.glob(mpnn_dir+'/chemnet_scores.csv.*')]
+        tmp = pd.concat(chemnet_dfs) if len(chemnet_dfs)>0 else pd.DataFrame(dict(name=[]))
         if len(tmp)>0:
             chemnet1 = tmp.groupby('label',as_index=False).max()[['label','plddt','plddt_lp','lddt']]
             chemnet2 = tmp.groupby('label',as_index=False).min()[['label','lrmsd','kabsch']]
@@ -100,9 +99,8 @@ def main():
             df_accum = df_accum.merge(chemnet, on='name', how='outer')
 
         # rosetta ligand
-        tmp = pd.concat([
-            pd.read_csv(fn,index_col=None) for fn in glob.glob(mpnn_dir+'/rosettalig_scores.csv.*')
-        ])
+        df_s = [pd.read_csv(fn,index_col=None) for fn in glob.glob(mpnn_dir+'/rosettalig_scores.csv.*')]
+        tmp = pd.concat(df_s) if len(df_s)>0 else pd.DataFrame(dict(name=[]))
         if len(tmp)>0:
             df_accum = df_accum.merge(tmp, on='name', how='outer')
 

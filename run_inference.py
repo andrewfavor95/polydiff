@@ -58,7 +58,7 @@ def main(conf: HydraConfig) -> None:
 
 def get_sampler(conf):
     if conf.inference.deterministic:
-        make_deterministic()
+        seed_all()
      
     # Loop over number of designs to sample.
     design_startnum = conf.inference.design_startnum
@@ -85,7 +85,7 @@ def sample(sampler):
     des_i_end = sampler._conf.inference.design_startnum + sampler.inf_conf.num_designs
     for i_des in range(sampler._conf.inference.design_startnum, sampler._conf.inference.design_startnum + sampler.inf_conf.num_designs):
         if sampler._conf.inference.deterministic:
-            make_deterministic(i_des)
+            seed_all(i_des)
 
         start_time = time.time()
         out_prefix = f'{sampler.inf_conf.output_prefix}_{i_des}'

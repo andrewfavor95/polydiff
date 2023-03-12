@@ -1,0 +1,15 @@
+defaults:
+  - debug
+
+inference:
+  output_prefix: debug/partial_small_complete
+  model_runner: NRBStyleSelfCond
+  input_pdb: 'test_data/sc_native.pdb'
+
+diffuser:
+  partial_T: 3
+
+contigmap:
+  contigs: ['10,A1-60']
+  length: 70-70
+
