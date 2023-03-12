@@ -5,7 +5,7 @@ import collections
 script_dir = os.path.dirname(os.path.realpath(__file__))
 aa_se3_path = os.path.join(script_dir, 'RF2-allatom/rf2aa/SE3Transformer')
 sys.path.insert(0, aa_se3_path)
-
+import copy
 import dataclasses
 import time
 import pickle 
@@ -153,7 +153,7 @@ class Trainer():
                  n_epoch=100, lr=1.0e-4, l2_coeff=1.0e-2, port=None, interactive=False,
                  model_param={}, loader_param={}, loss_param={}, batch_size=1, accum_step=1, 
                  maxcycle=4, diffusion_param={}, preprocess_param={}, outdir=f'./train_session{get_datetime()}', wandb_prefix='',
-                 metrics=None, zero_weights=False, log_inputs=False, n_write_pdb=100):
+                 metrics=None, zero_weights=False, log_inputs=False, n_write_pdb=100, reinitialize_missing_params=False):
 
         self.model_name = model_name #"BFF"
         self.ckpt_load_path = ckpt_load_path
@@ -167,6 +167,7 @@ class Trainer():
         self.metrics=metrics or []
         self.log_inputs=log_inputs
         self.n_write_pdb = n_write_pdb
+        self.reinitialize_missing_params = reinitialize_missing_params
         self.rate_deque = collections.deque(maxlen=200)
 
         ic(self.outdir)
@@ -680,32 +681,40 @@ class Trainer():
         print('Located at ',chk_fn)
 
         ic(rank)
-        map_location = {"cuda:%d"%0: "cuda:%d"%rank}
+        if isinstance(rank, str):
+            # For CPU debugging
+            map_location = {"cuda:%d"%0: "cpu"}
+        else:
+            map_location = {"cuda:%d"%0: "cuda:%d"%rank}
         checkpoint = torch.load(chk_fn, map_location=map_location)
         rename_model = False
-        new_chk = {}
-        ctr=0
-	# Set to false for faster loading when debugging
+        # Set to false for faster loading when debugging
         cautious = True
-        if cautious:
-            for param in model.module.model.state_dict():
-                #print('On param ',ctr,' of ',len(model.module.model.state_dict()))
-                ctr += 1
+        for m, weight_state in [
+            (model.module.model, checkpoint['final_state_dict']),
+            (model.module.shadow, checkpoint['model_state_dict']),
+        ]:
+            if self.reinitialize_missing_params:
+                model_state = m.state_dict()
+                if cautious:
+                    new_chk = {}
+                    for param in model_state:
+                        if param not in weight_state:
+                            print ('missing',param)
+                            rename_model=True
+                        elif (weight_state[param].shape == model_state[param].shape):
+                            new_chk[param] = weight_state[param]
+                        else:
+                            print (
+                                'wrong size',param,
+                                weight_state[param].shape,
+                                model_state[param].shape )
 
-                if param not in checkpoint['model_state_dict']:
-                    print ('missing',param)
-                    rename_model=True
-                elif (checkpoint['model_state_dict'][param].shape == model.module.model.state_dict()[param].shape):
-                    new_chk[param] = checkpoint['model_state_dict'][param]
                 else:
-                    print (
-                        'wrong size',param,
-                        checkpoint['model_state_dict'][param].shape,
-                        model.module.model.state_dict()[param].shape )
-        else:
-            new_chk = checkpoint['model_state_dict']
-        model.module.model.load_state_dict(new_chk, strict=False)
-        model.module.shadow.load_state_dict(new_chk, strict=False)
+                    new_chk = weight_state
+                m.load_state_dict(new_chk, strict=False)
+            else:
+                m.load_state_dict(weight_state, strict=True)
 
         if resume_train and (not rename_model):
             print (' ... loading optimization params')
@@ -787,6 +796,7 @@ class Trainer():
             gpu = 'cpu'
         
         self.n_train = N_EXAMPLE_PER_EPOCH
+
 
         dataset_configs, homo = default_dataset_configs(self.loader_param, debug=DEBUG)
         
@@ -1376,7 +1386,8 @@ def make_trainer(args, model_param, loader_param, loss_param, diffusion_param, p
                     metrics=args.metric,
                     zero_weights=args.zero_weights,
                     log_inputs=args.log_inputs,
-                    n_write_pdb=args.n_write_pdb)
+                    n_write_pdb=args.n_write_pdb,
+                    reinitialize_missing_params=args.reinitialize_missing_params)
     return train
 
 if __name__ == "__main__":

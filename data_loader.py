@@ -39,6 +39,8 @@ import run_inference
 import aa_model
 
 
+USE_DEFAULT = '__USE_DEFAULT__'
+
 base_dir = "/projects/ml/TrRosetta/PDB-2021AUG02"
 compl_dir = "/projects/ml/RoseTTAComplex"
 fb_dir = "/projects/ml/TrRosetta/fb_af"
@@ -122,10 +124,13 @@ def set_data_loader_params(args):
         "MASK_MAX_PROPORTION":args.mask_max_proportion,
         "MASK_BROKEN_PROPORTION":args.mask_broken_proportion,
         "SPOOF_ITEM":args.spoof_item,
-        "MOL_DIR":None,
+        "MOL_DIR":rf2aa.data_loader.default_dataloader_params['MOL_DIR'],
     }
     for param in PARAMS:
         if hasattr(args, param.lower()):
+            v = getattr(args, param.lower())
+            if v == USE_DEFAULT:
+                continue
             PARAMS[param] = getattr(args, param.lower())
 
     print('This is params from get train valid')
@@ -1355,6 +1360,7 @@ class WeightedDataset:
     weights: np.array
 
 def default_dataset_configs(loader_param, debug=False):
+    ic(loader_param['MOL_DIR'])
     print('Getting train/valid set...')
     #add in all-atom datasets
     # (
@@ -1367,7 +1373,9 @@ def default_dataset_configs(loader_param, debug=False):
     dataloader_params = copy.deepcopy(rf2aa.data_loader.default_dataloader_params)
     overrides = [
         ['DATAPKL_AA', 'DATAPKL'],
-        ['MOL_DIR', 'MOL_DIR']]
+        ['MOL_DIR', 'MOL_DIR'],
+        ['MAX_LENGTH', 'MAXMONOMERLENGTH']
+    ]
     for k_diff, k_rf2aa in overrides:
         v = loader_param.get(k_diff, None)
         ic(k_diff, k_rf2aa, v)
@@ -1376,8 +1384,8 @@ def default_dataset_configs(loader_param, debug=False):
 
     train_ID_dict, _, weights_dict, train_dict, _, homo, chid2hash, chid2taxid = \
             rf2aa.data_loader.get_train_valid_set({**rf2aa.data_loader.default_dataloader_params, \
-            #**loader_param, 
-            **{'DATAPKL': loader_param['DATAPKL_AA'], 'MAXMONOMERLENGTH': loader_param['MAX_LENGTH']}}, no_match_okay=debug, diffusion_training=True)
+            **dataloader_params},
+            no_match_okay=debug, diffusion_training=True)
 
     #all the pdb sets use the default rf2aa loader_pdb, but the fixbb adaptor will not be applied to the seq2str task
     pdb_config = WeightedDataset(train_ID_dict["pdb"], train_dict["pdb"], {

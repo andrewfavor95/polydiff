@@ -118,7 +118,7 @@ def get_args(in_args=None):
             help='Path to pickled dataset to load for training on. If path doesn\'t exist, will write new pickle with that name.')
     data_group.add_argument('-spoof_item', type=str, default='', 
             help='Path to pickled dataset to load for training on. If path doesn\'t exist, will write new pickle with that name.')
-    data_group.add_argument('-mol_dir', type=str, default=None)
+    data_group.add_argument('-mol_dir', type=str, default=data_loader.USE_DEFAULT)
 
     # Diffusion args 
     diff_group = parser.add_argument_group("diffusion parameters")
@@ -309,6 +309,7 @@ def get_args(in_args=None):
     parser.add_argument('-metric', type=lambda m: getattr(metrics, m), action='append')
     parser.add_argument('-log_inputs', action='store_true', default=False)
     parser.add_argument('-n_write_pdb', type=int, default=100)
+    parser.add_argument('-reinitialize_missing_params', action='store_true', default=False, help='If the checkpoint file is missing a network parameter, use the networks default initialization for that parameter')
     
     # Preprocessing parameters
     preprocess_group = parser.add_argument_group("preprocess parameters")
