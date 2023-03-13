@@ -340,7 +340,6 @@ class Trainer():
                   w_lddt=1.0, w_blen=1.0, w_bang=1.0, w_lj=0.0, w_hb=0.0,
                   lj_lin=0.75, use_H=False, w_disp=0.0, w_motif_disp=0.0, w_ax_ang=0.0, w_frame_dist=0.0, eps=1e-6, backprop_non_displacement_on_given=False):
 
-        run_inference.seed_all()
 
         #NB t is 1-indexed
         t_idx = t-1

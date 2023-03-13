@@ -1616,6 +1616,7 @@ class DistilledDataset(data.Dataset):
                 assert torch.mean(rfi.xyz[:,~is_diffused,1] - indep.xyz[None,~is_diffused,1]) < 0.001
 
         run_inference.seed_all(mask_gen_seed) # Reseed the RNGs for test stability.
+        ic(t)
         ic(dataset_name, chosen_dataset)
         ic(indep.xyz.shape)
         return indep, rfi_tp1_t, chosen_dataset, sel_item, t, is_diffused, task
