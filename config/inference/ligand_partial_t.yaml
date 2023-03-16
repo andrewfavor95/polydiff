@@ -1,0 +1,16 @@
+defaults:
+- aa
+diffuser:
+  partial_T: 50
+contigmap:
+  contigs: ['144']
+  inpaint_seq: null
+  inpaint_str: null
+inference:
+  align_motif: false
+  ckpt_path: /home/ahern/projects/rf_diffusion/train_session2023-01-09_1673291857.7027779/models/BFF_10.pt
+  input_pdb: benchmark/input/partial_T_example.pdb
+  ligand: FMN
+  model_runner: NRBStyleSelfCond
+  num_designs: 1
+  str_self_cond: true
