@@ -354,7 +354,8 @@ class Sampler:
         self.t_step_input = self._conf.diffuser.T
         if self.diffuser_conf.partial_T:
             mappings = self.contig_map.get_mappings()
-            assert L == len(self.is_diffused), f'partial diffusion is only supported for entire chains L: {L} len(is_diffused): {len(self.is_diffused)} is_diffused: {is_diffused}'
+            assert int(torch.sum(~indep.is_sm)) == int(torch.sum(self.is_diffused)), f'partial diffusion is only supported for entire protein chains protein_L: {torch.sum(~indep.is_sm)} len(self.is_diffused): {torch.sum(self.is_diffused)} is_diffused: {self.is_diffused}'
+            assert (~indep.is_sm == self.is_diffused).all(), 'all protein positions should be diffused and all sm atoms should be in the motif for partial diffusion is_protein: {~indep.is_sm} is_diffused: {~self.is_diffused}'
             assert (mappings['con_hal_idx0'] == mappings['con_ref_idx0']).all(), 'all positions in the input PDB must correspond to the same index in the output pdb'
             indep = indep_orig
             indep.seq[self.is_seq_masked] = rf2aa.chemical.MASKINDEX

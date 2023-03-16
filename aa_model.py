@@ -207,7 +207,9 @@ def make_indep(pdb, ligand=None):
     terminus_type[Ls[0]-1] = C_TERMINUS
 
     xyz = get_init_xyz(xyz[None, None], is_sm).squeeze()
-
+    ###TODO: currently network needs values at 0,2 indices of tensor, need to remove this reliance
+    xyz[is_sm, 0] = 0
+    xyz[is_sm, 2] = 0
     indep = Indep(
         seq,
         xyz,
