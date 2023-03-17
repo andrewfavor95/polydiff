@@ -10,7 +10,7 @@ import rf2aa.chemical
 from rf2aa.chemical import NAATOKENS, MASKINDEX, NTOTAL, NHEAVYPROT
 import rf2aa.util
 import rf2aa.data_loader
-from rf2aa.util_module import ComputeAllAtomCoords
+from rf2aa.util_module import XYZConverter
 from rf2aa.RoseTTAFoldModel import RoseTTAFoldModule
 from rf2aa.kinematics import xyz_to_c6d, c6d_to_bins, xyz_to_t2d, get_chirals
 import rf2aa.parsers
@@ -148,7 +148,7 @@ class Sampler:
             self.symmetry = None
 
 
-        self.allatom = ComputeAllAtomCoords().to(self.device)
+        self.converter = XYZConverter()
         self.target_feats = iu.process_target(self.inf_conf.input_pdb, parse_hetatom=False, center=False)
         self.chain_idx = None
 
@@ -699,7 +699,7 @@ class Sampler:
         """
         Method for symmetrising px0 output, either for recycling or for self-conditioning
         """
-        _,px0_aa = self.allatom(torch.argmax(seq_in, dim=-1), px0, alpha)
+        _,px0_aa = self.converter.compute_all_atom(torch.argmax(seq_in, dim=-1), px0, alpha)
         px0_sym,_ = self.symmetry.apply_symmetry(px0_aa.to('cpu').squeeze()[:,:14], torch.argmax(seq_in, dim=-1).squeeze().to('cpu'))
         px0_sym = px0_sym[None].to(self.device)
         return px0_sym

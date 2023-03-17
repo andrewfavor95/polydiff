@@ -11,6 +11,7 @@ from rf2aa import parsers
 from dataclasses import dataclass
 from rf2aa.data_loader import MSAFeaturize, MSABlockDeletion, merge_a3m_homo, merge_a3m_hetero
 from rf2aa.kinematics import xyz_to_c6d, c6d_to_bins, xyz_to_t2d, get_chirals
+from rf2aa.util_module import XYZConverter
 import rf2aa.tensor_util
 import torch
 import copy
@@ -107,6 +108,7 @@ class RFI:
     sctors: torch.Tensor
     idx: torch.Tensor
     bond_feats: torch.Tensor
+    dist_matrix: torch.Tensor
     chirals: torch.Tensor
     atom_frames: torch.Tensor
     t1d: torch.Tensor
@@ -126,6 +128,7 @@ class RFO:
     logits_aa: torch.Tensor   # [1, 80, 115]
     logits_pae: torch.Tensor  # [1, 64, L, L]
     logits_pde: torch.Tensor  # [1, 64, L, L]
+    p_bind: torch.Tensor      # [1,1]
     xyz: torch.Tensor         # [40, 1, L, 3, 3]
     alpha_s: torch.Tensor     # [40, 1, L, 20, 2]
     xyz_allatom: torch.Tensor # [1, L, 36, 3]
@@ -273,6 +276,7 @@ class Model:
         self.conf = conf
         self.NTOKENS = rf2aa.chemical.NAATOKENS
         self.atomizer = None
+        self.converter = XYZConverter()
 
     def forward(self, rfi, **kwargs):
         # ipdb.set_trace()
@@ -489,8 +493,8 @@ class Model:
         # get torsion angles from templates
         seq_tmp = t1d[...,:-1].argmax(dim=-1).reshape(-1,L)
 
-        alpha, _, alpha_mask, _ = rf2aa.util.get_torsions(xyz_t.reshape(-1,L,rf2aa.chemical.NTOTAL,3), seq_tmp,
-            rf2aa.util.torsion_indices, rf2aa.util.torsion_can_flip, rf2aa.util.reference_angles)
+        alpha, _, alpha_mask, _ = self.converter.get_torsions(xyz_t.reshape(-1,L,rf2aa.chemical.NTOTAL,3), seq_tmp)
+            #rf2aa.util.torsion_indices, rf2aa.util.torsion_can_flip, rf2aa.util.reference_angles)
         alpha_mask = torch.logical_and(alpha_mask, ~torch.isnan(alpha[...,0]))
         alpha[torch.isnan(alpha)] = 0.0
         alpha = alpha.reshape(-1,L,rf2aa.chemical.NTOTALDOFS,2)
@@ -563,7 +567,7 @@ class Model:
         xyz[0, is_diffused*~indep.is_sm,3:] = torch.nan
         xyz[0, indep.is_sm,14:] = 0
         xyz[0, is_protein_motif, 14:] = 0
-
+        dist_matrix = rf2aa.data_loader.get_bond_distances(indep.bond_feats)
         # Note: should be batched
         rfi = RFI(
             msa_masked,
@@ -574,6 +578,7 @@ class Model:
             sctors,
             indep.idx[None],
             indep.bond_feats[None],
+            dist_matrix[None],
             indep.chirals[None],
             indep.atom_frames[None],
             t1d,
