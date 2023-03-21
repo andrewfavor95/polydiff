@@ -6,13 +6,13 @@ import unittest
 
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'RF2-allatom'))
 import rf2aa
-from aa_model import AtomizeResidues, Indep, Model
+from aa_model import AtomizeResidues, Indep, Model, make_indep
 
 class AAModelTestCase(unittest.TestCase):
 
     def setUp(self) -> None:
         self.model =  Model(conf=None)
-        self.indep = self.model.make_indep(pdb="benchmark/input/gaa.pdb", parse_hetatm=False)
+        self.indep = make_indep(pdb="benchmark/input/gaa.pdb")
         self.L = self.indep.xyz.shape[0]
         return super().setUp()
 
