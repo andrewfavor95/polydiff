@@ -1532,10 +1532,14 @@ class DistilledDataset(data.Dataset):
         if self.params['SPOOF_ITEM']:
             if hasattr(self, 'spoofed'):
                 raise Exception('stopping after succesful spoofing of one item')
-            # chosen_dataset, 
-            item = eval(self.params['SPOOF_ITEM'])
-            sel_item = item
+            spoof = eval(self.params['SPOOF_ITEM'])
+            mask_gen_seed = spoof['mask_gen_seed']
+            sel_item = spoof['sel_item']
+            task = spoof['task']
+            chosen_dataset = spoof['chosen_dataset']
+            dataset_config = self.dataset_configs[chosen_dataset]
             self.spoofed=True
+        run_inference.seed_all(mask_gen_seed) # Reseed the RNGs for test stability.
 
         if chosen_dataset == 'cn':
             raise NotImplementedError("new aa dataset don't have backwards compatibility with CN set")
