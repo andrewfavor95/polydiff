@@ -62,6 +62,39 @@ class TestRegression(unittest.TestCase):
         cmp = partial(tensor_util.cmp, atol=5e-2, rtol=0)
         test_utils.assert_matches_golden(self, 'T2', pdb_contents, rewrite=REWRITE, custom_comparator=cmp)
     
+    def test_inference_rfi(self):
+        run_inference.make_deterministic()
+        conf = construct_conf([
+            'diffuser.T=1',
+            'inference.num_designs=1',
+            'inference.output_prefix=tmp/test_0',
+            'inference.design_startnum=0',
+        ])
+
+        func_sig = signature(RoseTTAFoldModule.forward)
+        fake_forward = mock.patch.object(RoseTTAFoldModule, "forward", autospec=True)
+
+        def side_effect(self, *args, **kwargs):
+            ic("mock forward", type(self), side_effect.call_count)
+            side_effect.call_count += 1
+            return fake_forward.temp_original(self, *args, **kwargs)
+        side_effect.call_count = 0
+
+        with fake_forward as mock_forward:
+            mock_forward.side_effect = side_effect
+            run_inference.main(conf)
+
+            mapped_calls = []
+            for args, kwargs in mock_forward.call_args_list:
+                args = (None,) + args[1:]
+                argument_binding = func_sig.bind(*args, **kwargs)
+                argument_map = argument_binding.arguments
+                argument_map = tensor_util.cpu(argument_map)
+                mapped_calls.append(argument_map)
+        cmp = partial(tensor_util.cmp, atol=5e-2, rtol=0)
+        test_utils.assert_matches_golden(self, 'rfi_regression', mapped_calls, rewrite=REWRITE, custom_comparator=cmp)
+        
+
     def test_partial_sidechain(self):
         run_inference.make_deterministic()
         pdb, _ = infer([
