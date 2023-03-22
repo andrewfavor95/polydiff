@@ -74,9 +74,11 @@ class TestRegression(unittest.TestCase):
             'contigmap.length=3-3'
         ])
         pdb_contents = inference.utils.parse_pdb(pdb)
-        # Currently does not pass
-        # cmp = partial(tensor_util.cmp, atol=5e-2, rtol=0)
-        # test_utils.assert_matches_golden(self, 'partial_sc', pdb_contents, rewrite=REWRITE, custom_comparator=cmp)
+        # The network exhibits chaotic behavior when coordinates corresponding to chiral gradients are updated,
+        # so this primarily checks that inference runs and produces the expected shapes, rather than coordinate
+        # values, which vary wildly across CPU architectures.
+        cmp = partial(tensor_util.cmp, atol=2, rtol=0)
+        test_utils.assert_matches_golden(self, 'partial_sc', pdb_contents, rewrite=REWRITE, custom_comparator=cmp)
 
 
 class TestInference(unittest.TestCase):

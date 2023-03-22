@@ -1,6 +1,7 @@
 import torch
 from icecream import ic
 import itertools
+import bond_geometry
 
 def calc_displacement(pred, true):
     """
@@ -85,4 +86,7 @@ def contigs(logit_s, label_s,
         'n_contigs': n_contigs(diffusion_mask),
         'n_contig_res': n_contig_res(diffusion_mask),
     }
+
+atom_bonds = bond_geometry.calc_atom_bond_loss
+atom_bonds.accepts_indep = True
 

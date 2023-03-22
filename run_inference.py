@@ -50,6 +50,12 @@ def seed_all(seed=0):
     np.random.seed(seed)
     random.seed(seed)
 
+def get_seeds():
+    return {
+        'torch': torch.get_rng_state(),
+        'np': np.random.get_state(),
+        'python': random.getstate(),
+    }
 
 @hydra.main(version_base=None, config_path='config/inference', config_name='base')
 def main(conf: HydraConfig) -> None:
@@ -197,12 +203,15 @@ def deatomize_sampler_outputs(sampler, indep, px0_xyz_stack, denoised_xyz_stack,
     denoised_xyz_stack_new = []
     seq_stack_new = []
     for i in range(len(px0_xyz_stack)):
+        px0_xyz = aa_model.pad_dim(px0_xyz_stack[i], 1, rf2aa.chemical.NTOTAL, torch.nan)
+        denoised_xyz = aa_model.pad_dim(denoised_xyz_stack[i], 1, rf2aa.chemical.NTOTAL, torch.nan)
+
         seq_, xyz_, idx_, bond_feats_, same_chain_ = \
-            sampler.model_adaptor.atomizer.get_deatomized_features(seq_stack[i], px0_xyz_stack[i])
+            sampler.model_adaptor.atomizer.get_deatomized_features(seq_stack[i], px0_xyz)
         px0_xyz_stack_new.append(xyz_)
 
         seq_, xyz_, idx_, bond_feats_, same_chain_ = \
-            sampler.model_adaptor.atomizer.get_deatomized_features(seq_stack[i], denoised_xyz_stack[i])
+            sampler.model_adaptor.atomizer.get_deatomized_features(seq_stack[i], denoised_xyz)
         denoised_xyz_stack_new.append(xyz_)
         seq_stack_new.append(seq_)
 

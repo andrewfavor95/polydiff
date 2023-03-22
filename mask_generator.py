@@ -5,6 +5,10 @@ import torch
 import kinematics
 import numpy as np
 from icecream import ic
+import rf2aa.util
+import networkx as nx
+from functools import wraps
+import assertpy
 
 
 #####################################
@@ -80,10 +84,11 @@ def sample_around_contact(L, indices, len_low, len_high):
         diffusion_mask[l:r] = True
     return diffusion_mask
 
-def get_double_contact(xyz, full_prop, low_prop, high_prop, broken_prop, xyz_less_than=5, seq_dist_greater_than=25, len_low=5, len_high=10):
+
+def _get_double_contact(xyz, low_prop, high_prop, broken_prop, xyz_less_than=5, seq_dist_greater_than=25, len_low=5, len_high=10):
     contacts = get_contacts(xyz, xyz_less_than, seq_dist_greater_than)
     if not contacts.any():
-        return get_diffusion_mask_simple(xyz, full_prop, low_prop, high_prop, broken_prop)
+        return _get_diffusion_mask_simple(xyz, low_prop, high_prop, broken_prop)
     contact_idxs = contacts.nonzero()
     contact_idx = np.random.choice(np.arange(len(contact_idxs)))
     indices = contact_idxs[contact_idx]
@@ -103,11 +108,14 @@ def find_third_contact(contacts):
                 return torch.tensor([i,j,k])
     return None
 
-def get_sm_contacts(xyz, atom_mask, is_sm,
+def get_sm_contacts(
+        indep, atom_mask,
     d_beyond_closest = 1.5,
     n_beyond_closest = 2,
     n_sample_low = 1,
-    n_sample_high = 8):
+    n_sample_high = 8, **kwargs):
+
+    xyz, is_sm = indep.xyz, indep.is_sm
 
     assert len(xyz.shape) == 3
     assert is_sm.any()
@@ -138,7 +146,6 @@ def get_sm_contacts(xyz, atom_mask, is_sm,
     is_motif = torch.zeros(L).bool()
     is_motif[is_sm] = True
     is_motif[indices] = True
-    ic('DEBUG', candidate_indices, is_motif)
 
     # Verification
     picked = crds[is_motif]
@@ -147,23 +154,106 @@ def get_sm_contacts(xyz, atom_mask, is_sm,
     picked_distances = dist_conf.min(-1)[0].min(-1)[0]
     #ic(is_motif, n_sample, picked_distances, dist_cutoff, indices)
 
-    return is_motif
+    return is_motif, None
 
-def get_triple_contact(xyz, full_prop, low_prop, high_prop, broken_prop, xyz_less_than=6, seq_dist_greater_than=10, len_low=1, len_high=3):
+def get_triple_contact_atomize(*args, **kwargs):
+    raise Exception('not implemented')
+
+def get_closest_tip_atoms(indep, atom_mask,
+    d_beyond_closest = 1.0,
+    n_beyond_closest = 1,
+    n_sample_low = 1,
+    n_sample_high = 5, **kwargs):
+
+    assert len(indep.xyz.shape) == 3
+    assert indep.is_sm.any()
+
+    L = indep.length()
+    L_prot = (~indep.is_sm).sum()
+    n_sample = np.random.randint(n_sample_low, n_sample_high)
+
+    crds = torch.clone(indep.xyz)
+    crds[~atom_mask] = torch.nan
+    prot_crds = crds[~indep.is_sm]
+    sm_crds = crds[indep.is_sm]
+    dist_by_atom = (prot_crds[:, None] - sm_crds[ None]).pow(2).sum(dim=-1).sqrt()
+    dist = dist_by_atom.nan_to_num(9999)
+    dist = dist.min(dim=-1)[0].min(dim=-1)[0]
+    is_valid_for_atomization = indep.is_valid_for_atomization(atom_mask)[~indep.is_sm]
+    if not is_valid_for_atomization.any():
+        ic('No valid residues for atomization, falling back to unconditional generation')
+        return torch.zeros(L).bool(), None
+    dist[~is_valid_for_atomization] = 9999
+
+    # Calculate distance cutoff
+    dist_cutoff = dist.min() + d_beyond_closest
+    is_sampled = torch.zeros(L_prot).bool()
+    _, closest_idx = torch.topk(dist, n_sample + n_beyond_closest, largest=False)
+    is_sampled[closest_idx] = True
+    is_sampled[dist < dist_cutoff] = True
+    n_contacts_before = is_sampled.sum()
+    is_sampled[~is_valid_for_atomization] = False
+    n_contacts_after = is_sampled.sum()
+    #ic(f'After removing residue contacts with unresolved heavy atoms: {n_contacts_before} --> {n_contacts_after}')
+
+    is_sampled_het = torch.zeros(L).bool()
+    is_sampled_het[~indep.is_sm] = is_sampled
+    candidate_indices = is_sampled_het.nonzero().flatten()
+
+    n_sample = min(n_sample, len(candidate_indices))
+    print(f'choosing {n_sample} out of {len(candidate_indices)}')
+    indices = np.random.choice(candidate_indices, n_sample, replace=False)
+
+    # Verification for debugging
+    if False:
+        picked = crds[indices]
+        dist_conf = (picked[:, None] - sm_crds[ None]).pow(2).sum(dim=-1).sqrt()
+        dist_conf = dist_conf.nan_to_num(9999)
+        picked_distances = dist_conf.min(-1)[0].min(-1)[0]
+        ic(picked_distances, dist_cutoff, indices)
+
+    is_atom_diffused = {}
+    sm_prot_transition_types = (indep.is_sm[1:].int() - indep.is_sm[:-1].int()).unique().tolist()
+    # If the ligands do not come in a single block after the protein, using dist_sc_to_sm will provide incorrect indices,
+    assertpy.assert_that(sm_prot_transition_types).is_equal_to([0,1])
+    dist_sc_to_sm = dist_by_atom.min(dim=1)[0]
+    # prot_by_het = torch.full((indep.length(),), torch.nan)
+    # prot_by_het[~indep.is_sm] = torch.arange((~indep.is_sm).sum())
+    # torch.nonzero(~indep.is_sm).flatten()
+    for het_i in indices:
+        # prot_i = prot_by_het[het_i]
+        prot_i = het_i
+        closest_atom = torch.argmin(dist_sc_to_sm[prot_i]).item()
+        n_bonds = np.random.randint(1, 2)
+        is_atom_diffused[het_i] = get_atom_names_within_n_bonds(indep.seq[het_i], closest_atom, n_bonds)
+    is_motif = torch.zeros(L).bool()
+    is_motif[indep.is_sm] = True
+
+    return is_motif, is_atom_diffused
+
+
+def get_atom_names_within_n_bonds(res, source_node, n_bonds):
+    bond_feats = get_residue_bond_feats(res)
+    bond_graph = nx.from_numpy_matrix(bond_feats.numpy())
+    paths = nx.single_source_shortest_path_length(bond_graph, source=source_node,cutoff=n_bonds)
+    atoms_within_n_bonds = paths.keys()
+    atom_names = [rf2aa.chemical.aa2long[res][i] for i in atoms_within_n_bonds]
+    return atom_names
+
+def _get_triple_contact(xyz, low_prop, high_prop, broken_prop, xyz_less_than=6, seq_dist_greater_than=10, len_low=1, len_high=3):
     contacts = get_contacts(xyz, xyz_less_than, seq_dist_greater_than)
     if not contacts.any():
-        return get_diffusion_mask_simple(xyz, full_prop, low_prop, high_prop, broken_prop)
+        return _get_diffusion_mask_simple(xyz, low_prop, high_prop, broken_prop)
     indices = find_third_contact(contacts)
     if indices is None:
-        return get_diffusion_mask_simple(xyz, full_prop, low_prop, high_prop, broken_prop)
+        return _get_diffusion_mask_simple(xyz, low_prop, high_prop, broken_prop)
     L = xyz.shape[0]
     return sample_around_contact(L, indices, len_low, len_high)
 
-def get_diffusion_mask_simple(xyz, full_prop, low_prop, high_prop, broken_prop):
+def _get_diffusion_mask_simple(xyz, low_prop, high_prop, broken_prop):
     """
     Function to make a diffusion mask.
     Options:
-        full_prop - proportion of time whole protein is masked.
         low_prop - lower bound on the proportion of the protein masked
         high_prop - upper bound on the proportion of the protein masked
         broken_prop - proportion of the time the mask is in the middle (broken motif), vs at the ends
@@ -174,7 +264,7 @@ def get_diffusion_mask_simple(xyz, full_prop, low_prop, high_prop, broken_prop):
     diffusion_mask = torch.ones(L).bool()
     mask_length = int(np.floor(random.uniform(low_prop, high_prop) * L))
     # decide if mask goes in the middle or the ends
-    if random.uniform(0,1) < broken_prop:
+    if random.uniform(0,1) < broken_prop or mask_length < 3:
         high_start = L-mask_length-1
         start = random.randint(0, high_start)
         diffusion_mask[start:start+mask_length] = False
@@ -185,63 +275,69 @@ def get_diffusion_mask_simple(xyz, full_prop, low_prop, high_prop, broken_prop):
         diffusion_mask[-(mask_length-split):] = False
     return diffusion_mask
 
-def get_unconditional_diffusion_mask(xyz, is_sm):
+def _get_unconditional_diffusion_mask(xyz, *args, **kwargs):
     """
     unconditional generation of proteins, if a small molecule is present it will be given as context
     """
     L = xyz.shape[0]
     is_motif = torch.zeros(L).bool()
-    is_motif[is_sm] = True
     return is_motif
 
-def get_triple_contact_atomize(xyz, atom_mask, is_sm):
-    """
-    placeholder function which allows you to define a probability of atomizing sidechains in training.
-    In practice, this will always be converted to get_triple_contact in get_diffusion_mask
-    """
-    raise NotImplementedError("get_triple_contact_atomize is a placeholder function for controlling how often the model sees atomized residue examples. it should not be called explicitly")
 
-regular_to_sm = {
-    get_triple_contact: get_sm_contacts,
+def make_sm_compatible(get_mask):
+    @wraps(get_mask)
+    def out_get_mask(indep, atom_mask, *args, **kwargs):
+        diffusion_mask = get_mask(indep.xyz[~indep.is_sm], *args, **kwargs)
+        L = indep.length()
+        diffusion_mask = torch.ones(L).bool()
+        diffusion_mask_prot = get_mask(indep.xyz[~indep.is_sm], *args, **kwargs)
+        diffusion_mask[~indep.is_sm] = diffusion_mask_prot
+        return diffusion_mask, None
+    return out_get_mask
+
+def make_atomized(get_mask, min_atomized_residues=1, max_atomized_residues=5):
+    @wraps(get_mask)
+    def out_get_mask(indep, atom_mask, *args, **kwargs):
+        is_motif, is_atom_motif = get_mask(indep, atom_mask, *args, **kwargs)
+        assert is_atom_motif is None, 'attempting to atomize a masking function that is already returning atomization masks'
+        can_be_atomized = is_motif * indep.is_valid_for_atomization(atom_mask)
+        if not can_be_atomized.any():
+            return is_motif, None
+        atomize_indices = torch.nonzero(can_be_atomized).flatten()
+        n_sample = random.randint(min_atomized_residues, max_atomized_residues)
+        n_sample = min(len(atomize_indices), n_sample)
+        atomize_indices = np.random.choice(atomize_indices, n_sample, replace=False)
+        is_atom_motif = {i:choose_contiguous_atom_motif(indep.seq[i]) for i in atomize_indices}
+        is_motif[atomize_indices] = False
+        return is_motif, is_atom_motif
+    return out_get_mask
+
+get_diffusion_mask_simple = make_sm_compatible(_get_diffusion_mask_simple)
+get_triple_contact = make_sm_compatible(_get_triple_contact)
+get_double_contact = make_sm_compatible(_get_double_contact)
+atomize_get_triple_contact = make_atomized(get_triple_contact)
+atomize_get_double_contact = make_atomized(get_double_contact)
+get_unconditional_diffusion_mask = make_sm_compatible(_get_unconditional_diffusion_mask)
+
+sm_mask_fallback = {
+    get_closest_tip_atoms: atomize_get_triple_contact
 }
-atomize_to_regular = {
-    get_triple_contact_atomize: get_triple_contact
-}
+
 def get_diffusion_mask(
-        xyz, atom_mask, is_sm, full_prop, low_prop, high_prop, broken_prop,
+        indep, atom_mask, low_prop, high_prop, broken_prop,
         diff_mask_probs):
     
-    L = xyz.shape[0]
-    is_atomize_example = False
-    if random.uniform(0,1) < full_prop: # unconditional diffusion
-        is_motif = torch.zeros(L).bool()
-        is_motif[is_sm] = True
-        return is_motif, is_atomize_example
-
     mask_probs = list(diff_mask_probs.items())
     masks = [m for m, _ in mask_probs]
     props = [p for _, p in mask_probs]
     get_mask = np.random.choice(masks, p=props)
+
+    # Use fallback mask if no small molecule present.
+    if not indep.is_sm.any():
+        get_mask = sm_mask_fallback.get(get_mask, get_mask)
     
-    ic('DEBUG: get_mask', is_sm.any(), get_mask)
+    return get_mask(indep, atom_mask, low_prop=low_prop, high_prop=high_prop, broken_prop=broken_prop)
 
-    if get_mask in atomize_to_regular:
-        is_atomize_example = True
-        get_mask = atomize_to_regular[get_mask]
-
-    if is_sm.any():
-        if get_mask in regular_to_sm:
-            get_mask = regular_to_sm[get_mask]
-            return get_mask(xyz, atom_mask, is_sm), is_atomize_example
-
-        # xyz_prot = true_crds[~is_sm]
-        # msa_prot = msa[:, :, ~is_sm]
-        diffusion_mask = torch.ones(L).bool()
-        diffusion_mask_prot = get_mask(xyz[~is_sm], full_prop, low_prop, high_prop, broken_prop)
-        diffusion_mask[~is_sm] = diffusion_mask_prot
-        return diffusion_mask, is_atomize_example
-
-    return get_mask(xyz, full_prop, low_prop, high_prop, broken_prop), is_atomize_example
 
 def generate_sm_mask(prot_masks, is_sm):
     # Not currently used, but may become part of a better way to do this
@@ -281,7 +377,7 @@ def generate_sm_mask(prot_masks, is_sm):
 # Main mask generator function
 #####################################
 
-def generate_masks(L, task, loader_params, chosen_dataset, full_chain=None, xyz=None, atom_mask=None, is_sm=None): #full_chain is for complexes, to signify which chain is complete
+def generate_masks(indep, task, loader_params, chosen_dataset, full_chain=None, atom_mask=None): #full_chain is for complexes, to signify which chain is complete
     '''
     Slimmed down function that outputs 1D masks for inputs and loss calculations.
     Input masks are defined as True=(unmasked)/False=masked (except for input_t1dconf, which is a scalar value, and seq2str_mask which is the msa mask for the seq2str task)
@@ -300,6 +396,8 @@ def generate_masks(L, task, loader_params, chosen_dataset, full_chain=None, xyz=
         -loss_str_2d = additional coordinate pair masking to be applied on top of loss_str 1d masking.
     '''
 
+    L = indep.length()
+
     input_seq_mask = torch.ones(L).bool()
     input_str_mask = torch.ones(L).bool()
     input_floating_mask = -1
@@ -308,7 +406,7 @@ def generate_masks(L, task, loader_params, chosen_dataset, full_chain=None, xyz=
     loss_seq_mask = torch.ones(L).bool()
     loss_str_mask = torch.ones(L).bool()
     loss_str_mask_2d = torch.ones(L,L).bool()
-    is_atomize_example = False
+    is_atom_motif = None
     if task == 'seq2str':
         '''
         Classic structure prediction task.
@@ -332,20 +430,9 @@ def generate_masks(L, task, loader_params, chosen_dataset, full_chain=None, xyz=
         """
         Hal task but created for the diffusion-based training. 
         """ 
-
-        # get start and end of contiguous section of diffused residues 
-        #start, end = get_diffusion_pos(L, loader_params['DIFF_MASK_LOW'], loader_params['DIFF_MASK_HIGH'])
-        
-        ## input masks
-        # False is diffused, True is not diffused 
-        #input_str_mask[start:end+1] = False 
-        #input_seq_mask     = torch.clone(input_str_mask)
-        #MADE A NEW FUNCTION
-        diffusion_mask, is_atomize_example = get_diffusion_mask(
-            xyz,
+        diffusion_mask, is_atom_motif = get_diffusion_mask(
+            indep,
             atom_mask,
-            is_sm,
-            full_prop=loader_params['P_UNCOND'],
             low_prop=loader_params['MASK_MIN_PROPORTION'],
             high_prop=loader_params['MASK_MAX_PROPORTION'],
             broken_prop=loader_params['MASK_BROKEN_PROPORTION'],
@@ -576,7 +663,38 @@ def generate_masks(L, task, loader_params, chosen_dataset, full_chain=None, xyz=
                 'loss_seq_mask':loss_seq_mask,
                 'loss_str_mask':loss_str_mask,
                 'loss_str_mask_2d':loss_str_mask_2d,
-                'is_atomize_example': is_atomize_example}
+                'is_atom_motif': is_atom_motif,
+                }
     
     return mask_dict
 
+
+def choose_contiguous_atom_motif(res):
+    """
+    chooses a contiguous 3 or 4 atom motif
+    """
+    bond_feats = get_residue_bond_feats(res)
+    natoms = bond_feats.shape[0]
+    # choose atoms to be given as the motif 
+    is_atom_motif = torch.zeros((natoms),dtype=bool)
+    bond_graph = nx.from_numpy_matrix(bond_feats.numpy())
+    paths = rf2aa.util.find_all_paths_of_length_n(bond_graph, 2)
+    paths.extend(rf2aa.util.find_all_paths_of_length_n(bond_graph, 3))
+    chosen_path = random.choice(paths)
+    atom_names = [rf2aa.chemical.aa2long[res][i] for i in chosen_path]
+    return atom_names
+
+
+def get_residue_bond_feats(res, include_H=False):
+    bond_feats = torch.zeros((rf2aa.chemical.NTOTAL, rf2aa.chemical.NTOTAL))
+    for j, bond in enumerate(rf2aa.chemical.aabonds[res]):
+        start_idx = rf2aa.chemical.aa2long[res].index(bond[0])
+        end_idx = rf2aa.chemical.aa2long[res].index(bond[1])
+
+        # maps the 2d index of the start and end indices to btype
+        bond_feats[start_idx, end_idx] = rf2aa.chemical.aabtypes[res][j]
+        bond_feats[end_idx, start_idx] = rf2aa.chemical.aabtypes[res][j]
+    
+    if not include_H:
+        bond_feats = bond_feats[:rf2aa.chemical.NHEAVYPROT, :rf2aa.chemical.NHEAVYPROT]
+    return bond_feats

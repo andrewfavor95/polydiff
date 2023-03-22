@@ -1,4 +1,5 @@
 import torch
+import pprint
 import assertpy
 import torch.nn.functional as F
 import copy
@@ -37,6 +38,8 @@ import pandas as pd
 
 import run_inference
 import aa_model
+import atomize
+import error
 
 
 USE_DEFAULT = '__USE_DEFAULT__'
@@ -119,7 +122,6 @@ def set_data_loader_params(args):
         "DIFF_MASK_HIGH":args.diff_mask_high,
         "DATASETS":args.dataset,
         "DATASET_PROB":args.dataset_prob,
-        "P_UNCOND":args.p_uncond,
         "MASK_MIN_PROPORTION":args.mask_min_proportion,
         "MASK_MAX_PROPORTION":args.mask_max_proportion,
         "MASK_BROKEN_PROPORTION":args.mask_broken_proportion,
@@ -1497,8 +1499,6 @@ class DistilledDataset(data.Dataset):
         return sum(len(d.ids) for d in self.dataset_configs.values())
 
     def dataset_index_from_index(self, index):
-        for dset, c in self.dataset_configs.items():
-            print(f'{dset}\t{len(c.ids)}')
         cur_index = index
         for dataset_name, config in self.dataset_configs.items():
             n_ids = len(config.ids)
@@ -1506,7 +1506,15 @@ class DistilledDataset(data.Dataset):
                 return dataset_name, cur_index
             cur_index -= n_ids
         raise Exception(f'index {index} greater than combined sum of datasets: {len(self)}')
-
+    
+    def range_by_dataset_name(self):
+        d = {}
+        counter = 0
+        for dataset_name, config in self.dataset_configs.items():
+            n_ids = len(config.ids)
+            d[dataset_name] = (counter, counter + n_ids)
+            counter += n_ids
+        return d
 
     def __getitem__(self, index):
         mask_gen_seed = np.random.randint(0, 99999999)
@@ -1515,20 +1523,17 @@ class DistilledDataset(data.Dataset):
         task = self.task_names[task_idx]
 
         chosen_dataset, index = self.dataset_index_from_index(index)
-        #ic('from DistilledDataset:', chosen_dataset, index, task)
         dataset_config = self.dataset_configs[chosen_dataset]
         ID = dataset_config.ids[index]
         if chosen_dataset == "sm_complex":
             sel_item = rf2aa.data_loader.sample_item_sm_compl(dataset_config.dic, ID)
         else:
             sel_item = rf2aa.data_loader.sample_item(dataset_config.dic, ID)
-        
+
         # use fixbb settings for MSA generation if not sequence to structure task  
         fixbb = task != "seq2str"
-        # sel_idx = np.random.randint(0, len(dataset_config.dic[ID]))
-        # sel_item = dataset_config.dic[ID][sel_idx]
-        ic(chosen_dataset, sel_item, task)
         
+        # For reproducibility.
         if self.params['SPOOF_ITEM']:
             if hasattr(self, 'spoofed'):
                 raise Exception('stopping after succesful spoofing of one item')
@@ -1541,89 +1546,104 @@ class DistilledDataset(data.Dataset):
             self.spoofed=True
         run_inference.seed_all(mask_gen_seed) # Reseed the RNGs for test stability.
 
-        if chosen_dataset == 'cn':
-            raise NotImplementedError("new aa dataset don't have backwards compatibility with CN set")
-            chosen_loader = dataset_config.task_loaders[task]
-            out = chosen_loader(sel_item[0], self.params)
-
-        elif chosen_dataset == 'negative':
-            raise NotImplementedError("new aa dataset don't have backwards compatibility with negative set")
-            out = dataset_config.task_loaders(sel_item[0], sel_item[1], sel_item[2], sel_item[3], self.params, negative=True)
-
-        elif chosen_dataset == 'complex':
-            if sel_item["CHAINID"] in self.homo['CHAIN_A'].values: #homooligomer so do seq2str
-                task='seq2str'
-            chosen_loader = dataset_config.task_loaders[task]
-            out = chosen_loader(sel_item, sel_item[1],sel_item[2], sel_item[3], self.params, negative=False, fixbb=fixbb)
-        elif chosen_dataset == 'pdb' or chosen_dataset == 'pdb_aa':
-            chosen_loader = dataset_config.task_loaders[task]
-            # if p_unclamp > self.unclamp_cut:
-            #     out = chosen_loader(sel_item[0], self.params, self.homo, unclamp=True, p_homo_cut=self.p_homo_cut)
-            # else:
-            #     out = chosen_loader(sel_item[0], self.params, self.homo, unclamp=False, p_homo_cut=self.p_homo_cut)
-            out = chosen_loader(sel_item, 
-                {**rf2aa.data_loader.default_dataloader_params, **self.params}, self.homo, p_homo_cut=-1.0,fixbb=fixbb)
-        elif chosen_dataset == 'fb':
-            # print('Chose fb')
-            chosen_loader = self.fb_loaders[task]
-            if p_unclamp > self.unclamp_cut:
-                out = chosen_loader(sel_item, self.params, unclamp=True, fixbb=fixbb)
-            else:
-                out = chosen_loader(sel_item, self.params, unclamp=False,fixbb=fixbb)
-        elif chosen_dataset == 'sm_complex':
-            out = dataset_config.task_loaders(
-                sel_item,
-                {**rf2aa.data_loader.default_dataloader_params, **self.params, "P_ATOMIZE_MODRES": -1}, num_protein_chains=1, num_ligand_chains=1, 
-                fixbb=fixbb,
-            )
-        else:
-            raise Exception(f'chosen_dataset {chosen_dataset} not implemented')
+        item_context = pprint.pformat({
+            'chosen_dataset': chosen_dataset,
+            'sel_item': sel_item,
+            'task': task,
+            'mask_gen_seed': mask_gen_seed}, indent=4)
         
-        assert fixbb
-        assert chosen_dataset != 'complex', f'complex requires passing same_chain to mask_generators, and this is not implemented'
+        with error.context(item_context):
+            if chosen_dataset == 'cn':
+                raise NotImplementedError("new aa dataset don't have backwards compatibility with CN set")
+                chosen_loader = dataset_config.task_loaders[task]
+                out = chosen_loader(sel_item[0], self.params)
 
-        # Convert template-based modeling inputs to a description of a single structure (the query structure).
-        indep, atom_mask, dataset_name = aa_model.adaptor_fix_bb_indep(out)
-        atom_mask = aa_model.pop_unoccupied(indep, atom_mask)
+            elif chosen_dataset == 'negative':
+                raise NotImplementedError("new aa dataset don't have backwards compatibility with negative set")
+                out = dataset_config.task_loaders(sel_item[0], sel_item[1], sel_item[2], sel_item[3], self.params, negative=True)
 
-        # Mask the independent inputs.
-        run_inference.seed_all(mask_gen_seed) # Reseed the RNGs for test stability.
-        L = indep.seq.shape[0]
-        masks_1d = mask_generator.generate_masks(L, task, self.params, chosen_dataset, None, xyz=indep.xyz, atom_mask=atom_mask[:, :rf2aa.chemical.NHEAVYPROT], is_sm=indep.is_sm)
-        if masks_1d['is_atomize_example'] and torch.sum(masks_1d['input_str_mask']*~indep.is_sm) > 8: # if triple contact doesn't find residues, reverts to mask_simple DON'T atomize here
-            print("Triple contact not found, not atomizing this example")
-            masks_1d['is_atomize_example'] = False
-        if masks_1d['is_atomize_example']:
-            atomizer = aa_model.AtomizeResidues(indep, masks_1d['input_str_mask'])
-            atomizer.featurize_atomized_residues(atom_mask)
-            indep, input_str_mask, input_seq_mask = atomizer.return_input_tensors()
-        else:
-            input_seq_mask = masks_1d['input_seq_mask']
-            input_str_mask = masks_1d['input_str_mask']
-        is_masked_seq = ~input_seq_mask
-        is_diffused = ~input_str_mask
-        if not masks_1d["is_atomize_example"]:
-            assert torch.all(is_masked_seq==is_diffused), "if no residues have been atomized, all residues that are being diffused should be masked in sequence space"
-        aa_model.centre(indep, is_diffused)
-        t = random.randint(1, self.diffuser.T)
-        indep_diffused_tp1_t, t_list = aa_model.diffuse(self.conf, self.diffuser, indep, is_diffused, t)
+            elif chosen_dataset == 'complex':
+                if sel_item["CHAINID"] in self.homo['CHAIN_A'].values: #homooligomer so do seq2str
+                    task='seq2str'
+                chosen_loader = dataset_config.task_loaders[task]
+                out = chosen_loader(sel_item, sel_item[1],sel_item[2], sel_item[3], self.params, negative=False, fixbb=fixbb)
+            elif chosen_dataset == 'pdb' or chosen_dataset == 'pdb_aa':
+                chosen_loader = dataset_config.task_loaders[task]
+                # if p_unclamp > self.unclamp_cut:
+                #     out = chosen_loader(sel_item[0], self.params, self.homo, unclamp=True, p_homo_cut=self.p_homo_cut)
+                # else:
+                #     out = chosen_loader(sel_item[0], self.params, self.homo, unclamp=False, p_homo_cut=self.p_homo_cut)
+                out = chosen_loader(sel_item, 
+                    {**rf2aa.data_loader.default_dataloader_params, **self.params}, self.homo, p_homo_cut=-1.0,fixbb=fixbb)
+            elif chosen_dataset == 'fb':
+                # print('Chose fb')
+                chosen_loader = self.fb_loaders[task]
+                if p_unclamp > self.unclamp_cut:
+                    out = chosen_loader(sel_item, self.params, unclamp=True, fixbb=fixbb)
+                else:
+                    out = chosen_loader(sel_item, self.params, unclamp=False,fixbb=fixbb)
+            elif chosen_dataset == 'sm_complex':
+                out = dataset_config.task_loaders(
+                    sel_item,
+                    {**rf2aa.data_loader.default_dataloader_params, **self.params, "P_ATOMIZE_MODRES": -1}, num_protein_chains=1, num_ligand_chains=1, 
+                    fixbb=fixbb,
+                )
+            else:
+                raise Exception(f'chosen_dataset {chosen_dataset} not implemented')
+            
+            assert fixbb
+            assert chosen_dataset != 'complex', f'complex requires passing same_chain to mask_generators, and this is not implemented'
 
-        # Compute all strictly dependent model inputs from the independent inputs.
-        rfi_tp1_t = []
-        for indep_diffused, t in zip(indep_diffused_tp1_t, t_list):
-            aa_model.mask_indep(indep_diffused, is_masked_seq)
-            rfi = self.model_adaptor.prepro(indep_diffused, t, is_diffused)
-            rfi_tp1_t.append(rfi)
+            # Convert template-based modeling inputs to a description of a single structure (the query structure).
+            indep, atom_mask, dataset_name = aa_model.adaptor_fix_bb_indep(out)
+            atom_mask = aa_model.pop_unoccupied(indep, atom_mask)
 
-            # Sanity checks
-            if torch.sum(~is_diffused) > 0:
-                assert torch.mean(rfi.xyz[:,~is_diffused,1] - indep.xyz[None,~is_diffused,1]) < 0.001
+            # Mask the independent inputs.
+            run_inference.seed_all(mask_gen_seed) # Reseed the RNGs for test stability.
+            masks_1d = mask_generator.generate_masks(indep, task, self.params, chosen_dataset, None, atom_mask=atom_mask[:, :rf2aa.chemical.NHEAVYPROT])
 
-        run_inference.seed_all(mask_gen_seed) # Reseed the RNGs for test stability.
-        ic(t)
-        ic(dataset_name, chosen_dataset)
-        ic(indep.xyz.shape)
-        return indep, rfi_tp1_t, chosen_dataset, sel_item, t, is_diffused, task
+            is_res_seq_shown = masks_1d['input_seq_mask']
+            is_res_str_shown = masks_1d['input_str_mask']
+            is_atom_str_shown = masks_1d['is_atom_motif']
+            atomizer = None
+            if is_atom_str_shown is not None:
+                is_atom_str_shown = {res_i.item():v for res_i, v in is_atom_str_shown.items()}
+                is_atomized = torch.zeros(indep.length()).bool()
+                for k in is_atom_str_shown.keys():
+                    is_atomized[k] = True
+
+                indep, atomizer = atomize.atomize(indep, is_atomized)
+                assert indep.is_sm.shape[0] == indep.xyz.shape[0]
+                L = indep.seq.shape[0]
+                is_atom_seq_shown = {res_i: [e for e in rf2aa.chemical.aa2long[atomizer.indep_initial_copy.seq[res_i]][:rf2aa.chemical.NHEAVYPROT] if e is not None]
+                                    for res_i in is_atom_str_shown.keys()}
+                str_shown_indices = atomize.atom_indices(atomizer, is_res_str_shown, is_atom_str_shown)
+                seq_shown_indices = atomize.atom_indices(atomizer, is_res_seq_shown, is_atom_seq_shown)
+                is_diffused = torch.ones(L).bool()
+                is_masked_seq = torch.ones(L).bool()
+                is_diffused[str_shown_indices] = False
+                is_masked_seq[seq_shown_indices] = False
+            else:
+                is_diffused = is_masked_seq = ~is_res_str_shown
+            
+            run_inference.seed_all(mask_gen_seed) # Reseed the RNGs for test stability.
+            aa_model.centre(indep, is_diffused)
+            t = random.randint(1, self.diffuser.T)
+            indep_diffused_tp1_t, t_list = aa_model.diffuse(self.conf, self.diffuser, indep, is_diffused, t)
+
+            # Compute all strictly dependent model inputs from the independent inputs.
+            rfi_tp1_t = []
+            for indep_diffused, t in zip(indep_diffused_tp1_t, t_list):
+                aa_model.mask_indep(indep_diffused, is_masked_seq)
+                rfi = self.model_adaptor.prepro(indep_diffused, t, is_diffused)
+                rfi_tp1_t.append(rfi)
+
+                # Sanity checks
+                if torch.sum(~is_diffused) > 0:
+                    assert torch.mean(rfi.xyz[:,~is_diffused,1] - indep.xyz[None,~is_diffused,1]) < 0.001
+
+            run_inference.seed_all(mask_gen_seed) # Reseed the RNGs for test stability.
+            return indep, rfi_tp1_t, chosen_dataset, sel_item, t, is_diffused, task, atomizer, masks_1d, item_context
 
 
 class DistributedWeightedSampler(data.Sampler):
@@ -1680,6 +1700,7 @@ class DistributedWeightedSampler(data.Sampler):
         print('Just entered DistributedWeightedSampler __iter__')
         g = torch.Generator()
         g.manual_seed(self.epoch)
+        run_inference.seed_all(self.epoch * self.num_replicas + self.rank) # Reseed the RNGs for test stability.
 
         # get indices (fb + pdb models)
         # indices = torch.arange(len(self.dataset))

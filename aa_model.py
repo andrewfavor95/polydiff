@@ -24,6 +24,8 @@ import networkx as nx
 import itertools
 import random
 
+import atomize
+
 
 NINDEL=1
 NTERMINUS=2
@@ -54,14 +56,46 @@ class Indep:
     terminus_type: torch.Tensor
 
     def write_pdb(self, path):
-        ic(self.xyz.shape, self.seq.shape)
-        # final_seq = torch.where(self.seq >= 20, 0, self.seq)
-        # util.writepdb(path, self.xyz[:,:3], final_seq)
         seq = self.seq
         seq = torch.where(seq == 20, 0, seq)
         seq = torch.where(seq == 21, 0, seq)
         rf2aa.util.writepdb(path,
-            torch.nan_to_num(self.xyz), seq, self.bond_feats)
+            torch.nan_to_num(self.xyz), seq, self.bond_feats, idx_pdb=self.idx)
+
+    def ca_dists(self):
+        xyz_ca = self.xyz[:,1]
+        ca_sm = xyz_ca[self.is_sm]
+        ca_prot = xyz_ca[~self.is_sm]
+        dist = torch.norm(ca_prot[:,None] - ca_sm[None], dim=-1)
+        dist = dist.min(dim=-1)[0]
+        return dist
+    
+    def center_of_mass(self, mask=None):
+        xyz_ca = self.xyz[:,1]
+        if mask is not None:
+            xyz_ca = xyz_ca[mask]
+        return torch.mean(xyz_ca, dim=0)
+    
+    def length(self):
+        return self.seq.shape[0]
+    
+
+    def has_c_terminal_residue(self):
+        return is_monotonic(self.idx)
+
+    def has_n_terminal_residue(self):
+        return torch.flip(is_monotonic(-torch.flip(self.idx,(0,))),(0,))
+    
+    def is_valid_for_atomization(self, atom_mask):
+        want_atom_mask = rf2aa.util.allatom_mask[self.seq]
+        has_all_heavy_atoms = (want_atom_mask[:,:rf2aa.chemical.NHEAVYPROT] == atom_mask[:,:rf2aa.chemical.NHEAVYPROT]).all(dim=-1)
+        has_sequence = self.seq < 20
+        return self.has_c_terminal_residue() * self.has_n_terminal_residue() * has_all_heavy_atoms * ~self.is_sm * has_sequence
+
+def is_monotonic(idx):
+    idx_pad = torch.concat([idx, torch.tensor([9999])])
+    return (idx_pad[1:] - idx_pad[:-1] == 1)
+
 
 @dataclass
 class RFI:
@@ -223,6 +257,15 @@ def make_indep(pdb, ligand=None):
         terminus_type)
     return indep
 
+def add_fake_frame_legs(xyz, is_atom):
+    # HACK.  ComputeAllAtom in the network requires N and C coords even for atomized residues,
+    # However, these have no semantic value.  TODO: Remove the network's reliance on these coordinates.
+    xyz = xyz.clone()
+    atom_xyz = xyz[is_atom, 1]
+    xyz[is_atom,:3] = atom_xyz[...,None,:]
+    xyz[is_atom, 0] += torch.normal(torch.zeros_like(xyz[is_atom, 0]), std=1.0)
+    xyz[is_atom, 2] += torch.normal(torch.zeros_like(xyz[is_atom, 2]), std=1.0)
+    return xyz
 
 class Model:
 
@@ -292,14 +335,18 @@ class Model:
             is_atomized = torch.zeros(n_protein_hal+n_sm).bool()
             is_atomized[contig_map.atomize_indices] = 1
             input_str_mask = torch.logical_or(is_atomized, ~is_diffused) # 1 for motif, 0 for diffused
-
-            self.atomizer = AtomizeResidues(o, input_str_mask)
-            atom_mask = rf2aa.util.allatom_mask[o.seq]
-            atom_mask[:, 14:] = False # no Hs
-            self.atomizer.featurize_atomized_residues(atom_mask, contig_map.atomize_indices2atomname)
-            o, input_str_mask, input_seq_mask = self.atomizer.return_input_tensors()
-            is_diffused = ~input_str_mask # 1 for diffused, 0 for motif
-            is_seq_masked = ~input_seq_mask
+            # self.atomizer = AtomizeResidues(o, input_str_mask)
+            # atom_mask = rf2aa.util.allatom_mask[o.seq]
+            # atom_mask[:, 14:] = False # no Hs
+            # ic(contig_map.atomize_indices2atomname)
+            # self.atomizer.featurize_atomized_residues(atom_mask, contig_map.atomize_indices2atomname)
+            # residue indices that will be atomized cannot be marked as motif.
+            for k in contig_map.atomize_indices2atomname:
+                is_diffused_prot[k] = True
+            o, is_diffused, is_seq_masked, self.atomizer = atomize.atomize_and_mask(o, ~is_diffused_prot, contig_map.atomize_indices2atomname)
+            # o, input_str_mask, input_seq_mask = self.atomizer.return_input_tensors()
+            # is_diffused = ~input_str_mask # 1 for diffused, 0 for motif
+            # is_seq_masked = ~input_seq_mask
             o.xyz[is_diffused] = np.nan
             o.xyz = get_init_xyz(o.xyz[None, None], o.is_sm).squeeze()
         else:
@@ -570,11 +617,11 @@ def has_coords(xyz, indep):
         ipdb.set_trace()
 
 
-def pad_dim(x, dim, new_l):
+def pad_dim(x, dim, new_l, value=0):
     padding = [0]*2*x.ndim
     padding[2*dim] = new_l - x.shape[dim]
     padding = padding[::-1]
-    return F.pad(x, pad=tuple(padding), value=0)
+    return F.pad(x, pad=tuple(padding), value=value)
 
 def write_traj(path, xyz_stack, seq, bond_feats, natoms=23, **kwargs):
     xyz23 = pad_dim(xyz_stack, 2, natoms)
@@ -642,8 +689,6 @@ def pop_unoccupied(indep, atom_mask):
     assertpy.assert_that(len(indep.atom_frames)).is_equal_to(n_atoms)
 
     pop = rf2aa.util.get_prot_sm_mask(atom_mask, indep.seq)
-    ic(atom_mask.shape, indep.seq.shape, pop.shape)
-    ic(f'Removing {(~pop).sum()} residues / atoms')
     N     = pop.sum()
     pop2d = pop[None,:] * pop[:,None]
 
@@ -674,6 +719,7 @@ def centre(indep, is_diffused):
 
 
 def diffuse(conf, diffuser, indep, is_diffused, t):
+    indep.xyz = add_fake_frame_legs(indep.xyz, indep.is_sm)
 
     if t == diffuser.T: 
         t_list = [t,t]
@@ -692,7 +738,6 @@ def diffuse(conf, diffuser, indep, is_diffused, t):
         'is_sm': indep.is_sm
     }
     diffused_fullatoms, aa_masks, true_crds = diffuser.diffuse_pose(**kwargs)
-    ic(diffused_fullatoms.shape, indep.xyz.shape)
 
     ############################################
     ########### New Self Conditioning ##########
@@ -726,7 +771,10 @@ def diffuse(conf, diffuser, indep, is_diffused, t):
                                     noise_scale=1)
 
         # Noise scale ca hard coded for now. Maybe can eventually be piped down from inference configs? - NRB
-
+        assert not torch.isnan(ca_deltas).any()
+        assert not torch.isnan(true_crds[:,1,:]).any()
+        assert not torch.isnan(tmp_x_t_plus1[is_diffused,1,0]).any()
+        assert not torch.isnan(tmp_x_t_plus1[:,1,0]).any()
         frames_next = get_next_frames(
                                     xt=tmp_x_t_plus1,
                                     px0=true_crds,
@@ -744,6 +792,9 @@ def diffuse(conf, diffuser, indep, is_diffused, t):
         if conf['preprocess']['motif_sidechain_input']:
             tmp_x_t[~is_diffused,:] = tmp_x_t_plus1[~is_diffused.squeeze()]
         
+        assert not torch.isnan(tmp_x_t[~is_diffused,1,0]).any()
+        assert not torch.isnan(tmp_x_t[is_diffused,1,0]).any()
+        assert not torch.isnan(tmp_x_t[:,1,0]).any()
         diffused_fullatoms[1] = tmp_x_t
 
     indep_diffused_tplus1.xyz = diffused_fullatoms[0, :, :14]
@@ -771,6 +822,12 @@ def self_cond(indep, rfi, rfo):
     rfi_sc.t2d = t2d
     return rfi_sc
 
+def diagnose_xyz(xyz):
+    '''Returns a string describing where the coordinates are NaN'''
+    has_ca = torch.isnan(xyz[..., 1, :]).any()
+    has_backbone = torch.isnan(xyz[..., :3, :]).any()
+    # has_heavy = torch.isnan(xyz[..., :3, :]).any()
+    return f'diagnosis: nan-CA: {has_ca}    nan-BB: {has_backbone}'
 
 class AtomizeResidues:
     def __init__(
@@ -779,7 +836,8 @@ class AtomizeResidues:
         input_str_mask # dict
         ) -> None:
 
-        self.indep = indep
+        self.indep_initial_copy = copy.deepcopy(indep)
+        self.indep = copy.deepcopy(indep)
         self.input_str_mask = input_str_mask
         self.input_seq_mask = input_str_mask
 
@@ -814,7 +872,7 @@ class AtomizeResidues:
 
         pop = self.pop_protein_feats(res_idx_atomize_all, total_L)
         #handle diffusion specific things such as masking
-        self.construct_diffusion_masks(is_motif, is_atom_motif_all, pop)
+        # self.construct_diffusion_masks(is_motif, is_atom_motif_all, pop)
     
     def generate_atomize_protein_features(self, is_motif, atom_mask, atomize_indices2atomnames):
         """
@@ -848,7 +906,7 @@ class AtomizeResidues:
             residue = self.indep.seq[res_idx] # number representing the residue in the token list, can be used to index aa2long
             # check if all the atoms in the residue are resolved, if not dont atomize
             if not torch.all(allatom_mask[residue]==atom_mask[res_idx]):
-                continue
+                raise Exception(f'not all atoms resolved for {residue} at 0-indexed position {res_idx}')
             N_term = res_idx ==  0
             C_term = res_idx == self.indep.idx.shape[0]-1
 
@@ -863,7 +921,9 @@ class AtomizeResidues:
                 C_resolved = self.indep.idx[res_idx+1]-self.indep.idx[res_idx] == 1
                 N_resolved = self.indep.idx[res_idx]-self.indep.idx[res_idx-1] == 1
             if not (C_resolved and N_resolved):
-                continue
+                desc = f'{residue} at 0-indexed position {res_idx}'
+                which_missing = ' and '.join(name for name, is_resolved in (('C-terminal', C_resolved), ('N-terminal', N_resolved)) if not is_resolved)
+                raise Exception(f'both C terminal and N termal residues must be resolved, but {desc} lacks {which_missing}')
             
             seq_atomize, _, xyz_atomize, _, frames_atomize, bond_feats_atomize, C_index, chirals_atomize = \
                             rf2aa.util.atomize_protein(res_idx, self.indep.seq[None], xyz, atom_mask, n_res_atomize=1)
@@ -986,7 +1046,60 @@ class AtomizeResidues:
         self.indep.terminus_type = self.indep.terminus_type[pop]
         return pop
 
-    def get_deatomized_features(self, seq_pred, xyz_pred):
+    def get_atomized_res_idx_from_res(self, expect_H=False):
+
+        atom_idx_by_res = {}
+        
+        N_atoms = rf2aa.chemical.NHEAVYPROT
+        if expect_H:
+            N_atoms = rf2aa.chemical.NTOTAL
+        atomized_mask = rf2aa.util.allatom_mask[torch.tensor(self.atomized_res)][:,:N_atoms]
+        atomized_res_natoms = atomized_mask.sum(dim=1)
+        N_atomized_res = len(self.atomized_res)
+        N_atomized_atoms = sum(atomized_res_natoms)
+
+        L = self.indep.seq.shape[0] # length of atomized features
+        L_base = L - N_atomized_atoms # length of non-atomized region in atomized features
+        L_new = L_base + N_atomized_res # length of deatomized features
+
+        idx_nonatomized = np.setdiff1d(np.arange(L_new), self.atomized_res_idx)
+        # map residue indices in atomized features to indices in deatomized features
+        return dict(zip(idx_nonatomized, np.arange(L_base)))
+
+
+    def get_atom_idx_by_res(self, expect_H=False):
+
+        atom_idx_by_res = {}
+        
+        N_atoms = rf2aa.chemical.NHEAVYPROT
+        if expect_H:
+            N_atoms = rf2aa.chemical.NTOTAL
+
+        atomized_mask = rf2aa.util.allatom_mask[torch.tensor(self.atomized_res)][:,:N_atoms]
+        atomized_res_natoms = atomized_mask.sum(dim=1)
+        N_atomized_res = len(self.atomized_res)
+        assertpy.assert_that(len(self.atomized_res)).is_equal_to(len(self.atomized_res_idx))
+        N_atomized_atoms = sum(atomized_res_natoms)
+
+        L = self.indep.seq.shape[0] # length of atomized features
+        L_base = L - N_atomized_atoms # length of non-atomized region in atomized features
+        L_new = L_base + N_atomized_res # length of deatomized features
+
+        # indices of non-atomized positions in deatomized features
+        idx_nonatomized = np.setdiff1d(np.arange(L_new), self.atomized_res_idx)
+        assert(len(idx_nonatomized)==L_base)
+
+        # deatomize the previously atomized residues
+        for i in range(N_atomized_res):
+            res_idx = self.atomized_res_idx[i]
+            # assumes atomized atoms were in standard order
+            atom_idx_range = L_base + sum(atomized_res_natoms[:i]) + np.arange(atomized_res_natoms[i])
+            atom_idx_by_res[res_idx.item()] = atom_idx_range
+            # xyz[res_idx, :len(atom_idx_range)] = xyz_pred[atom_idx_range,1]
+        return atom_idx_by_res
+
+
+    def get_deatomized_features(self, seq_pred, xyz_pred, expect_H=False):
         """Converts previously atomized residues back into residue representation and
         returns features for PDB output. Does not update instance variables.
 
@@ -1007,7 +1120,9 @@ class AtomizeResidues:
             bond_feats: torch.Tensor (L_new, L_new)
             same_chain: torch.Tensor (L_new, L_New)
         """
-        assert(xyz_pred.shape == self.indep.xyz.shape)
+        N_atoms = rf2aa.chemical.NHEAVYPROT
+        if expect_H:
+            N_atoms = rf2aa.chemical.NTOTAL
         assert(seq_pred.shape[0] == self.indep.seq.shape[0])
         
         # no atomization was done, just return unmodified features
@@ -1015,7 +1130,6 @@ class AtomizeResidues:
             return seq_pred, xyz_pred, self.indep.bond_feats, self.indep.same_chain
 
         # assumes all heavy atoms are present
-        N_atoms = xyz_pred.shape[1]
         atomized_mask = rf2aa.util.allatom_mask[torch.tensor(self.atomized_res)][:,:N_atoms]
         atomized_res_natoms = atomized_mask.sum(dim=1)
         N_atomized_res = len(self.atomized_res)
@@ -1028,7 +1142,7 @@ class AtomizeResidues:
         # deatomized features
         seq = torch.full((L_new,), UNKINDEX).long()
         seq = torch.nn.functional.one_hot(seq, num_classes=NAATOKENS) # (L_new, NAATOKENS)
-        xyz = torch.full((L_new, N_atoms, 3), np.nan).float()
+        xyz = torch.full((L_new, rf2aa.chemical.NTOTAL, 3), np.nan).float()
         idx = torch.full((L_new,), np.nan).long()
         bond_feats = torch.zeros((L_new, L_new)).long()
         same_chain = torch.zeros((L_new, L_new)).long()
@@ -1072,22 +1186,6 @@ class AtomizeResidues:
 
         return seq, xyz, idx, bond_feats, same_chain
 
-
-    def construct_diffusion_masks(self, is_motif, is_atom_motif_all, pop):
-        """
-        takes the original motif, the atom_motif and the residues that were atomized as input and constructs diffusion masks 
-        the structure mask is True for atoms provided as context
-        the sequence mask is True for all "atom" nodes (residues are prespecified but not their identity)
-        """
-        self.indep.is_sm = rf2aa.util.is_atom(self.indep.seq)
-        is_atom_motif_all =  torch.cat(is_atom_motif_all)
-        is_motif = torch.cat((is_motif, is_atom_motif_all))
-
-        is_motif = is_motif[pop]
-        self.input_str_mask = is_motif
-        # unmask atom types for all atoms in atomized sidechains (these are deterministic)
-        self.input_seq_mask = torch.logical_or(is_motif, self.indep.is_sm)
-    
     @staticmethod
     def choose_random_atom_motif(natoms, p=0.5):
         """

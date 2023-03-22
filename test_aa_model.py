@@ -7,6 +7,7 @@ import unittest
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'RF2-allatom'))
 import rf2aa
 from aa_model import AtomizeResidues, Indep, Model, make_indep
+import atomize
 
 class AAModelTestCase(unittest.TestCase):
 
@@ -48,11 +49,9 @@ class AAModelTestCase(unittest.TestCase):
         input_indep = copy.deepcopy(indep)
         input_mask = copy.deepcopy(input_str_mask)
 
-        atomizer = AtomizeResidues(indep, input_str_mask)
         atom_mask = rf2aa.util.allatom_mask[indep.seq]
         atom_mask[:, 14:] = False # no Hs
-        atomizer.featurize_atomized_residues(atom_mask)
-        indep, input_str_mask, input_seq_mask = atomizer.return_input_tensors()
+        indep, atomizer = atomize.atomize(indep, input_str_mask)
         num_atoms = torch.sum(atom_mask[input_mask])
 
         # original length, remove the residue nodes that are popped and add new atom nodes for those residues

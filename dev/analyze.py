@@ -1185,3 +1185,6 @@ def set_remote_cmd(remote_ip):
     sak.make_network_cmd(cmd)
     return cmd
 
+def clear():
+    sak.clear(cmd)
+    cmd.do('@~/.pymolrc')

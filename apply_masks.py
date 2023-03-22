@@ -11,8 +11,6 @@ import rf2aa.chemical
 from rf2aa.chemical import NAATOKENS, MASKINDEX
 from rf2aa.tensor_util import assert_equal
 
-ic.configureOutput(includeContext=True)
-
 def sample_blosum_mutations(seq, *args, **kwargs):
     assert len(seq.shape) == 1
     L = len(seq)

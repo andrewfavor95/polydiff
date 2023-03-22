@@ -53,6 +53,10 @@ def get_args(in_args=None):
             help="If passed, will not use wandb")
     train_group.add_argument('-epoch_size', default=25600, action='store', type=int,
             help='Number of examples per epoch (and thus between saving epochs')
+    train_group.add_argument('-verbose_checks', default=False, action='store_true', 
+            help="If true, will set model to do sanity checks on inputs")
+    train_group.add_argument("-out_dir", default=None,
+            help="output directory")
 
     # data-loading parameters
     data_group = parser.add_argument_group("data loading parameters")
@@ -104,8 +108,6 @@ def get_args(in_args=None):
             help = 'Select dataset(s) to use. No default so make up your mind. Options are ["cn","pdb","fb","complex"]. Specify in a list: e.g. -dataset cn,pdb,fb')
     data_group.add_argument('-dataset_prob',type=str, default=None,
             help = 'Select proportion of examples from each dataset. Default behaviour is uniform. Specify like 0.2,0.4,0.4. Must sum to 1')
-    data_group.add_argument('-p_uncond',type=float, default=0.2,
-            help = 'What proportion of examples do you want to be unconditional (i.e. no motif)? Default is 20%')
     data_group.add_argument('-mask_min_proportion',type=float,default=0.2,
             help = 'When doing motif scaffolding in training, what is the minimum proportion of the protein you want to mask? Default is 0.2.')
     data_group.add_argument('-mask_max_proportion',type=float,default=1.0,
@@ -310,6 +312,7 @@ def get_args(in_args=None):
     parser.add_argument('-log_inputs', action='store_true', default=False)
     parser.add_argument('-n_write_pdb', type=int, default=100)
     parser.add_argument('-reinitialize_missing_params', action='store_true', default=False, help='If the checkpoint file is missing a network parameter, use the networks default initialization for that parameter')
+    parser.add_argument('-saves_per_epoch', type=int, default=0, help='number of times to save the model per epoch')
     
     # Preprocessing parameters
     preprocess_group = parser.add_argument_group("preprocess parameters")
