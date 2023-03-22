@@ -1102,14 +1102,13 @@ class Trainer():
                         mask_BB = ~indep.is_sm[None]
                         mask_2d = mask_BB[:,None,:] * mask_BB[:,:,None] # ignore pairs having missing residues
                         assert torch.sum(mask_2d) > 0, "mask_2d is blank"
-                        c6d, _ = xyz_to_c6d(true_crds)
+                        true_crds_frame = rf2aa.util.xyz_to_frame_xyz(true_crds, indep.seq[None], indep.atom_frames[None])
+                        c6d = rf2aa.kinematics.xyz_to_c6d(true_crds_frame)
                         negative = torch.tensor([False])
-                        c6d = c6d_to_bins2(c6d, indep.same_chain[None], negative=negative)
+                        c6d = rf2aa.kinematics.c6d_to_bins(c6d, indep.same_chain[None], negative=negative)
 
-                        prob = self.active_fn(logit_s[0]) # distogram
                         label_aa_s = indep.seq[None, None]
                         mask_aa_s = is_diffused[None, None]
-                        mask_msa = indep.seq[None]
                         same_chain = indep.same_chain[None]
                         seq_diffusion_mask = torch.ones(L).bool()
                         seq_t = torch.nn.functional.one_hot(indep.seq, 80)[None].float()
