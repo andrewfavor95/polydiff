@@ -314,9 +314,9 @@ class Trainer():
 
         # Hack to pickle wrapped functions
         loader_param_pickle_safe = copy.deepcopy(self.loader_param)
-        loader_param_pickle_safe['DIFF_MASK_PROBS'] = {k.__name__:v for k,v in pickle_safe['DIFF_MASK_PROBS'].items()}
+        loader_param_pickle_safe['DIFF_MASK_PROBS'] = {k.__name__:v for k,v in loader_param_pickle_safe['DIFF_MASK_PROBS'].items()}
         diffusion_param_pickle_safe = copy.deepcopy(self.diffusion_param)
-        diffusion_param_pickle_safe['diff_mask_probs'] = {k.__name__:v for k,v in pickle_safe_2['diff_mask_probs'].items()}
+        diffusion_param_pickle_safe['diff_mask_probs'] = {k.__name__:v for k,v in diffusion_param_pickle_safe['diff_mask_probs'].items()}
         # ic(pickle_safe)
         self.training_arguments = {
 
@@ -801,7 +801,7 @@ class Trainer():
             wandb.config = all_param
             wandb.save(os.path.join(os.getcwd(), self.outdir, 'git_diff.txt'))
         ic(os.environ['MASTER_ADDR'], rank, world_size, torch.cuda.device_count())
-        dist.init_process_group(backend="gloo", world_size=world_size, rank=rank)
+        dist.init_process_group(backend="nccl", world_size=world_size, rank=rank)
         if torch.cuda.device_count():
             gpu = rank % torch.cuda.device_count()
             torch.cuda.set_device("cuda:%d"%gpu)
@@ -1086,7 +1086,7 @@ class Trainer():
                                         rfi_t,
                                         use_checkpoint=True,
                                         **({model_input_logger.LOG_ONLY_KEY: {'t':int(little_t), 'item': item}} if self.log_inputs else {}))
-                        logit_s, logit_aa_s, logits_pae, logits_pde, pred_crds, alphas, px0_allatom, pred_lddts, _, _, _ = rfo.unsafe_astuple()
+                        logit_s, logit_aa_s, logits_pae, logits_pde, _, pred_crds, alphas, px0_allatom, pred_lddts, _, _, _ = rfo.unsafe_astuple()
 
                         is_diffused = is_diffused.to(gpu)
                         indep.seq = indep.seq.to(gpu)
@@ -1190,14 +1190,14 @@ class Trainer():
                     if rank == 0:
                         loss_dict.update({'t':little_t, 'total_examples':epoch*self.n_train+counter*world_size, 'dataset':chosen_dataset[0], 'task':chosen_task[0]})
                         metrics = {}
-                        for m in self.metrics:
-                            with torch.no_grad():
-                                if m.accepts_indep:
-                                    rf2aa.tensor_util.to_device(indep, 'cpu')
-                                    # indep_true = indep
-                                    # if atomizer:
-                                    #     indep_true = atomize.deatomize(atomizer, indep_true)
-                                    metrics.update(m(indep, pred_crds[-1, 0].cpu(), is_diffused.cpu()))
+                        # for m in self.metrics:
+                        #     with torch.no_grad():
+                        #         if m.accepts_indep: rk does this work?
+                        #             rf2aa.tensor_util.to_device(indep, 'cpu')
+                        #             # indep_true = indep
+                        #             # if atomizer:
+                        #             #     indep_true = atomize.deatomize(atomizer, indep_true)
+                        #             metrics.update(m(indep, pred_crds[-1, 0].cpu(), is_diffused.cpu()))
 				# Currently broken
                                 # metrics.update(m(logit_s, c6d,
                                 # logit_aa_s, label_aa_s, mask_aa_s, None,
