@@ -193,10 +193,11 @@ def run_regression(self, arg_string, golden_name, call_number=1, assert_loss=Fal
                     logits_aa = torch.normal(0, 1, (1, 80, L))
                     logits_pae = torch.normal(0, 1, (1, 64, L, L))
                     logits_pde = torch.normal(0, 1, (1, 64, L, L))
+                    p_bind = torch.normal(0, 1, (1, 1))
                     alpha_s = torch.normal(0, 1, (40, 1, L, 20, 2))
                     xyz_allatom = torch.normal(0, 1, (1, L, 36, 3))
                     lddt = torch.normal(0, 1, (1, 50, L))
-                    return logits, logits_aa, logits_pae, logits_pde, px0_xyz, alpha_s, xyz_allatom, lddt, None, None, None
+                    return logits, logits_aa, logits_pae, logits_pde, p_bind, px0_xyz, alpha_s, xyz_allatom, lddt, None, None, None
                 else:
                     raise CallException('called')
             side_effect.call_count = 0
@@ -265,12 +266,13 @@ class Loss(unittest.TestCase):
                     logits_aa = torch.normal(0, 1, (1, 80, L))
                     logits_pae = torch.normal(0, 1, (1, 64, L, L))
                     logits_pde = torch.normal(0, 1, (1, 64, L, L))
+                    p_bind = torch.normal(0, 1, (1, 1))
                     alpha_s = torch.normal(0, 1, (40, 1, L, 20, 2))
                     xyz_allatom = torch.normal(0, 1, (1, L, 36, 3))
                     lddt = torch.normal(0, 1, (1, 50, L))
                     ic(xyz_allatom.requires_grad)
                     xyz_allatom.requires_grad = True
-                    side_effect.rfo = aa_model.RFO(logits, logits_aa, logits_pae, logits_pde, px0_xyz, alpha_s, xyz_allatom, lddt, None, None, None)
+                    side_effect.rfo = aa_model.RFO(logits, logits_aa, logits_pae, logits_pde, p_bind, px0_xyz, alpha_s, xyz_allatom, lddt, None, None, None)
                     side_effect.rfo = tensor_util.to_ordered_dict(side_effect.rfo)
                     tensor_util.require_grad(side_effect.rfo)
                     return side_effect.rfo.values()

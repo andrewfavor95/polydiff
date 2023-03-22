@@ -648,9 +648,11 @@ def adaptor_fix_bb_indep(out):
     adapts the outputs of RF2-allatom phase 3 dataloaders into fixed bb outputs
     takes in a tuple with 22 items representing the RF2-allatom data outputs and returns an Indep dataclass.
     """
-    assert len(out) == 22, f"found {len(out)} elements in RF2-allatom output"
+    assert len(out) == 24, f"found {len(out)} elements in RF2-allatom output"
     (seq, msa, msa_masked, msa_full, mask_msa, true_crds, atom_mask, idx_pdb, xyz_t, t1d, mask_t, xyz_prev,
-        mask_prev, same_chain, unclamp, negative, atom_frames, bond_feats, chirals, ch_label, dataset_name, item) = out
+        mask_prev, same_chain, unclamp, negative, atom_frames, bond_feats, dist_matrix, chirals, ch_label, symm_group,
+         dataset_name, item) = out
+    assert symm_group=="C1", f"example with {symm_group} found, symmetric training not set up for aa-diffusion"
     #remove permutation symmetry dimension if present
     if len(true_crds.shape) == 4 and len(atom_mask.shape) == 3:
         true_crds = true_crds[0]

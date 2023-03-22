@@ -27,7 +27,7 @@ import rf2aa.util
 import rf2aa.loss
 import rf2aa.tensor_util
 from rf2aa.tensor_util import assert_equal
-from rf2aa.util_module import ComputeAllAtomCoords
+from rf2aa.util_module import XYZConverter
 from rf2aa.RoseTTAFoldModel import RoseTTAFoldModule
 import loss_aa
 import run_inference
@@ -273,7 +273,7 @@ class Trainer():
         self.hbpolys = rf2aa.util.hbpolys
 
         # module torsion -> allatom
-        self.compute_allatom_coords = ComputeAllAtomCoords()
+        # self.compute_allatom_coords = ComputeAllAtomCoords()
 
         #self.diffuser.get_allatom = self.compute_allatom_coords
 
@@ -313,10 +313,10 @@ class Trainer():
         # and so are not saved here
 
         # Hack to pickle wrapped functions
-        pickle_safe = copy.deepcopy(self.loader_param)
-        pickle_safe['DIFF_MASK_PROBS'] = {k.__name__:v for k,v in pickle_safe['DIFF_MASK_PROBS'].items()}
-        pickle_safe_2 = copy.deepcopy(self.diffusion_param)
-        pickle_safe_2['diff_mask_probs'] = {k.__name__:v for k,v in pickle_safe_2['diff_mask_probs'].items()}
+        loader_param_pickle_safe = copy.deepcopy(self.loader_param)
+        loader_param_pickle_safe['DIFF_MASK_PROBS'] = {k.__name__:v for k,v in pickle_safe['DIFF_MASK_PROBS'].items()}
+        diffusion_param_pickle_safe = copy.deepcopy(self.diffusion_param)
+        diffusion_param_pickle_safe['diff_mask_probs'] = {k.__name__:v for k,v in pickle_safe_2['diff_mask_probs'].items()}
         # ic(pickle_safe)
         self.training_arguments = {
 
@@ -336,8 +336,8 @@ class Trainer():
             'zero_weights': self.zero_weights,
             'log_inputs': self.log_inputs,
 
-            'diffusion_param': pickle_safe_2,
-            'loader_param': pickle_safe,
+            'diffusion_param': diffusion_param_pickle_safe,
+            'loader_param': loader_param_pickle_safe,
             'loss_param': self.loss_param
 
         }
@@ -840,7 +840,7 @@ class Trainer():
         self.ang_ref = self.ang_ref.to(gpu)
         self.l2a = self.l2a.to(gpu)
         self.aamask = self.aamask.to(gpu)
-        self.compute_allatom_coords = self.compute_allatom_coords.to(gpu)
+        #self.compute_allatom_coords = self.compute_allatom_coords.to(gpu)
 
         self.num_bonds = self.num_bonds.to(gpu)
         self.ljlk_parameters = self.ljlk_parameters.to(gpu)
@@ -890,7 +890,7 @@ class Trainer():
         self.fi_dev = self.fi_dev.to(gpu)
         self.l2a = self.l2a.to(gpu)
         self.aamask = self.aamask.to(gpu)
-        self.compute_allatom_coords = self.compute_allatom_coords.to(gpu)
+        #self.compute_allatom_coords = self.compute_allatom_coords.to(gpu)
         self.num_bonds = self.num_bonds.to(gpu)
         self.atom_type_index = self.atom_type_index.to(gpu)
         self.ljlk_parameters = self.ljlk_parameters.to(gpu)
