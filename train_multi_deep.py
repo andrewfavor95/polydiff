@@ -1224,12 +1224,13 @@ class Trainer():
                 # if self.diffusion_param['seqdiff'] == 'continuous':
                 #     top1_sequence = torch.argmax(logit_aa_s[:,:20,:], dim=1)
 
+                n_processed = self.batch_size*world_size * counter
                 save_pdb = np.random.randint(0,self.n_write_pdb) == 0
                 if save_pdb:
                     (L,) = indep.seq.shape
                     pdb_dir = os.path.join(self.outdir, 'training_pdbs')
                     os.makedirs(pdb_dir, exist_ok=True)
-                    prefix = f'{pdb_dir}/epoch_{epoch}_{counter}_{chosen_task[0]}_{chosen_dataset[0]}_t_{int( little_t )}'
+                    prefix = f'{pdb_dir}/epoch_{epoch}_{n_processed}_{chosen_task}_{chosen_dataset}_t_{int( little_t )}'
 
                     rf2aa.tensor_util.to_device(indep, 'cpu')
                     pred_xyz = xyz_prev_orig.clone()
@@ -1264,14 +1265,12 @@ class Trainer():
                 # Expected epoch time logging
                 if rank == 0:
                     elapsed_time = time.time() - start_time
-                    n_processed = self.batch_size*world_size * counter
                     mean_rate = n_processed / elapsed_time
                     expected_epoch_time = int(self.n_train / mean_rate)
                     m, s = divmod(expected_epoch_time, 60)
                     h, m = divmod(m, 60)
                     print(f'Expected time per epoch of size ({self.n_train}) (h:m:s) based off {n_processed} measured pseudo batch times: {h:d}:{m:02d}:{s:.0f}')
                 if self.saves_per_epoch and rank==0:
-                    n_processed = self.batch_size*world_size * counter
                     n_processed_next = self.batch_size*world_size * (counter+1)
                     n_fractionals = np.arange(1, self.saves_per_epoch) / self.saves_per_epoch
                     for fraction in n_fractionals:
