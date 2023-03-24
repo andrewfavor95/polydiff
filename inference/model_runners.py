@@ -354,7 +354,7 @@ class Sampler:
         self.t_step_input = self._conf.diffuser.T
         if self.diffuser_conf.partial_T:
             mappings = self.contig_map.get_mappings()
-            assert indep.xyz.shape[0] ==  L + torch.sum(indep.is_sm), f"there must be a coordinate in the input PDB for each residue implied by the contig string for partial diffusion.  length of input PDB != length of contig string: {indep.xyz.shape[0]} != {L}"
+            assert indep.xyz.shape[0] ==  L + torch.sum(indep.is_sm), f"there must be a coordinate in the input PDB for each residue implied by the contig string for partial diffusion.  length of input PDB != length of contig string: {indep.xyz.shape[0]} != {L+torch.sum(indep.is_sm)}"
             assert torch.all(self.is_diffused[indep.is_sm] == 0), f"all ligand atoms must be in the motif"
             assert (mappings['con_hal_idx0'] == mappings['con_ref_idx0']).all(), 'all positions in the input PDB must correspond to the same index in the output pdb'
             indep = indep_orig
