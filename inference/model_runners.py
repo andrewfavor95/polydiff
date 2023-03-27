@@ -303,7 +303,10 @@ class Sampler:
         model = model.eval()
         self._log.info(f'Loading checkpoint.')
         if not self._conf.inference.zero_weights:
-            model.load_state_dict(self.ckpt['model_state_dict'], strict=True)
+            use_model = 'final_state_dict'
+            if self._conf.inference.ema:
+                use_model = 'model_state_dict'
+            model.load_state_dict(self.ckpt[use_model], strict=True)
         return model
 
     def construct_contig(self, target_feats):

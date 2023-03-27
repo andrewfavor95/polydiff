@@ -262,6 +262,9 @@ def _get_diffusion_mask_simple(xyz, low_prop, high_prop, broken_prop):
     """
     L = xyz.shape[0]
     diffusion_mask = torch.ones(L).bool()
+    if L <= 3:
+        # Too small to mask
+        return torch.zeros(L).bool()
     mask_length = int(np.floor(random.uniform(low_prop, high_prop) * L))
     # decide if mask goes in the middle or the ends
     if random.uniform(0,1) < broken_prop or mask_length < 3:

@@ -23,6 +23,7 @@ import logging
 import string 
 import hydra
 import rf2aa.chemical
+import rf2aa.tensor_util
 import aa_model
 
 ###########################################################
@@ -95,9 +96,8 @@ def get_next_frames(xt, px0, t, diffuser, so3_type, diffusion_mask, noise_scale=
     C_t  = xt[None, :, 2, :]
 
     R_t, Ca_t = rigid_from_3_points(N_t, Ca_t, C_t)
-
-    R_0 = scipy_R.from_matrix(R_0.squeeze().numpy())
-    R_t = scipy_R.from_matrix(R_t.squeeze().numpy())
+    R_0 = scipy_R.from_matrix(rf2aa.tensor_util.assert_squeeze(R_0).numpy())
+    R_t = scipy_R.from_matrix(rf2aa.tensor_util.assert_squeeze(R_t).numpy())
 
     # Sample next frame for each residue
     all_rot_transitions = []
@@ -120,7 +120,7 @@ def get_next_frames(xt, px0, t, diffuser, so3_type, diffusion_mask, noise_scale=
     all_rot_transitions = np.stack(all_rot_transitions, axis=0)
 
     # Apply the interpolated rotation matrices to the coordinates
-    next_crds   = np.einsum('lrij,laj->lrai', all_rot_transitions, xt[:,:3,:] - Ca_t.squeeze()[:,None,...].numpy()) + Ca_t.squeeze()[:,None,None,...].numpy()
+    next_crds   = np.einsum('lrij,laj->lrai', all_rot_transitions, xt[:,:3,:] - Ca_t.squeeze(0)[:,None,...].numpy()) + Ca_t.squeeze(0)[:,None,None,...].numpy()
 
     # (L,3,3) set of backbone coordinates with slight rotation 
     return next_crds.squeeze(1)

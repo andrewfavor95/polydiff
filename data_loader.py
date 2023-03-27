@@ -127,6 +127,7 @@ def set_data_loader_params(args):
         "MASK_BROKEN_PROPORTION":args.mask_broken_proportion,
         "SPOOF_ITEM":args.spoof_item,
         "MOL_DIR":rf2aa.data_loader.default_dataloader_params['MOL_DIR'],
+        "DISCONTIGUOUS_CROP": True,
     }
     for param in PARAMS:
         if hasattr(args, param.lower()):
@@ -1376,7 +1377,8 @@ def default_dataset_configs(loader_param, debug=False):
     overrides = [
         ['DATAPKL_AA', 'DATAPKL'],
         ['MOL_DIR', 'MOL_DIR'],
-        ['MAX_LENGTH', 'MAXMONOMERLENGTH']
+        ['MAX_LENGTH', 'MAXMONOMERLENGTH'],
+        ['CROP', 'CROP']
     ]
     for k_diff, k_rf2aa in overrides:
         v = loader_param.get(k_diff, None)

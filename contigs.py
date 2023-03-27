@@ -246,4 +246,5 @@ class ContigMap():
         mappings['inpaint_seq'] = self.inpaint_seq
         mappings['sampled_mask'] = self.sampled_mask
         mappings['mask_1d'] = self.mask_1d
+        mappings['atomize_indices2atomname'] = self.atomize_indices2atomname
         return mappings

@@ -36,9 +36,11 @@ inference:
   zero_weights: False
   ligand: null
   atomized_output: False
+  ema: True
 
 contigmap:
   contigs: ['20', 'A3-23', '30']
+  contig_atoms: null
   inpaint_str: null
   inpaint_seq: null
   length: null

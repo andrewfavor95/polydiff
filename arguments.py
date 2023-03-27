@@ -121,6 +121,7 @@ def get_args(in_args=None):
     data_group.add_argument('-spoof_item', type=str, default='', 
             help='Path to pickled dataset to load for training on. If path doesn\'t exist, will write new pickle with that name.')
     data_group.add_argument('-mol_dir', type=str, default=data_loader.USE_DEFAULT)
+    data_group.add_argument("-discontiguous_crop", default="True", choices=("True","False"))
 
     # Diffusion args 
     diff_group = parser.add_argument_group("diffusion parameters")
@@ -342,6 +343,7 @@ def get_args(in_args=None):
     args.sidechain_input = args.sidechain_input == 'True'
     args.motif_sidechain_input = args.motif_sidechain_input == 'True'
     args.sequence_decode = args.sequence_decode == 'True'
+    args.discontiguous_crop = args.discontiguous_crop == 'True'
     ic(args.sequence_decode)
     # parse the task lists
     task_names = args.task_names.split(',')

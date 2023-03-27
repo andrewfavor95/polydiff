@@ -25,7 +25,7 @@ sys.path.insert(0,script_dir+'/../../RF2-allatom/')
 import inference.utils
 import rf2aa.parsers
 import rf2aa.chemical
-from rf2aa.parsers import load_ligand_from_pdb
+from parsers import load_ligand_from_pdb
 
 
 def parse_args(in_args):

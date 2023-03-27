@@ -1,3 +1,4 @@
+import sys
 import numpy as np
 import scipy
 import scipy.spatial
@@ -6,6 +7,8 @@ import os,re
 import random
 import util
 import gzip
+import rf2aa.util
+import rf2aa.parsers
 
 to1letter = {
     "ALA":'A', "ARG":'R', "ASN":'N', "ASP":'D', "CYS":'C',
@@ -225,3 +228,57 @@ def parse_templates(item, params):
     ids = ids
         
     return xyz,mask,qmap,f0d,f1d,ids
+
+def load_ligand_from_pdb(fn, lig_name=None, remove_H=True):
+    """Loads a small molecule ligand from pdb file `fn` into feature tensors.
+    If no ligand is found, returns empty tensors with the same dimensions as
+    usual.
+
+    PDB format: https://www.wwpdb.org/documentation/file-format-content/format33/sect9.html
+
+    Parameters
+    ----------
+    fn : str
+        Name of PDB file
+    lig_name : str
+        3-letter residue name of ligand to load. If None, assumes
+        there is only 1 ligand and loads it from all HETATM lines.
+    remove_H : bool
+        If True, does not load H atoms
+
+    Returns
+    -------
+    xyz_sm : torch.Tensor (N_symmetry, L_sm, 3)
+        Atom coordinates of ligand
+    mask_sm : torch.Tensor (N_symmetry, L_sm)
+        Boolean mask for whether atoms exist
+    msa_sm : torch.Tensor (L_sm,)
+        Integer-encoded (rf2aa.chemical) sequence (atom types) of ligand.
+    bond_feats_sm : torch.Tensor (L_sm, L_sm)
+        Bond features for ligand
+    idx_sm : torch.Tensor (L_sm,)
+        Residue number for ligand (all the same)
+    atom_names : list of str
+        Atom names of ligand (including whitespace) from columns 13-16 of
+        PDB HETATM lines.
+    """
+    with open(fn, 'r') as fh:
+        stream = [l for l in fh
+                  if (("HETATM" in l) and (lig_name is None or l[17:20].strip()==lig_name))\
+                     or "CONECT" in l]
+
+    if len(stream)==0:
+        sys.exit(f'ERROR (load_ligand_from_pdb): no HETATM records found in file {fn}.')
+
+    mol, msa_sm, ins_sm, xyz_sm, mask_sm = \
+        rf2aa.parsers.parse_mol("".join(stream), filetype="pdb", string=True, remove_H=remove_H,
+                                find_automorphs=False)
+    G = rf2aa.util.get_nxgraph(mol)
+    bond_feats_sm = rf2aa.util.get_bond_feats(mol)
+
+    atom_names = []
+    for line in stream:
+        if line.startswith('HETATM'):
+            atom_names.append(line[12:16])
+
+    return mol, xyz_sm, mask_sm, msa_sm, bond_feats_sm, atom_names

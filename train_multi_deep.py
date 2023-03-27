@@ -801,7 +801,9 @@ class Trainer():
             wandb.config = all_param
             wandb.save(os.path.join(os.getcwd(), self.outdir, 'git_diff.txt'))
         ic(os.environ['MASTER_ADDR'], rank, world_size, torch.cuda.device_count())
-        dist.init_process_group(backend="nccl", world_size=world_size, rank=rank)
+        print(f'{rank=} {world_size=} initializing process group')
+        dist.init_process_group(backend="gloo", world_size=world_size, rank=rank)
+        print(f'{rank=} {world_size=} initialized process group')
         if torch.cuda.device_count():
             gpu = rank % torch.cuda.device_count()
             torch.cuda.set_device("cuda:%d"%gpu)
@@ -932,8 +934,7 @@ class Trainer():
     def save_model(self, suffix, ddp_model, optimizer, scheduler, scaler):
         #save every epoch     
         model_path = self.checkpoint_fn(self.model_name, str(suffix))
-        ic(f'saving model to {model_path}')
-        ic()
+        print(f'saving model to {model_path}')
         torch.save({'epoch': suffix,
                     #'model_state_dict': ddp_model.state_dict(),
                     'model_state_dict': ddp_model.module.shadow.state_dict(),
@@ -973,7 +974,7 @@ class Trainer():
         print('Instantiating DDP')
         ddp_model = model
         if torch.cuda.device_count():
-            ddp_model = DDP(model, device_ids=[device], find_unused_parameters=False)
+            ddp_model = DDP(model, device_ids=[device], find_unused_parameters=False, broadcast_buffers=False)
         else:
             ddp_model = DDP(model, find_unused_parameters=False)
         # if rank == 0:
@@ -1086,7 +1087,7 @@ class Trainer():
                                         rfi_t,
                                         use_checkpoint=True,
                                         **({model_input_logger.LOG_ONLY_KEY: {'t':int(little_t), 'item': item}} if self.log_inputs else {}))
-                        logit_s, logit_aa_s, logits_pae, logits_pde, _, pred_crds, alphas, px0_allatom, pred_lddts, _, _, _ = rfo.unsafe_astuple()
+                        logit_s, logit_aa_s, logits_pae, logits_pde, p_bind, pred_crds, alphas, px0_allatom, pred_lddts, _, _, _ = rfo.unsafe_astuple()
 
                         is_diffused = is_diffused.to(gpu)
                         indep.seq = indep.seq.to(gpu)
@@ -1135,7 +1136,7 @@ class Trainer():
                                 seq_diffusion_mask=seq_diffusion_mask, seq_t=seq_t, xyz_in=xyz_t, is_sm=indep.is_sm, unclamp=unclamp,
                                 negative=negative, t=int(little_t), **self.loss_param)
                         # Force all model parameters to participate in loss. Truly a cursed workaround.
-                        loss += 0.0 * (logits_pae.mean() + logits_pde.mean() + alphas.mean() + pred_lddts.mean())
+                        loss += 0.0 * (logits_pae.mean() + logits_pde.mean() + alphas.mean() + pred_lddts.mean() + p_bind.mean())
                     loss = loss / self.ACCUM_STEP
 
                     if gpu != 'cpu':
@@ -1190,14 +1191,11 @@ class Trainer():
                     if rank == 0:
                         loss_dict.update({'t':little_t, 'total_examples':epoch*self.n_train+counter*world_size, 'dataset':chosen_dataset[0], 'task':chosen_task[0]})
                         metrics = {}
-                        # for m in self.metrics:
-                        #     with torch.no_grad():
-                        #         if m.accepts_indep: rk does this work?
-                        #             rf2aa.tensor_util.to_device(indep, 'cpu')
-                        #             # indep_true = indep
-                        #             # if atomizer:
-                        #             #     indep_true = atomize.deatomize(atomizer, indep_true)
-                        #             metrics.update(m(indep, pred_crds[-1, 0].cpu(), is_diffused.cpu()))
+                        for m in self.metrics:
+                            with torch.no_grad():
+                                if hasattr(m, 'accepts_indep') and m.accepts_indep:
+                                    rf2aa.tensor_util.to_device(indep, 'cpu')
+                                    metrics.update(m(indep, pred_crds[-1, 0].cpu(), is_diffused.cpu()))
 				# Currently broken
                                 # metrics.update(m(logit_s, c6d,
                                 # logit_aa_s, label_aa_s, mask_aa_s, None,
@@ -1276,7 +1274,7 @@ class Trainer():
                     for fraction in n_fractionals:
                         save_before_n = fraction * self.n_train
                         if n_processed <= save_before_n and n_processed_next > save_before_n:
-                            self.save_model(f'{epoch + fraction:.2f}', ddp_model, optimizer, scheduler, scaler)
+                            self.save_model(f'{epoch - 1 + fraction:.2f}', ddp_model, optimizer, scheduler, scaler)
                             break
 
         # TODO(fix or delete)

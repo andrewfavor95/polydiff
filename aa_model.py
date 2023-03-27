@@ -797,7 +797,7 @@ def diffuse(conf, diffuser, indep, is_diffused, t):
         tmp_x_t[:,:3] = frames_next
         
         if conf['preprocess']['motif_sidechain_input']:
-            tmp_x_t[~is_diffused,:] = tmp_x_t_plus1[~is_diffused.squeeze()]
+            tmp_x_t[~is_diffused,:] = tmp_x_t_plus1[~is_diffused]
         
         assert not torch.isnan(tmp_x_t[~is_diffused,1,0]).any()
         assert not torch.isnan(tmp_x_t[is_diffused,1,0]).any()
