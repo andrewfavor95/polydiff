@@ -376,6 +376,190 @@ def generate_sm_mask(prot_masks, is_sm):
     
     return mask_dict
 
+###################
+# Functions for making a mask for nearby contigs - DT
+###################
+def closest_distance(group1: torch.Tensor, group2: torch.Tensor, 
+                     include_point1: torch.Tensor, include_point2: torch.Tensor) -> torch.Tensor:
+    '''
+    Given two groups of points, how close are the closest pair of points?
+    
+    Args
+        group1 (batch1, n_points1, 3)
+        group2 (batch2, n_points2, 3)
+        include_point1 (batch1, n_points1): True = the coordinates should be considered in the distance calculation.
+    
+    Returns
+        closest_dist: (batch1, batch2)
+    '''
+    assert group1.shape[:-1] == include_point1.shape
+    assert group2.shape[:-1] == include_point2.shape
+    
+    # Expand shapes so we can broadcast
+    group1 = group1[:,:,None,None,:]
+    group2 = group2[None,None,:,:,:]
+    include_point1 = include_point1[:,:,None,None]
+    include_point2 = include_point2[None,None,:,:]
+
+    # Distance calc
+    dists = torch.linalg.norm(group1 - group2, ord=2, dim=-1)
+    
+    # Both points must be "included" to consider the dist between them
+    include_dist = torch.logical_and(include_point1, include_point2)
+    dists[~include_dist] = torch.inf
+
+    # find min over all pairs of atom in each group. Would be clearner to do with a "topk_any_dims" like function.
+    closest_dist = dists.min(dim=1)[0]
+    closest_dist = closest_dist.min(dim=2)[0]
+    
+    return closest_dist
+
+def get_neighboring_residues(xyz: torch.Tensor, atom_mask: torch.Tensor, 
+                             i: int, r: float) -> torch.Tensor:
+    '''
+    Args
+        xyz (L, 14, 3): Atom coordinates in the protien
+        atom_mask (L, 14): True = atom is "really" there.
+        i: Index of the central residue
+        r: Contact radius.
+            
+    Returns
+        neighboring_residues (L,): Boolean mask. True if any atom in the central residue is 
+            closer than r to any atom in another residue, they are considered neighbors.
+            DOES NOT INCLUDE THE CENTRAL RESIDUE! This is a mask of the *neighbors*.
+    '''
+    res_xyz = xyz[[i]]
+    res_atom_mask = atom_mask[[i]]
+    closest_dist = closest_distance(
+        group1=res_xyz, 
+        group2=xyz,
+        include_point1=res_atom_mask,
+        include_point2=atom_mask
+    )[0]
+    neighboring_residues = closest_dist < r
+    return neighboring_residues
+
+def dilate_1d(mask: torch.Tensor) -> torch.Tensor:
+    '''
+    Args
+        mask: A 1D boolean mask
+        
+    Returns
+        dilated: A boolean mask where True values have "spread" one space
+            to the left and right.
+    '''
+    
+    mask = mask[None,None].float()
+    kernel = torch.ones(1,1,3).float()
+    dilated = torch.nn.functional.conv1d(mask, kernel, padding=1)
+    dilated = torch.clamp(dilated, 0, 1)
+    return dilated[0,0].bool()
+
+def erode_1d(mask: torch.Tensor) -> torch.Tensor:
+    '''
+    Args
+        mask: A 1D boolean mask
+        
+    Returns
+        eroded: A boolean mask where True values have "contracted" one space
+            from the left and right. Isolated islands of True are removed.
+    '''
+    return ~dilate_1d(~mask)
+
+def merge_islands(mask: torch.Tensor, n: int=1) -> torch.Tensor:
+    '''
+    If two Trues are separated by 2*n or fewer spaces,
+    the interviening spaces are set to True.
+    
+    Ex for n=2.
+        in:  [0, 1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0]
+        out: [0, 1, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 0, 0]
+    
+    Args
+        mask: A 1D boolean mask        
+    '''
+    
+    for _ in range(n):
+        mask = dilate_1d(mask)
+    for _ in range(n):
+        mask = erode_1d(mask)
+        
+    return mask
+
+def remove_small_islands(mask: torch.Tensor, n: int = 1) -> torch.Tensor:
+    '''
+    If a contiguous chunk has less than or equal to 2*n Trues, it is removed.
+    
+    Ex for n=2.
+        in:  [0, 1, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 0, 0]
+        out: [0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 0, 0]
+    
+    Args
+        mask: A 1D boolean mask        
+    '''
+    for _ in range(n):
+        mask = erode_1d(mask)
+    for _ in range(n):
+        mask = dilate_1d(mask)
+        
+    return mask
+
+def get_contigs_around_residue(xyz: torch.Tensor, atom_mask: torch.Tensor,
+                                i: int, r: float) -> torch.Tensor:
+    '''
+    Given a residue in a protein, find contigs that have residues with at least
+    one atom within r Angstroms of any atom in the central residue. Essentially
+    it selects residues in a sphere around a central residue, then joins isolated
+    residues into contigs. Small contigs are then removed.
+    
+    Args
+        xyz (L, 14, 3): Atom coordinates in the protien
+        atom_mask = True = Atom is "really" there.
+        i: Index of the central residue
+        r: Contact radius.
+       
+    Returns
+        mask (L,): True = residue is in the motif.
+    '''
+    mask = get_neighboring_residues(xyz, atom_mask, i, r)
+    mask[i] = True  # include the central resiude in the motif
+    mask = merge_islands(mask, n=1)
+    mask = remove_small_islands(mask, n=2)
+    
+    return mask
+
+def get_nearby_contigs(indep, atom_mask, low_prop, high_prop, broken_prop):
+    '''
+    Randomly samples a central residue and radius, and returns a contig mask
+    of residues in that radius. 
+    
+    Args: NOTE: These must match the call signature of "get_mask", hence the unused args.
+    
+    Return
+        mask: True = residue is in the contig(s)
+        is_atom_motif: Currently this contig selector only works for proteins.
+            This is spoofed to match the "get_mask" output signature.
+    '''
+    max_tries = 100
+    xyz = indep.xyz
+    L_ptn = xyz.shape[0]
+    
+    for _ in range(max_tries):
+        # Get nearby contig mask
+        i = int(torch.randint(high=L_ptn, size=(1,)))
+        r = float(torch.rand(size=(1,))) * 15. + 5.
+        mask = get_contigs_around_residue(xyz, atom_mask, i, r)
+        
+        # Do the contigs cover enough/too much of the protein?
+        prop = mask.sum() / L_ptn
+        if low_prop <= prop <= high_prop:
+            break
+
+    # Spoof is_atom_motif output
+    is_atom_motif = None
+
+    return mask, is_atom_motif
+
 #####################################
 # Main mask generator function
 #####################################
@@ -441,8 +625,8 @@ def generate_masks(indep, task, loader_params, chosen_dataset, full_chain=None, 
             broken_prop=loader_params['MASK_BROKEN_PROPORTION'],
             diff_mask_probs=loader_params['DIFF_MASK_PROBS'],
             ) 
-        input_str_mask = diffusion_mask
-        input_seq_mask = diffusion_mask
+        input_str_mask = diffusion_mask.clone()
+        input_seq_mask = diffusion_mask.clone()
         # t1dconf scaling will be taken care of by diffuser, so just leave those at 1 here 
         input_t1d_str_conf_mask = torch.ones(L)
         input_t1d_seq_conf_mask = torch.ones(L)
@@ -657,7 +841,7 @@ def generate_masks(indep, task, loader_params, chosen_dataset, full_chain=None, 
     else:
         sys.exit(f'Masks cannot be generated for the {task} task!')
     if task != 'seq2str':
-        assert torch.sum(~input_seq_mask) > 0, f'Task = {task}, dataset = {chosen_dataset}, full chain = {full_chain}'
+       assert torch.sum(~input_seq_mask) > 0, f'Task = {task}, dataset = {chosen_dataset}, full chain = {full_chain}'
     mask_dict = {'input_seq_mask':input_seq_mask,
                 'input_str_mask':input_str_mask,
                 'input_floating_mask':input_floating_mask,

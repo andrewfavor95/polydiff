@@ -24,6 +24,8 @@ import rf2aa.util
 import rf2aa.tensor_util
 from rf2aa.tensor_util import assert_equal
 import rf2aa.kinematics
+import rf2aa.chemical
+import guide_posts as gp
 
 # for diffusion training
 import mask_generator
@@ -128,6 +130,7 @@ def set_data_loader_params(args):
         "SPOOF_ITEM":args.spoof_item,
         "MOL_DIR":rf2aa.data_loader.default_dataloader_params['MOL_DIR'],
         "DISCONTIGUOUS_CROP": True,
+        "USE_GUIDE_POSTS": args.use_guide_posts
     }
     for param in PARAMS:
         if hasattr(args, param.lower()):
@@ -1628,6 +1631,11 @@ class DistilledDataset(data.Dataset):
             else:
                 is_diffused = is_masked_seq = ~is_res_str_shown
             
+            if self.params['USE_GUIDE_POSTS']:
+                    mask_gp = masks_1d['input_str_mask'].clone()
+                    indep, is_diffused, gp_to_ptn_idx0 = gp.make_guideposts(indep, mask_gp)
+                    is_masked_seq = is_diffused.clone()
+
             run_inference.seed_all(mask_gen_seed) # Reseed the RNGs for test stability.
             aa_model.centre(indep, is_diffused)
             t = random.randint(1, self.diffuser.T)

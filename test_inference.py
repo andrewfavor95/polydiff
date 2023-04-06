@@ -15,6 +15,7 @@ from hydra.core.hydra_config import HydraConfig
 from icecream import ic
 import torch
 import numpy as np
+import pickle
 
 import test_utils
 import run_inference
@@ -24,6 +25,8 @@ import rf2aa.chemical
 from rf2aa.RoseTTAFoldModel import RoseTTAFoldModule
 import rf2aa.loss
 import inference.utils
+import aa_model
+import guide_posts as gp
 
 REWRITE = False
 def infer(overrides):
@@ -112,6 +115,29 @@ class TestRegression(unittest.TestCase):
         # values, which vary wildly across CPU architectures.
         cmp = partial(tensor_util.cmp, atol=2, rtol=0)
         test_utils.assert_matches_golden(self, 'partial_sc', pdb_contents, rewrite=REWRITE, custom_comparator=cmp)
+
+    def test_guidepost(self):
+        '''
+        Tests that predictions with guide posts flag are correct.
+        '''
+        run_inference.make_deterministic()
+        pdb, conf = infer([
+            'diffuser.T=2',
+            'inference.ckpt_path=/home/rohith/rf_diffusion/BFF_2_gp_test.pt',
+            'inference.state_dict_to_load=final_state_dict',
+            'inference.input_pdb=test_data/1qys.pdb',
+            'inference.num_designs=1',
+            'inference.output_prefix=tmp/test_gp',
+            'inference.design_startnum=0',
+            'inference.contig_as_guidepost=True',
+            'inference.remove_guideposts_from_output=True',
+            "contigmap.contigs=['20,A62-68,A88-92']",
+            'contigmap.length=null',
+        ])
+
+        pdb_contents = inference.utils.parse_pdb(pdb)
+        cmp = partial(tensor_util.cmp, atol=5e-2, rtol=0)
+        test_utils.assert_matches_golden(self, 'guidepost', pdb_contents, rewrite=REWRITE, custom_comparator=cmp)
 
 
 class TestInference(unittest.TestCase):
@@ -249,6 +275,41 @@ class TestInference(unittest.TestCase):
         rmsd, _ = rf2aa.util.kabsch(torch.tensor(residue_to_atomize)[-3:], torch.tensor(post_atomized)[-3:])
         self.assertLess(rmsd, 0.02)
 
+    def test_convert_motif_to_guide_posts(self):
+        '''
+        Test that the function guide_posts.convert_motif_to_guide_posts modifies `indep` appropriately.
+        '''
+        import pickle
+        with open('test_data/pkl/indep_pre_guide_post_conversion.pkl', 'rb') as f:
+            indep_pre = pickle.load(f)
+        with open('test_data/pkl/indep_post_guide_post_conversion.pkl', 'rb') as f:
+            indep_post = pickle.load(f)
+
+        # Process indep_pre through gp.convert_motif_to_guide_posts
+        gp_to_ptn_idx0 = {
+            113: 0,
+            114: 1,
+            115: 2,
+            116: 3,
+            117: 4,
+            118: 5,
+            119: 6,
+            120: 7,
+            121: 8,
+            122: 9,
+            123: 10,
+            124: 11
+        }
+        indep_test, _ = gp.convert_motif_to_guide_posts(
+            gp_to_ptn_idx0=gp_to_ptn_idx0,
+            indep=indep_pre,
+            placement='anywhere'
+        )
+
+        for k in indep_post.__dataclass_fields__.keys():
+            v_post = getattr(indep_post, k)
+            v_test = getattr(indep_test, k)
+            self.assertTrue( torch.isclose(v_post, v_test, equal_nan=True).all() )
 
 if __name__ == '__main__':
         unittest.main()

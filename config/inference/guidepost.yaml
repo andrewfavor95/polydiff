@@ -1,0 +1,20 @@
+defaults:
+  - debug
+
+inference:
+  ckpt_path: /home/rohith/rf_diffusion/BFF_2_gp_test.pt
+  output_prefix: debug/helix_strand
+  input_pdb: 'test_data/1qys.pdb'
+  contig_as_guidepost: True
+  remove_guideposts_from_output: True
+  str_self_cond: True
+  annotate_termini: False
+  num_designs: 1
+  state_dict_to_load: final_state_dict
+
+contigmap:
+  contigs: ['88,A62-68,A88-92']
+  length: null
+
+logging:
+  inputs: False

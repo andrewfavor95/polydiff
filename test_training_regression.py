@@ -84,6 +84,23 @@ item = """{
     'task': 'diff'
 }"""
 
+item_no_sm = '''{
+    'chosen_dataset': 'pdb_aa',                                                                                                          
+    'mask_gen_seed': 65682867,
+    'task': 'diff',
+    'sel_item': {
+        'Unnamed: 0': 131846,
+        'CHAINID': '6tmm_C',
+        'DEPOSITION': '2019-12-04',
+        'RESOLUTION': 2.398,
+        'HASH': '039536',
+        'CLUSTER': 10248,
+        'SEQUENCE': 'LILNLRGGAFVSNTQITMADKQKKFINEIQEGDLVRSYSITDETFQQNAVTSIVKHEADQLCQINFGKQHVVCTVNHRFYDPESKLWKSVCPHPGSGISFLKKYDYLLSEEGEKLQITEIKTFTTKQPVFIYHIQVENNHNFFANGVLAHAMQVSI',
+        'LEN_EXIST': 156,
+        'TAXID': ''
+    }
+}'''
+
 # aa_pickle = "/projects/ml/RF2_allatom/dataset_diffusion_20230201_taxid.pkl"
 mol_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'test_data/pkl')
 aa_pickle = "test_fake_allatom_dataset.pkl"
@@ -147,6 +164,28 @@ class ModelInputs(unittest.TestCase):
         assert old_task in self_cond_arg_string
         self_cond_arg_string = self_cond_arg_string.replace(old_task, new_task)
         run_regression(self, self_cond_arg_string, 'model_input_atomize', call_number=3)
+
+    def test_guide_posts(self):
+        os.environ['MASTER_PORT'] = '12322'
+        self_cond_arg_string = arg_string[:]
+
+        # Since we are doing this the lazy way with string replacement rather
+        # than using a data structure for the arguments, assert that we're actually
+        # replacing something.
+        old_task = '-diff_mask_probs get_sm_contacts:1.0'
+        new_task = '-diff_mask_probs get_nearby_contigs:1.0'
+        assert old_task in self_cond_arg_string
+        self_cond_arg_string = self_cond_arg_string.replace(old_task, new_task)
+
+        # Use an example without a small molecule
+        old_task = f'-spoof_item \"{item}\"'
+        new_task = f'-spoof_item \"{item_no_sm}\"'
+        assert old_task in self_cond_arg_string
+        self_cond_arg_string = self_cond_arg_string.replace(old_task, new_task)
+
+        self_cond_arg_string += ' -use_guide_posts '
+
+        run_regression(self, self_cond_arg_string, 'model_input_guide_posts', call_number=4)
 
 class DataloaderToCalcLoss(unittest.TestCase):
     def test_no_self_cond_loss(self):

@@ -122,6 +122,8 @@ def get_args(in_args=None):
             help='Path to pickled dataset to load for training on. If path doesn\'t exist, will write new pickle with that name.')
     data_group.add_argument('-mol_dir', type=str, default=data_loader.USE_DEFAULT)
     data_group.add_argument("-discontiguous_crop", default="True", choices=("True","False"))
+    data_group.add_argument('-use_guide_posts', action="store_true", default=False,
+            help='Training argument. Treats the generated motif as guide posts instead.')
 
     # Diffusion args 
     diff_group = parser.add_argument_group("diffusion parameters")

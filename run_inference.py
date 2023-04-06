@@ -39,6 +39,8 @@ import inference.model_runners
 import rf2aa.tensor_util
 import rf2aa.util
 import aa_model
+import guide_posts as gp
+import copy
 # ic.configureOutput(includeContext=True)
 
 def make_deterministic(seed=0):
@@ -65,7 +67,7 @@ def main(conf: HydraConfig) -> None:
 def get_sampler(conf):
     if conf.inference.deterministic:
         seed_all()
-     
+
     # Loop over number of designs to sample.
     design_startnum = conf.inference.design_startnum
     if conf.inference.design_startnum == -1:
@@ -225,6 +227,42 @@ def deatomize_sampler_outputs(sampler, indep, px0_xyz_stack, denoised_xyz_stack,
 
 def save_outputs(sampler, out_prefix, indep, denoised_xyz_stack, px0_xyz_stack, seq_stack):
     log = logging.getLogger(__name__)
+
+    # If using guideposts, infer their placement from the final pX0 prediction.
+    if sampler._conf.inference.contig_as_guidepost:
+        gp_to_contig_idx0 = sampler.contig_map.gp_to_ptn_idx0  # map from gp_idx0 to the ptn_idx0 in the contig string.
+        is_gp = torch.zeros_like(indep.seq, dtype=bool)
+        is_gp[list(gp_to_contig_idx0.keys())] = True
+
+        # Infer which diffused residues ended up on top of the guide post residues
+        diffused_xyz = denoised_xyz_stack[0, ~is_gp]
+        gp_alone_xyz = denoised_xyz_stack[0, is_gp]
+        gp_alone_to_diffused_idx0 = gp.greedy_guide_post_correspondence(diffused_xyz, gp_alone_xyz)
+
+        gp_contig_mappings = gp.get_infered_mappings(
+            gp_to_contig_idx0, 
+            gp_alone_to_diffused_idx0, 
+            sampler.contig_map.get_mappings()
+        )
+
+        # Optional: Trim guide post residues
+        if sampler._conf.inference.remove_guideposts_from_output:
+            # Guide post slice
+            denoised_xyz_stack_gp = denoised_xyz_stack[:, is_gp]
+            px0_xyz_stack_gp = px0_xyz_stack[:, is_gp]
+            seq_stack_gp = [s[is_gp] for s in seq_stack]
+
+            # Diffused protein slice
+            denoised_xyz_stack = denoised_xyz_stack[:, ~is_gp]
+            px0_xyz_stack = px0_xyz_stack[:, ~is_gp]
+            seq_stack = [s[~is_gp] for s in seq_stack]
+
+            # Save pdb of guide posts
+            aa_model.write_traj(path=f'{out_prefix}_gp.pdb', 
+                                xyz_stack=denoised_xyz_stack_gp[0:1], 
+                                seq=torch.ones(is_gp.sum(), dtype=int) * rf2aa.chemical.aa2num['UNK'],
+                                bond_feats=indep.bond_feats)
+
     # Save outputs 
     os.makedirs(os.path.dirname(out_prefix), exist_ok=True)
     final_seq = seq_stack[-1]
@@ -275,6 +313,15 @@ def save_outputs(sampler, out_prefix, indep, denoised_xyz_stack, px0_xyz_stack, 
     if hasattr(sampler, 'contig_map'):
         for key, value in sampler.contig_map.get_mappings().items():
             trb[key] = value
+
+    if sampler._conf.inference.contig_as_guidepost:
+        # Store the literal location of the guide post residues
+        for k in ['con_hal_pdb_idx', 'con_hal_idx0', 'sampled_mask']:
+            trb[k+'_literal'] = copy.deepcopy(trb[k])
+
+        # Saved infered guidepost locations. This is probably what downstream applications want.
+        trb.update(gp_contig_mappings)        
+
     with open(f'{out_prefix}.trb','wb') as f_out:
         pickle.dump(trb, f_out)
 

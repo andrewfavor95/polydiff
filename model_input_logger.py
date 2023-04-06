@@ -17,7 +17,7 @@ class Counter:
 def pickle_function_call_wrapper(func, output_dir='pickled_inputs', include_outputs=True, minifier=lambda x: None):
     counter = Counter()
     i = 0
-    os.makedirs(output_dir)
+    os.makedirs(output_dir, exist_ok=True)
             # pickle.dump({'args': args, 'kwargs': kwargs}, fh)
     def wrapper(*args, **kwargs):
         """

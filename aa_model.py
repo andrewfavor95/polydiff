@@ -19,11 +19,13 @@ import numpy as np
 from kinematics import get_init_xyz
 import chemical
 from rf2aa.chemical import MASKINDEX
+import rf2aa.chemical
 import util
 import inference.utils
 import networkx as nx
 import itertools
 import random
+import guide_posts as gp
 
 import atomize
 
@@ -362,6 +364,19 @@ class Model:
         o.xyz[o.is_sm,:3] = sm_ca[...,None,:]
         o.xyz[o.is_sm] += chemical.INIT_CRDS
         #ic(o.xyz)
+        
+        # Modify `o` if using guide posts
+        if 'inference' in self.conf and self.conf.inference.contig_as_guidepost:
+            # Make a mask of residues that should be treated as guide posts
+            treat_as_gp = torch.tensor(contig_map.get_mappings()['mask_1d'])
+
+            o, is_diffused, gp_to_ptn_idx0 = gp.make_guideposts(o, treat_as_gp, placement='anywhere')
+            is_seq_masked = is_diffused.clone()
+            o.seq[:L_mapped] = rf2aa.chemical.MASKINDEX  # Otherwise the sequence at the "original" contig positions leaks through.
+
+            # Smuggle out the shuffled gp locations. They're no longer in the order they were in the contigs string.
+            contig_map.gp_to_ptn_idx0 = gp_to_ptn_idx0 
+
         # To see the shapes of the indep struct with contig inserted
         # print(rf2aa.tensor_util.info(rf2aa.tensor_util.to_ordered_dict(o)))
         return o, is_diffused, is_seq_masked
@@ -568,6 +583,16 @@ class Model:
         xyz[0, indep.is_sm,14:] = 0
         xyz[0, is_protein_motif, 14:] = 0
         dist_matrix = rf2aa.data_loader.get_bond_distances(indep.bond_feats)
+
+        # minor tweaks to rfi to match gp training
+        if ('inference' in self.conf) and (self.conf.inference.get('contig_as_guidepost', False)):
+            '''Manually inspecting the pickled features passed to RF during training, 
+            I did not see markers for the N and C termini. This is to more accurately 
+            replicate the features seen during training at inference.'''
+            # Erase N/C termini markers
+            msa_masked[...,-2:] = 0
+            msa_full[...,-2:] = 0
+
         # Note: should be batched
         rfi = RFI(
             msa_masked,

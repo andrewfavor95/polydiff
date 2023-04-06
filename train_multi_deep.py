@@ -1209,7 +1209,6 @@ class Trainer():
                         loss_dict['loss_weights'] = loss_weights
                         if WANDB:
                             wandb.log(loss_dict)
-
                     sys.stdout.flush()
                 
                 torch.cuda.reset_peak_memory_stats()
@@ -1343,8 +1342,8 @@ def make_trainer(args, model_param, loader_param, loss_param, diffusion_param, p
 
 
     # set random seed
-    torch.manual_seed(args.seed)
-    np.random.seed(args.seed)
+    run_inference.seed_all(args.seed)
+    #np.random.seed(args.seed)
 
     mp.freeze_support()
     train = Trainer(model_name=args.model_name,

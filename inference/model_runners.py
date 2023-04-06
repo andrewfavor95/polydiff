@@ -31,6 +31,7 @@ import util
 import hydra
 from hydra.core.hydra_config import HydraConfig
 import os
+from aa_model import RFI
 
 import sys
 sys.path.append('../') # to access RF structure prediction stuff 
@@ -303,10 +304,7 @@ class Sampler:
         model = model.eval()
         self._log.info(f'Loading checkpoint.')
         if not self._conf.inference.zero_weights:
-            use_model = 'final_state_dict'
-            if self._conf.inference.ema:
-                use_model = 'model_state_dict'
-            model.load_state_dict(self.ckpt[use_model], strict=True)
+            model.load_state_dict(self.ckpt[self._conf.inference.state_dict_to_load], strict=True)
         return model
 
     def construct_contig(self, target_feats):
