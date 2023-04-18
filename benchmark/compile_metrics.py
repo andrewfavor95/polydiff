@@ -8,8 +8,10 @@ import numpy as np
 import pandas as pd
 from icecream import ic
 from tqdm import tqdm
+import assertpy
 
 def main():
+    ic.configureOutput(includeContext=True)
     parser = argparse.ArgumentParser()
     parser.add_argument('datadir',type=str,help='Folder of designs')
     parser.add_argument('--outcsv',type=str,default='compiled_metrics.csv',help='Output filename')
@@ -109,7 +111,7 @@ def main():
         df_accum = df_accum.merge(mpnn_scores, on='name', how='outer')
         df_accum['mpnn_index'] = df_accum.name.map(lambda x: int(x.split('_')[-1]))
         df_accum['name'] = df_accum.name.map(lambda x: '_'.join(x.split('_')[:-1]))
-        df_out = df_base.copy().merge(df_accum, on='name', how='outer')
+        df_out = df_base.copy().merge(df_accum, on='name', how='right')
         return df_out
 
     # MPNN metrics
@@ -119,6 +121,8 @@ def main():
             df_mpnn['mpnn'] = True
             df_mpnn['ligmpnn'] = False
             df_all_list.append(df_mpnn)
+        n_missing = df_mpnn['contig_rmsd_atomized'].isna().sum()
+        assertpy.assert_that(n_missing).is_equal_to(0)
 
     # LigandMPNN metrics
     if os.path.exists(args.datadir+'/ligmpnn/'):

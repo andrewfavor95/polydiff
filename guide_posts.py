@@ -25,6 +25,7 @@ from __future__ import annotations  # allows circular references in type hinting
 
 import torch
 import numpy as np
+from icecream import ic
 import rf2aa.chemical
 from typing import Tuple, List
 
@@ -45,7 +46,6 @@ def make_guideposts(indep: Indep, is_gp: torch.Tensor, placement: str=None) -> T
     is_diffused (L+number_guidepost_residues,): True = residue should be diffused. (ie - not stay stationary.)
     gp_to_ptn_idx0: A map from the idx0 location of each guide post (keys; gp_idx0)
         to the idx0 location of the "true" corresponding frame (values; ptn_idx0).     '''
-    assert not indep.is_sm.any(), 'Guide post feature does not currently support atomized residues or small molecules.'
 
     # Add *new* frames that will act as the guide posts
     indep, gp_to_ptn_idx0 = copy_and_append_indep_features(
@@ -91,7 +91,7 @@ def copy_and_append_indep_features(mask: torch.tensor,
     new_to_ptn_idx0 = dict(zip(new_idx0.tolist(), ptn_idx0.tolist()))
 
     # Append indep features
-    indep.seq = append_indices(indep.seq, ptn_idx0, to_fill_value=rf2aa.chemical.aa2num['UNK'])
+    indep.seq = append_indices(indep.seq, ptn_idx0)
     indep.xyz = append_indices(indep.xyz, ptn_idx0)
     indep.idx = append_indices(indep.idx, ptn_idx0)
 
@@ -133,9 +133,6 @@ def convert_motif_to_guide_posts(gp_to_ptn_idx0: dict,
     n_gp = len(gp_idx0)
     is_protein = ~indep.is_sm[:-n_gp]
     assert guide_post_residues_at_end(gp_idx0.tolist(), L=L_tot), 'The guide posts must be clustered at the "right side" of the RF features.'
-
-    # Set guide post tokens as UNK
-    indep.seq[gp_idx0] = rf2aa.chemical.aa2num['UNK']
 
     # Add large idx jumps between guide post frames. Unsure if necesary.
     idx_last_non_gp = indep.idx[-n_gp - 1]

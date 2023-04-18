@@ -4,9 +4,10 @@
 # contig positions), makes list of MPNN jobs on batches of those designs,
 # and optionally submits slurm array job and outputs job ID
 # 
-
+from collections import defaultdict
 import sys, os, argparse, itertools, json, glob
 import numpy as np
+import copy
 
 script_dir = os.path.dirname(os.path.realpath(__file__))
 sys.path.append(os.path.join(script_dir,'util'))
@@ -31,16 +32,33 @@ def get_args():
     return args
 
 def main():
-
     args = get_args()
+    filenames = glob.glob(args.datadir+'/*.pdb')
+    
+    if not args.use_ligand:
+        run_mpnn(args, filenames)
+        return
 
+    filenames_by_ligand_presence = defaultdict(list)
+    for fn in filenames:
+        trb_path = os.path.splitext(fn)[0] + '.trb'
+        trb = np.load(trb_path,allow_pickle=True)
+        has_ligand = bool(trb['config']['inference']['ligand'])
+        filenames_by_ligand_presence[has_ligand].append(fn)
+    
+    for use_ligand, filenames in filenames_by_ligand_presence.items():
+        args_for_mpnn_flavor = copy.deepcopy(args)
+        args_for_mpnn_flavor.use_ligand = use_ligand
+        run_mpnn(args_for_mpnn_flavor, filenames)
+
+def run_mpnn(args, filenames):
+
+    mpnn_flavor = 'mpnn'
     if args.use_ligand:
-        mpnn_folder = args.datadir+'/ligmpnn/'
-    else:
-        mpnn_folder = args.datadir+'/mpnn/'
+        mpnn_flavor = 'ligmpnn'
+    mpnn_folder = args.datadir+f'/{mpnn_flavor}/'
     os.makedirs(mpnn_folder, exist_ok=True)
 
-    filenames = glob.glob(args.datadir+'/*.pdb')
     
     # skip designs that have already been done
     if args.cautious:
@@ -51,7 +69,7 @@ def main():
         args.chunk = len(filenames)
 
     # run parser script
-    job_fn = args.datadir + '/jobs.mpnn.parse.list'
+    job_fn = args.datadir + f'/jobs.{mpnn_flavor}.parse.list'
     job_list_file = open(job_fn, 'w') if args.submit else sys.stdout
     if args.use_ligand:
         parse_script = f'{script_dir}/util/parse_multiple_chains_ligand.py'

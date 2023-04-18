@@ -86,6 +86,7 @@ class ContigMap():
         while length_compatible is False:
             inpaint_chains=0
             contig_list = self.contigs[0].strip().split()
+            assert len(contig_list) == 1, f'contig_list with >1 element not curently supported: {contig_list}'
             sampled_mask = []
             sampled_mask_length = 0
             for con in contig_list:

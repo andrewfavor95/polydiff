@@ -33,6 +33,8 @@ def convert_all(indir):
     ic(pdb_ligand_count)
 
     for pdb, ligand in pdb_ligand:
+        if ligand is None:
+            continue
         print(f'Making params for pdb: {pdb} ligand: {ligand}')
         mol2_path = aux_file(indir, pdb, ligand, 'mol2')
         ligandmpnn_params_path = aux_file(indir, pdb, ligand, 'params')

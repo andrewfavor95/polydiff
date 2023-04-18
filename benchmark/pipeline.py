@@ -82,15 +82,19 @@ def main():
                 f'{script_dir}score_designs.py --run "af2,pyrosetta" --chunk {args.af2_chunk} '\
                 f'{outdir}/ {af2_args}'
             )
-        if args.use_ligand:
-            mpnn_dir = f'{outdir}/ligmpnn'
-        else:
-            mpnn_dir = f'{outdir}/mpnn'
-
-        jobid_score_mpnn = run_pipeline_step(
-            f'{script_dir}score_designs.py --run "{score_scripts}" --chunk {args.af2_chunk} '\
-            f'{mpnn_dir} {af2_args}'
-        )
+        
+        mpnn_dirs = []
+        for mpnn_flavor in ['mpnn', 'ligmpnn']:
+            mpnn_dirs.append(f'{outdir}/{mpnn_flavor}')
+        
+        assert any(os.path.exists(d) for d in mpnn_dirs)
+        jobid_score_mpnn = []
+        for d in mpnn_dirs:
+            if os.path.exists(d):
+                jobid_score_mpnn.extend(run_pipeline_step(
+                    f'{script_dir}score_designs.py --run "{score_scripts}" --chunk {args.af2_chunk} '\
+                    f'{d} {af2_args}'
+                ))
 
     if job_id_tmalign:
         print('Waiting for TM-align jobs to finish...')

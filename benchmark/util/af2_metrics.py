@@ -23,6 +23,10 @@ import pandas as pd
 from collections import OrderedDict
 from icecream import ic
 
+script_dir = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))+'/'
+sys.path.insert(0,script_dir+'/../')
+sys.path.insert(0,script_dir+'/../RF2-allatom/')
+
 sys.path.insert(0,'/software/mlfold/') # common path on digs
 from alphafold.common import protein
 from alphafold.data import pipeline
@@ -34,6 +38,7 @@ from alphafold.model import model
 from jax.lib import xla_bridge
 from alphafold.model.tf import shape_placeholders                                                        
 import tensorflow.compat.v1 as tf
+import rf2aa.chemical
 
 os.environ['TF_FORCE_UNIFIED_MEMORY'] = '1'
 os.environ['XLA_PYTHON_CLIENT_MEM_FRACTION'] = '2.0'
@@ -474,6 +479,7 @@ def main():
             bb_mask[:,:3] = True
             ca_mask = np.zeros_like(atom_exists).astype(bool)
             ca_mask[:,1] = True
+            
             for suffix, has_atom in [
                     ('', bb_mask),
                     ('_c_alpha', ca_mask),
@@ -482,6 +488,31 @@ def main():
                 xyz_ref_motif = xyz_ref[idx_motif_ref][has_atom].reshape(-1,3)
                 xyz_pred_motif = xyz_pred[idx_motif][has_atom].reshape(-1,3)
                 xyz_des_motif = xyz_des[idx_motif][has_atom].reshape(-1,3)
+                row['contig_rmsd_af2_des' + suffix] = calc_rmsd(xyz_pred_motif, xyz_des_motif)
+                row['contig_rmsd_af2' + suffix] = calc_rmsd(xyz_pred_motif, xyz_ref_motif)
+                row['contig_rmsd' + suffix] = calc_rmsd(xyz_des_motif, xyz_ref_motif)
+            
+            if trb['atomize_indices2atomname']:
+                ref_idx0_by_des_idx0 = {}
+                for ref_idx0, des_idx0 in zip(trb['con_ref_idx0'], trb['con_hal_idx0']):
+                    ref_idx0_by_des_idx0[des_idx0] = ref_idx0
+                def get_atom_idx(aa, atom_names):
+                    i_by_name = {name if name is None else name.strip():i for i, name in enumerate(rf2aa.chemical.aa2long[aa])}
+                    return [i_by_name[a] for a in atom_names]
+
+                is_contig_atom_des = np.zeros_like(xyz_des).astype(bool)
+                is_contig_atom_ref = np.zeros_like(xyz_ref).astype(bool)
+                for des_idx0, atom_names in trb['atomize_indices2atomname'].items():
+                    aa = pdb_des['seq'][des_idx0]
+                    atom_idxs = get_atom_idx(aa, atom_names)
+                    is_contig_atom_des[des_idx0, atom_idxs] = True
+                    ref_idx0 = ref_idx0_by_des_idx0[des_idx0]
+                    is_contig_atom_ref[ref_idx0, atom_idxs] = True
+
+                suffix = '_atomized'
+                xyz_ref_motif = xyz_ref[is_contig_atom_ref].reshape(-1,3)
+                xyz_pred_motif = xyz_pred[is_contig_atom_des].reshape(-1,3)
+                xyz_des_motif = xyz_des[is_contig_atom_des].reshape(-1,3)
                 row['contig_rmsd_af2_des' + suffix] = calc_rmsd(xyz_pred_motif, xyz_des_motif)
                 row['contig_rmsd_af2' + suffix] = calc_rmsd(xyz_pred_motif, xyz_ref_motif)
                 row['contig_rmsd' + suffix] = calc_rmsd(xyz_des_motif, xyz_ref_motif)

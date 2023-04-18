@@ -22,7 +22,7 @@ inference:
   output_prefix: samples/design
   scaffold_guided: False
   model_runner: NRBStyleSelfCond
-  cautious: False
+  cautious: True
   recycle_between: False
   align_motif: True
   autoregressive_confidence: True
@@ -40,6 +40,7 @@ inference:
   contig_as_guidepost: False
   remove_guideposts_from_output: True
   state_dict_to_load: model_state_dict
+  infer_guidepost_positions: True
 
 contigmap:
   contigs: ['20', 'A3-23', '30']

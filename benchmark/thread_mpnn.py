@@ -22,6 +22,7 @@ import rf2aa.parsers
 import rf2aa.chemical
 from parsers import load_ligand_from_pdb
 from rf2aa.util import kabsch
+import assertpy
 
 
 def get_args():
@@ -33,12 +34,9 @@ def get_args():
         help='Whether to parse and write ligand in the PDB. Also affects default I/O paths')
     args = parser.parse_args()
 
-    if args.seqdir is None: 
-        args.seqdir = args.datadir+('/ligmpnn/seqs/' if args.use_ligand else '/mpnn/seqs/')
-    if args.outdir is None: 
-        args.outdir = args.datadir+('/ligmpnn/' if args.use_ligand else '/mpnn/')
-
     return args
+
+aa_123 = {val:key for key,val in rf2aa.chemical.aa_321.items()}
 
 def main():
     args = get_args()
@@ -59,9 +57,11 @@ def main():
         L_prot, N_atoms_prot = xyz_prot.shape[:2]
         Ls = [L_prot]
 
-        if args.use_ligand:
-            lig_name = trb['config']['inference']['ligand']
-
+        lig_name = trb['config']['inference']['ligand']
+        mpnn_flavor = 'ligmpnn' if args.use_ligand and lig_name else 'mpnn'
+        seqdir = args.seqdir or args.datadir+(f'/{mpnn_flavor}/seqs/')
+        outdir = args.outdir or args.datadir+(f'/{mpnn_flavor}/')
+        if args.use_ligand and lig_name:
             # load ligand from design
             mol_des, xyz_sm_des, mask_sm_des, msa_sm_des, bond_feats_sm_des, atom_names_des = \
                 load_ligand_from_pdb(fn, lig_name = lig_name)
@@ -71,9 +71,14 @@ def main():
             mol, xyz_sm, mask_sm, msa_sm, bond_feats_sm, atom_names = \
                 load_ligand_from_pdb(input_pdb_fn, lig_name = lig_name, remove_H=False)
 
+            assertpy.assert_that(atom_names).does_not_contain_duplicates()
+            assertpy.assert_that(atom_names_des).does_not_contain_duplicates()
+
             # superimpose reference ligand onto design ligand
             to_align_des = np.isin(np.array(atom_names_des), np.array(atom_names))
             to_align_ref = np.isin(np.array(atom_names), np.array(atom_names_des))
+            sm_des = xyz_sm_des[0, to_align_des]
+            sm_ref = xyz_sm[0, to_align_ref]
             rmsd, U = kabsch(xyz_sm_des[0, to_align_des], xyz_sm[0, to_align_ref]) 
             cent_des = xyz_sm_des[0, to_align_des].mean(dim=0)
             cent_ref = xyz_sm[0, to_align_ref].mean(dim=0)
@@ -110,15 +115,15 @@ def main():
 
         idx = torch.cat([idx_prot, idx_sm+idx_prot.max()+10])
 
-        with open(args.seqdir+name+'.fa') as f:
+        with open(seqdir+name+'.fa') as f:
             lines = f.readlines()
             n_designs = int(len(lines)/2-1)
             for i in range(n_designs):
-                print('writing file', args.outdir+name+f"_{i}.pdb")
+                print('writing file', outdir+name+f"_{i}.pdb")
                 seq = lines[2*i + 3].strip() # 2nd seq is 1st design
-                seq_num = torch.tensor([rf2aa.util.aa2num[rf2aa.util.aa_123[a]] for a in seq])
+                seq_num = torch.tensor([rf2aa.util.aa2num[aa_123[a]] for a in seq])
                 pdbstr = rf2aa.util.writepdb(
-                    os.path.join(args.outdir, name+f"_{i}.pdb"),
+                    os.path.join(outdir, name+f"_{i}.pdb"),
                     atoms = xyz,
                     atom_mask = mask,
                     seq = torch.cat([seq_num, msa_sm]).long(),

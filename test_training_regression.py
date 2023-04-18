@@ -264,6 +264,8 @@ def run_regression(self, arg_string, golden_name, call_number=1, assert_loss=Fal
             argument_map = argument_binding.arguments
             argument_map = tensor_util.cpu(argument_map)
             cmp = partial(tensor_util.cmp, atol=1e-3, rtol=0)
+            # Uncomment to peek at what parts of sequence are masked
+            # ic(torch.argmax(argument_map['msa_latent'], dim=-1))
             test_utils.assert_matches_golden(self, golden_name, argument_map, rewrite=REWRITE, custom_comparator=cmp)
 
 class Loss(unittest.TestCase):

@@ -4,30 +4,16 @@ import os
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'RF2-allatom'))
 
 import unittest
-from unittest import mock
-import subprocess
-from pathlib import Path
-from inspect import signature
-from io import StringIO
-
-import hydra
-from hydra import compose, initialize
-from hydra.core.hydra_config import HydraConfig
 from icecream import ic
 import torch
 import numpy as np
 
-import test_utils
-import run_inference
-from functools import partial
-from rf2aa import tensor_util
-import rf2aa.chemical
 import inference.utils
 import aa_model
 import contigs
-import rotation_conversions
 import bond_geometry
 import perturbations
+import atomize
 
 # def is_se3_invariant(loss, true, pred):
 
@@ -71,6 +57,31 @@ class TestLoss(unittest.TestCase):
             self.assertLess(bond_losses.pop(k), 1e-6, msg=k)
         for k, v in bond_losses.items():
             self.assertTrue(torch.isnan(v), msg=k)
+
+    def test_rigid_loss(self):
+        test_pdb = 'benchmark/input/gaa.pdb'
+        
+        target_feats = inference.utils.process_target(test_pdb)
+        contig_map =  contigs.ContigMap(target_feats,
+                                       contigs=['2,A518-518'],
+                                       contig_atoms="{'A518':'CG,OD1,OD2'}",
+                                       length='3-3',
+                                       )
+        indep = aa_model.make_indep(test_pdb)
+        adaptor = aa_model.Model({})
+        indep_contig,is_diffused,_ = adaptor.insert_contig(indep, contig_map)
+
+        true = indep_contig.xyz
+        perturbed = perturbations.se3_perturb(true)
+        T = torch.tensor([1,1,1])
+        cg_atomized_idx = atomize.atomized_indices_atoms(adaptor.atomizer, {2: ['CG']})
+        perturbed[cg_atomized_idx,1,:] += T
+
+        rigid_losses = bond_geometry.calc_rigid_loss(indep_contig, perturbed, is_diffused)
+        self.assertLess(rigid_losses['diffused_atom'], 1e-6)
+        self.assertGreater(rigid_losses['diffused_atom:motif_atom_determined'], 1)
+
+
 
 if __name__ == '__main__':
         unittest.main()

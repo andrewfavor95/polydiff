@@ -8,6 +8,7 @@ import yaml
 import unittest
 import pickle
 
+from rf2aa import tensor_util
 golden_dir = 'goldens'
 
 
@@ -191,3 +192,15 @@ def available_cpu_count():
         pass
 
     raise Exception('Can not determine number of CPUs on this system')
+
+def cmp_pretty(got, want, **kwargs):
+    diff = tensor_util.cmp(got, want, **kwargs)
+    if not diff:
+        return
+    try:
+        jsoned = diff.to_json()
+        loaded = json.loads(jsoned)
+        return json.dumps(loaded, indent=4)
+    except Exception as e:
+        ic('failed to pretty print output', e)
+        return json.dumps(diff.pop('tensors unequal', ''), indent=4) + '\n' + str(diff)

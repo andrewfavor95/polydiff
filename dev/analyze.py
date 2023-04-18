@@ -45,7 +45,7 @@ def read_metrics(df_path, add_contig_rmsd=True):
     df['run'] = df['name'].apply(lambda x: x.split('_')[0])
     # df = df[df['run'] =='run2'].reset_index()
     import re
-    # df['benchmark'] = [n[n.index('_')+1:n.index('_cond')] for n in df.name]
+    df['benchmark'] = [n[n.index('_')+1:n.index('_cond')] for n in df.name]
 
     df['run'] = [n[:n.index('_')] for n in df.name]
     # For backwards compatibility

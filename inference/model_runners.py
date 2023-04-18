@@ -1,4 +1,5 @@
 import copy
+from datetime import datetime
 import torch
 from assertpy import assert_that
 import numpy as np
@@ -31,7 +32,6 @@ import util
 import hydra
 from hydra.core.hydra_config import HydraConfig
 import os
-from aa_model import RFI
 
 import sys
 sys.path.append('../') # to access RF structure prediction stuff 
@@ -189,10 +189,10 @@ class Sampler:
     def load_checkpoint(self) -> None:
         """Loads RF checkpoint, from which config can be generated."""
         self._log.info(f'Reading checkpoint from {self.ckpt_path}')
-        print('This is inf_conf.ckpt_path')
-        print(self.ckpt_path)
+        print(f'loading {self.ckpt_path}')
         self.ckpt  = torch.load(
             self.ckpt_path, map_location=self.device)
+        print(f'loaded {self.ckpt_path}')
 
     def assemble_config_from_chk(self) -> None:
         """
@@ -359,7 +359,7 @@ class Sampler:
             assert torch.all(self.is_diffused[indep.is_sm] == 0), f"all ligand atoms must be in the motif"
             assert (mappings['con_hal_idx0'] == mappings['con_ref_idx0']).all(), 'all positions in the input PDB must correspond to the same index in the output pdb'
             indep = indep_orig
-            indep.seq[self.is_seq_masked] = rf2aa.chemical.MASKINDEX
+        indep.seq[self.is_seq_masked] = rf2aa.chemical.MASKINDEX
         # Diffuse the contig-mapped coordinates 
         if self.diffuser_conf.partial_T:
             self.t_step_input = self.diffuser_conf.partial_T
@@ -802,8 +802,10 @@ class NRBStyleSelfCond(Sampler):
 
             sampled_seq = torch.argmax(pseq_0, dim=-1)
 
+        now = datetime.now()
+        current_time = now.strftime("%H:%M:%S")
         self._log.info(
-                f'Timestep {t}, current sequence: { rf2aa.chemical.seq2chars(torch.argmax(pseq_0, dim=-1).tolist())}')
+                f'{current_time}: Timestep {t}, current sequence: { rf2aa.chemical.seq2chars(torch.argmax(pseq_0, dim=-1).tolist())}')
 
         if t > self._conf.inference.final_step:
             x_t_1, seq_t_1, tors_t_1, px0 = self.denoiser.get_next_pose(
@@ -819,6 +821,7 @@ class NRBStyleSelfCond(Sampler):
                 include_motif_sidechains=self.preprocess_conf.motif_sidechain_input,
             )
         else:
+            # Final step.
             px0 = px0.cpu()
             px0[~self.is_diffused] = indep.xyz[~self.is_diffused]
             x_t_1 = torch.clone(px0)

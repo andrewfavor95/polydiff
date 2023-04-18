@@ -1,7 +1,9 @@
 import copy
+from collections import defaultdict
 
 import torch
 from icecream import ic
+import assertpy
 
 import aa_model
 import rf2aa.util
@@ -44,7 +46,7 @@ def atomized_indices_atoms(atomizer, atom_names_by_res):
     atom_idx_by_res = atomizer.get_atom_idx_by_res()
     named_i = []
     for res_i, atom_names in atom_names_by_res.items():
-        assert isinstance(res_i, int)
+        assert isinstance(res_i, int), res_i
         atomized_residue_idxs = atom_idx_by_res[res_i]
         original_aa = atomizer.indep_initial_copy.seq[res_i]
         within_res_atom_idxs = {atom_name:i for i,atom_name in enumerate(e for e in rf2aa.chemical.aa2long[original_aa] if e is not None)}
@@ -64,6 +66,61 @@ def atomized_indices_res(atomizer, mask):
     for i in mask_idx:
         atomized_res_idx.append(atomized_res_idx_from_res[i.item()])
     return atomized_res_idx
+
+def get_res_atom_name_by_atomized_idx(atomizer):
+    '''
+    Returns a dictionary mapping the index of an atom in the atomized protein
+    to the original (0-index residue, atom_name) from pre-atomization.
+    '''
+    atomized_res_idx_from_res = atomizer.get_atom_idx_by_res()
+    res_idx_atom_name_by_atomized_idx = {}
+    for res_idx, atomized_res_idx in atomized_res_idx_from_res.items():
+        original_aa = atomizer.indep_initial_copy.seq[res_idx]
+        atom_name_by_within_res_idx = {i:atom_name for i,atom_name in enumerate(e for e in rf2aa.chemical.aa2long[original_aa] if e is not None)}
+        for within_res_atom_idx, atom_idx in enumerate(atomized_res_idx):
+            res_idx_atom_name_by_atomized_idx[atom_idx.item()] = (
+                # f'{rf2aa.chemical.num2aa[original_aa]}{atomizer.indep_initial_copy.idx[res_idx]}'
+                res_idx, atom_name_by_within_res_idx[within_res_atom_idx].strip()
+            )
+    return res_idx_atom_name_by_atomized_idx
+
+def res_atom_name(atomizer, atomized_idx):
+    '''
+    Params:
+        Indices of atoms in the atomized protein
+    Returns:
+        List o (0-index residue, atom_name) from pre-atomization.
+    '''
+    res_idx_atom_name_by_atomized_idx = get_res_atom_name_by_atomized_idx(atomizer)
+    return [res_idx_atom_name_by_atomized_idx[i.item()] for i in atomized_idx]
+
+def convert_atomized_mask(atomizer, mask):
+    '''
+    Params:
+        atomizer: aa_model.AtomizeResidues
+        mask: binary mask, the length of an atomized protein
+    Returns:
+        Dictionary mapping deatomized 0-indexed residues to the atom names corresponding to True in the mask, i.e.
+            {0: ['CB', 'CG], 1: ['ALL'], ...}
+    '''
+    atomized_idx = mask.nonzero()[:,0]
+    atomized_res_idx_from_res = atomizer.get_atomized_res_idx_from_res()
+    res_idx_from_atomized_res_idx = {v:k for k,v in atomized_res_idx_from_res.items()}
+
+    res_idx_atom_name_by_atomized_idx = get_res_atom_name_by_atomized_idx(atomizer)
+    o = defaultdict(list)
+    for atomized_i in atomized_idx.tolist():
+        if atomized_i in res_idx_atom_name_by_atomized_idx:
+            deatomized_i, atom_name = res_idx_atom_name_by_atomized_idx[atomized_i]
+            o[deatomized_i].append(atom_name)
+
+        elif atomized_i in res_idx_from_atomized_res_idx:
+            deatomized_i = res_idx_from_atomized_res_idx[atomized_i]
+            o[deatomized_i].append('ALL')
+        else:
+            raise Exception(f'{atomized_i} not found')
+    return o
+
 
 def atom_indices(atomizer, res_mask, atom_names_by_res):
     res_i = atomized_indices_res(atomizer, res_mask)
@@ -100,6 +157,7 @@ def atomize_and_mask(indep, is_res_str_shown, is_atom_str_shown):
         is_diffused
         is_masked_seq
     '''
+    assertpy.assert_that(len(is_res_str_shown)).is_equal_to(indep.length())
     is_atomized = torch.zeros(indep.length()).bool()
     for k in is_atom_str_shown.keys():
         is_atomized[k] = True

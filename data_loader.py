@@ -1459,6 +1459,46 @@ def default_dataset_configs(loader_param, debug=False):
         'sm_complex': sm_compl_config,
         }), homo
 
+
+fallback_spoof = {
+    'chosen_dataset': 'sm_complex',
+    'mask_gen_seed': 38968613,
+    'sel_item': {   'ASSEMBLY': 1,
+                    'CHAINID': '3gnc_C',
+                    'CLUSTER': 19246,
+                    'COVALENT': [],
+                    'DEPOSITION': '2009-03-16',
+                    'HASH': '022964',
+                    'LEN_EXIST': 383,
+                    'LIGAND': [('I', '396', 'QQQ')],
+                    'LIGATOMS': 16,
+                    'LIGATOMS_RESOLVED': 16,
+                    'LIGXF': [('I', 8)],
+                    'PARTNERS': [   (   'C',
+                                        2,
+                                        190,
+                                        2.7337806224823,
+                                        'polypeptide(L)'),
+                                    (   [('J', '397', 'EPE')],
+                                        [('J', 9)],
+                                        0,
+                                        7.141089916229248,
+                                        'nonpoly'),
+                                    (   'A',
+                                        0,
+                                        0,
+                                        7.238761901855469,
+                                        'polypeptide(L)'),
+                                    (   'D',
+                                        3,
+                                        0,
+                                        16.770910263061523,
+                                        'polypeptide(L)')],
+                    'RESOLUTION': 2.15,
+                    'SEQUENCE': 'GPGSMAAATFHWDDPLLLDQQLADDERMVRDAAHAYAQGKLAPRVTEAFRHETTDAAIFREMGEIGLLGPTIPEQYGGPGLDYVSYGLIAREVERVDSGYRSMMSVQSSLVMVPIFEFGSDAQKEKYLPKLATGEWIGCFGLTEPNHGSDPGSMVTRARKVPGGYSLSGSKMWITNSPIADVFVVWAKLDEDGRDEIRGFILEKGCKGLSAPAIHGKVGLRASITGEIVLDEAFVPEENILPHVKGLRGPFTCLNSARYGIAWGALGAAESCWHIARQYVLDRKQFGRPLAANQLIQKKLADMQTEITLGLQGVLRLGRMKDEGTAAVEITSIMKRNSCGKALDIARLARDMLGGNGISDEFGVARHLVNLEVVNTYEGTHDIHALILGRAQTGIQAFF'},
+    'task': 'diff'
+}
+
 class DistilledDataset(data.Dataset):
     def __init__(self,
                  dataset_configs,
@@ -1499,6 +1539,20 @@ class DistilledDataset(data.Dataset):
         conf = OmegaConf.create(conf)
         self.conf = conf
         self.model_adaptor = aa_model.Model(conf)
+        self.last_idx = None
+        def fallback_out():
+            spoof = fallback_spoof
+            mask_gen_seed = spoof['mask_gen_seed']
+            sel_item = spoof['sel_item']
+            chosen_dataset = spoof['chosen_dataset']
+            dataset_config = self.dataset_configs[chosen_dataset]
+            out = dataset_config.task_loaders(
+                        sel_item,
+                        {**rf2aa.data_loader.default_dataloader_params, **self.params, "P_ATOMIZE_MODRES": -1}, num_protein_chains=1, num_ligand_chains=1, 
+                        fixbb=True,
+                    )
+            return out
+        self.fallback_out = fallback_out
 
     def __len__(self):
         return sum(len(d.ids) for d in self.dataset_configs.values())
@@ -1588,11 +1642,15 @@ class DistilledDataset(data.Dataset):
                 else:
                     out = chosen_loader(sel_item, self.params, unclamp=False,fixbb=fixbb)
             elif chosen_dataset == 'sm_complex':
-                out = dataset_config.task_loaders(
-                    sel_item,
-                    {**rf2aa.data_loader.default_dataloader_params, **self.params, "P_ATOMIZE_MODRES": -1}, num_protein_chains=1, num_ligand_chains=1, 
-                    fixbb=fixbb,
-                )
+                try:
+                    out = dataset_config.task_loaders(
+                        sel_item,
+                        {**rf2aa.data_loader.default_dataloader_params, **self.params, "P_ATOMIZE_MODRES": -1}, num_protein_chains=1, num_ligand_chains=1, 
+                        fixbb=fixbb,
+                    )
+                except Exception as e:
+                    print(f'WARNING: hit exception {str(e)} on item {item_context}')
+                    out = self.fallback_out()
             else:
                 raise Exception(f'chosen_dataset {chosen_dataset} not implemented')
             
@@ -1607,34 +1665,12 @@ class DistilledDataset(data.Dataset):
             run_inference.seed_all(mask_gen_seed) # Reseed the RNGs for test stability.
             masks_1d = mask_generator.generate_masks(indep, task, self.params, chosen_dataset, None, atom_mask=atom_mask[:, :rf2aa.chemical.NHEAVYPROT])
 
-            is_res_seq_shown = masks_1d['input_seq_mask']
             is_res_str_shown = masks_1d['input_str_mask']
             is_atom_str_shown = masks_1d['is_atom_motif']
-            atomizer = None
-            if is_atom_str_shown is not None:
+            # Cast to non-tensor
+            if is_atom_str_shown:
                 is_atom_str_shown = {res_i.item():v for res_i, v in is_atom_str_shown.items()}
-                is_atomized = torch.zeros(indep.length()).bool()
-                for k in is_atom_str_shown.keys():
-                    is_atomized[k] = True
-
-                indep, atomizer = atomize.atomize(indep, is_atomized)
-                assert indep.is_sm.shape[0] == indep.xyz.shape[0]
-                L = indep.seq.shape[0]
-                is_atom_seq_shown = {res_i: [e for e in rf2aa.chemical.aa2long[atomizer.indep_initial_copy.seq[res_i]][:rf2aa.chemical.NHEAVYPROT] if e is not None]
-                                    for res_i in is_atom_str_shown.keys()}
-                str_shown_indices = atomize.atom_indices(atomizer, is_res_str_shown, is_atom_str_shown)
-                seq_shown_indices = atomize.atom_indices(atomizer, is_res_seq_shown, is_atom_seq_shown)
-                is_diffused = torch.ones(L).bool()
-                is_masked_seq = torch.ones(L).bool()
-                is_diffused[str_shown_indices] = False
-                is_masked_seq[seq_shown_indices] = False
-            else:
-                is_diffused = is_masked_seq = ~is_res_str_shown
-            
-            if self.params['USE_GUIDE_POSTS']:
-                    mask_gp = masks_1d['input_str_mask'].clone()
-                    indep, is_diffused, gp_to_ptn_idx0 = gp.make_guideposts(indep, mask_gp)
-                    is_masked_seq = is_diffused.clone()
+            indep, is_diffused, is_masked_seq, atomizer, _ = aa_model.transform_indep(indep, is_res_str_shown, is_atom_str_shown, self.params['USE_GUIDE_POSTS'])
 
             run_inference.seed_all(mask_gen_seed) # Reseed the RNGs for test stability.
             aa_model.centre(indep, is_diffused)

@@ -41,6 +41,7 @@ import rf2aa.util
 import aa_model
 import guide_posts as gp
 import copy
+import atomize
 # ic.configureOutput(includeContext=True)
 
 def make_deterministic(seed=0):
@@ -106,10 +107,6 @@ def sample(sampler):
         sampler_out = sample_one(sampler)
         log.info(f'Finished design in {(time.time()-start_time)/60:.2f} minutes')
         save_outputs(sampler, out_prefix, *sampler_out)
- 
-        # TEMPORARY HACK (jue): Rename ligand and ligand atoms
-        if sampler._conf.inference.ligand:
-            rename_ligand_atoms(sampler._conf.inference.input_pdb, out_prefix+'.pdb')
 
 def rename_ligand_atoms(ref_fn, out_fn):
     """Copies names of ligand residue and ligand heavy atoms from input pdb
@@ -201,6 +198,9 @@ def deatomize_sampler_outputs(sampler, indep, px0_xyz_stack, denoised_xyz_stack,
     de-atomized versions, but other features will remain unchanged (and
     therefore become inconsistent).
     """
+    indep.xyz = aa_model.pad_dim(indep.xyz, 1, rf2aa.chemical.NTOTAL, torch.nan)
+    indep = atomize.deatomize(sampler.model_adaptor.atomizer, indep)
+    indep.seq = torch.where(~indep.is_sm * indep.seq >= rf2aa.chemical.UNKINDEX, 0, indep.seq)
     px0_xyz_stack_new = []
     denoised_xyz_stack_new = []
     seq_stack_new = []
@@ -215,12 +215,11 @@ def deatomize_sampler_outputs(sampler, indep, px0_xyz_stack, denoised_xyz_stack,
         seq_, xyz_, idx_, bond_feats_, same_chain_ = \
             sampler.model_adaptor.atomizer.get_deatomized_features(seq_stack[i], denoised_xyz)
         denoised_xyz_stack_new.append(xyz_)
+        seq_cat = torch.argmax(seq_, dim=-1)
+        alanine_one_hot = torch.nn.functional.one_hot(torch.tensor([0]), rf2aa.chemical.NAATOKENS)
+        cond=~indep.is_sm[...,None] * (seq_ >= rf2aa.chemical.UNKINDEX)
+        seq_ = torch.where(cond, alanine_one_hot, seq_)
         seq_stack_new.append(seq_)
-
-    # these features are assumed to be the same on every iteration so just take the final one
-    indep.idx = idx_
-    indep.bond_feats = bond_feats_
-    indep.same_chain = same_chain_
 
     return indep, px0_xyz_stack_new, denoised_xyz_stack_new, seq_stack_new
 
@@ -228,8 +227,9 @@ def deatomize_sampler_outputs(sampler, indep, px0_xyz_stack, denoised_xyz_stack,
 def save_outputs(sampler, out_prefix, indep, denoised_xyz_stack, px0_xyz_stack, seq_stack):
     log = logging.getLogger(__name__)
 
+    gp_contig_mappings = {}
     # If using guideposts, infer their placement from the final pX0 prediction.
-    if sampler._conf.inference.contig_as_guidepost:
+    if sampler._conf.inference.contig_as_guidepost and sampler._conf.inference.infer_guidepost_positions:
         gp_to_contig_idx0 = sampler.contig_map.gp_to_ptn_idx0  # map from gp_idx0 to the ptn_idx0 in the contig string.
         is_gp = torch.zeros_like(indep.seq, dtype=bool)
         is_gp[list(gp_to_contig_idx0.keys())] = True
@@ -266,7 +266,6 @@ def save_outputs(sampler, out_prefix, indep, denoised_xyz_stack, px0_xyz_stack, 
     # Save outputs 
     os.makedirs(os.path.dirname(out_prefix), exist_ok=True)
     final_seq = seq_stack[-1]
-    ic(final_seq)
 
     if sampler._conf.seq_diffuser.seqdiff is not None:
         # When doing sequence diffusion the model does not make predictions beyond category 19
@@ -281,13 +280,11 @@ def save_outputs(sampler, out_prefix, indep, denoised_xyz_stack, px0_xyz_stack, 
     final_seq = torch.where((final_seq == 20) | (final_seq==21), 0, final_seq)
 
     # determine lengths of protein and ligand for correct chain labeling in output pdb
-    # sm_mask = rf2aa.util.is_atom(final_seq)
-    # chain_Ls = [len(sm_mask)-sm_mask.sum(), sm_mask.sum()] # assumes 1 protein followed by 1 ligand
     chain_Ls = rf2aa.util.Ls_from_same_chain_2d(indep.same_chain)
 
     # pX0 last step
     out = f'{out_prefix}.pdb'
-    aa_model.write_traj(out, denoised_xyz_stack[0:1], final_seq, indep.bond_feats, chain_Ls=chain_Ls)
+    aa_model.write_traj(out, denoised_xyz_stack[0:1], final_seq, indep.bond_feats, chain_Ls=chain_Ls, lig_name=sampler._conf.inference.ligand, idx_pdb=indep.idx)
     des_path = os.path.abspath(out)
 
     # trajectory pdbs
@@ -295,11 +292,11 @@ def save_outputs(sampler, out_prefix, indep, denoised_xyz_stack, px0_xyz_stack, 
     os.makedirs(os.path.dirname(traj_prefix), exist_ok=True)
 
     out = f'{traj_prefix}_Xt-1_traj.pdb'
-    aa_model.write_traj(out, denoised_xyz_stack, final_seq, indep.bond_feats, chain_Ls=chain_Ls)
+    aa_model.write_traj(out, denoised_xyz_stack, final_seq, indep.bond_feats, chain_Ls=chain_Ls, lig_name=sampler._conf.inference.ligand, idx_pdb=indep.idx)
     xt_traj_path = os.path.abspath(out)
 
     out=f'{traj_prefix}_pX0_traj.pdb'
-    aa_model.write_traj(out, px0_xyz_stack, final_seq, indep.bond_feats, chain_Ls=chain_Ls)
+    aa_model.write_traj(out, px0_xyz_stack, final_seq, indep.bond_feats, chain_Ls=chain_Ls, lig_name=sampler._conf.inference.ligand, idx_pdb=indep.idx)
     x0_traj_path = os.path.abspath(out)
 
     # run metadata
@@ -314,6 +311,9 @@ def save_outputs(sampler, out_prefix, indep, denoised_xyz_stack, px0_xyz_stack, 
         for key, value in sampler.contig_map.get_mappings().items():
             trb[key] = value
 
+    if sampler.model_adaptor.atomizer:
+        motif_deatomized = atomize.convert_atomized_mask(sampler.model_adaptor.atomizer, ~sampler.is_diffused)
+        trb['motif'] = motif_deatomized
     if sampler._conf.inference.contig_as_guidepost:
         # Store the literal location of the guide post residues
         for k in ['con_hal_pdb_idx', 'con_hal_idx0', 'sampled_mask']:

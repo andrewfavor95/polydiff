@@ -2,6 +2,7 @@ import random
 import sys
 
 import torch
+import scipy.stats
 import kinematics
 import numpy as np
 from icecream import ic
@@ -175,10 +176,11 @@ def get_closest_tip_atoms(indep, atom_mask,
     crds = torch.clone(indep.xyz)
     crds[~atom_mask] = torch.nan
     prot_crds = crds[~indep.is_sm]
-    sm_crds = crds[indep.is_sm]
-    dist_by_atom = (prot_crds[:, None] - sm_crds[ None]).pow(2).sum(dim=-1).sqrt()
-    dist = dist_by_atom.nan_to_num(9999)
-    dist = dist.min(dim=-1)[0].min(dim=-1)[0]
+    sm_crds = crds[indep.is_sm][:, 1]
+    dist_res_sidechain_ligand = (prot_crds[:,:, None,...] - sm_crds[ None,None,...]).pow(2).sum(dim=-1).sqrt()
+    dist_res_sidechain_ligand = dist_res_sidechain_ligand.nan_to_num(9999)
+    dist_res_sidechain = dist_res_sidechain_ligand.min(dim=-1)[0]
+    dist = dist_res_sidechain.min(dim=-1)[0]
     is_valid_for_atomization = indep.is_valid_for_atomization(atom_mask)[~indep.is_sm]
     if not is_valid_for_atomization.any():
         ic('No valid residues for atomization, falling back to unconditional generation')
@@ -216,15 +218,14 @@ def get_closest_tip_atoms(indep, atom_mask,
     sm_prot_transition_types = (indep.is_sm[1:].int() - indep.is_sm[:-1].int()).unique().tolist()
     # If the ligands do not come in a single block after the protein, using dist_sc_to_sm will provide incorrect indices,
     assertpy.assert_that(sm_prot_transition_types).is_equal_to([0,1])
-    dist_sc_to_sm = dist_by_atom.min(dim=1)[0]
     # prot_by_het = torch.full((indep.length(),), torch.nan)
     # prot_by_het[~indep.is_sm] = torch.arange((~indep.is_sm).sum())
     # torch.nonzero(~indep.is_sm).flatten()
     for het_i in indices:
         # prot_i = prot_by_het[het_i]
         prot_i = het_i
-        closest_atom = torch.argmin(dist_sc_to_sm[prot_i]).item()
-        n_bonds = np.random.randint(1, 2)
+        closest_atom = torch.argmin(dist_res_sidechain[prot_i]).item()
+        n_bonds = np.random.randint(1, 3)
         is_atom_diffused[het_i] = get_atom_names_within_n_bonds(indep.seq[het_i], closest_atom, n_bonds)
     is_motif = torch.zeros(L).bool()
     is_motif[indep.is_sm] = True
@@ -239,6 +240,77 @@ def get_atom_names_within_n_bonds(res, source_node, n_bonds):
     atoms_within_n_bonds = paths.keys()
     atom_names = [rf2aa.chemical.aa2long[res][i] for i in atoms_within_n_bonds]
     return atom_names
+
+def tip_crd(indep, i):
+    '''Returns the coordinates of the tip atom of residue index i'''
+    aa = indep.seq[i]
+    tip_atom_name = rf2aa.chemical.aa2tip[aa].strip()
+    tip_idx_within_res = next(i for i, atom_name in enumerate(rf2aa.chemical.aa2long[aa]) if atom_name.strip() == tip_atom_name)
+    return indep.xyz[i, tip_idx_within_res]
+
+def get_tip_gaussian_mask(indep, atom_mask, *args, std_dev=8, **kwargs):
+    '''
+    Params:
+        indep: aa_model.Indep, a description of a protein complex
+        atom_mask: [L, 36] mask of whether an atom is resolved in indep
+        std_dev: standard deviation of the multivariate gaussian (see below)
+        *args: ignored, necessary to match masker function signature
+        **kwargs: ignored, necessary to match masker function signature
+    Returns:
+        is_motif: binary mask that is True where a non-atomized residue is motif
+        is_atom_motif: dictionary mapping residue indices to the atom names which are motif
+    
+    This masking function provides a few partial sidechains as motif.
+
+    The protocol for selecting those sidechains is as follows:
+        1. Find all atomizable residue
+        2. Select one at random, call it origin
+        3. Sample 1-6 atomizable residues with probabilities given by evaluation of a
+            multivariate gaussian centered at origin at the tips of the atomizable residues
+        4. Select a random atom in each residue, weighted towards selecting the tip
+        5. Expand the mask starting from each selected atom by traversing 1-3 bonds within the residue.
+    '''
+    assert not indep.is_sm.any()
+    is_valid_for_atomization = indep.has_heavy_atoms_and_seq(atom_mask)
+    if not is_valid_for_atomization.any():
+        ic('No valid residues for atomization, falling back to unconditional generation')
+        is_motif = torch.zeros(indep.length()).bool()
+        is_motif[indep.is_sm] = True
+        return is_motif, None
+    valid_idx = is_valid_for_atomization.nonzero()[:,0]
+    
+    origin_i = np.random.choice(valid_idx, 1)[0]
+    origin_tip_crd = tip_crd(indep, origin_i)
+    tip_crds = [tip_crd(indep, i) for i in valid_idx]
+    tip_crds = np.stack(tip_crds, axis=0)
+    gaussian = scipy.stats.multivariate_normal(origin_tip_crd, std_dev)
+    probs = gaussian.pdf(tip_crds)
+    probs /= probs.sum()
+    n_atomize = random.randint(1, 6)
+    n_atomize = min(n_atomize, len(valid_idx))
+    atomize_i = np.random.choice(valid_idx, n_atomize, p=probs, replace=False)
+
+    is_atom_motif = {}
+    for i in atomize_i:
+        atom_crds = indep.xyz[i][atom_mask[i]]
+        closest_atom_i = torch.argmin(torch.norm(atom_crds - origin_tip_crd), axis=-1)
+        n_atoms = len(atom_crds)
+        prob_non_closest = 0.5 / (n_atoms-1)
+        probs = np.full((n_atoms,), prob_non_closest)
+        probs[closest_atom_i] = 0.5
+        p_tip_only = 0.5
+        if np.random.rand() < p_tip_only:
+            probs[:4] = 1e-6
+        probs = probs.astype('float64')
+        probs /= probs.sum()
+        seed_atom = np.random.choice(np.arange(n_atoms), 1, p=probs)[0]
+        n_bonds = np.random.randint(1, 3)
+        atom_names = get_atom_names_within_n_bonds(indep.seq[i], seed_atom, n_bonds)
+        assertpy.assert_that(atom_names).does_not_contain(None)
+        is_atom_motif[i] = atom_names
+
+    is_motif = torch.zeros(indep.length()).bool()
+    return is_motif, is_atom_motif
 
 def _get_triple_contact(xyz, low_prop, high_prop, broken_prop, xyz_less_than=6, seq_dist_greater_than=10, len_low=1, len_high=3):
     contacts = get_contacts(xyz, xyz_less_than, seq_dist_greater_than)
@@ -323,7 +395,7 @@ atomize_get_double_contact = make_atomized(get_double_contact)
 get_unconditional_diffusion_mask = make_sm_compatible(_get_unconditional_diffusion_mask)
 
 sm_mask_fallback = {
-    get_closest_tip_atoms: atomize_get_triple_contact
+    get_closest_tip_atoms: get_tip_gaussian_mask
 }
 
 def get_diffusion_mask(
@@ -625,6 +697,7 @@ def generate_masks(indep, task, loader_params, chosen_dataset, full_chain=None, 
             broken_prop=loader_params['MASK_BROKEN_PROPORTION'],
             diff_mask_probs=loader_params['DIFF_MASK_PROBS'],
             ) 
+        # ic(is_atom_motif, torch.nonzero(diffusion_mask), diffusion_mask.sum())
         input_str_mask = diffusion_mask.clone()
         input_seq_mask = diffusion_mask.clone()
         # t1dconf scaling will be taken care of by diffuser, so just leave those at 1 here 

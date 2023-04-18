@@ -316,6 +316,7 @@ def get_args(in_args=None):
     parser.add_argument('-n_write_pdb', type=int, default=100)
     parser.add_argument('-reinitialize_missing_params', action='store_true', default=False, help='If the checkpoint file is missing a network parameter, use the networks default initialization for that parameter')
     parser.add_argument('-saves_per_epoch', type=int, default=0, help='number of times to save the model per epoch')
+    parser.add_argument('-resume', help='run ID of a wandb run to resume')
     
     # Preprocessing parameters
     preprocess_group = parser.add_argument_group("preprocess parameters")

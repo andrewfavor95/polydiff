@@ -157,7 +157,7 @@ class Trainer():
                  model_param={}, loader_param={}, loss_param={}, batch_size=1, accum_step=1, 
                  maxcycle=4, diffusion_param={}, preprocess_param={}, outdir=None, wandb_prefix='',
                  metrics=None, zero_weights=False, log_inputs=False, n_write_pdb=100,
-                 reinitialize_missing_params=False, verbose_checks=False, saves_per_epoch=None):
+                 reinitialize_missing_params=False, verbose_checks=False, saves_per_epoch=None, resume=False):
 
         self.model_name = model_name #"BFF"
         self.ckpt_load_path = ckpt_load_path
@@ -174,6 +174,7 @@ class Trainer():
         self.reinitialize_missing_params = reinitialize_missing_params
         self.rate_deque = collections.deque(maxlen=200)
         self.verbose_checks=verbose_checks
+        self.resume=resume
 
         self.outdir = self.outdir or f'./train_session{get_datetime()}'
         ic(self.outdir)
@@ -786,10 +787,20 @@ class Trainer():
 
         if WANDB and rank == 0:
             print('initializing wandb')
+            resume = None
+            name='_'.join([self.wandb_prefix, self.outdir.replace('./','')])
+            id = None
+            if self.resume:
+                name=None
+                id=self.resume
+                resume='must'
             wandb.init(
                     project="fancy-pants ",
                     entity="bakerlab", 
-                    name='_'.join([self.wandb_prefix, self.outdir.replace('./','')]))
+                    name=name,
+                    id=id,
+                    resume=resume)
+            print(f'{wandb.run.id=}')
 
             all_param = {}
             all_param.update(self.loader_param)
@@ -1245,11 +1256,14 @@ class Trainer():
                         indep_write.write_pdb(f'{prefix}_{suffix}.pdb')
 
                     indep_true = indep
+                    motif_deatomized = None
                     if atomizer:
                         indep_true = atomize.deatomize(atomizer, indep_true)
+                        motif_deatomized = atomize.convert_atomized_mask(atomizer, ~is_diffused)
 
                     with open(f'{prefix}_info.pkl', 'wb') as fh:
                         pickle.dump({
+                            'motif': motif_deatomized,
                             'masks_1d': masks_1d,
                             'idx': indep_true.idx,
                             'is_sm': indep_true.is_sm,
@@ -1365,7 +1379,8 @@ def make_trainer(args, model_param, loader_param, loss_param, diffusion_param, p
                     reinitialize_missing_params=args.reinitialize_missing_params,
                     verbose_checks=args.verbose_checks,
                     saves_per_epoch=args.saves_per_epoch,
-                    outdir=args.out_dir)
+                    outdir=args.out_dir,
+                    resume=args.resume)
     return train
 
 if __name__ == "__main__":

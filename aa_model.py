@@ -1,3 +1,4 @@
+import functools
 import torch
 import assertpy
 import torch.nn.functional as F
@@ -62,8 +63,22 @@ class Indep:
         seq = self.seq
         seq = torch.where(seq == 20, 0, seq)
         seq = torch.where(seq == 21, 0, seq)
+        # This is a hacky way of specifying same_chain.
+        # TODO: convert same_chain from a 2D input to a 1D input
+        chain_Ls = []
+        G = nx.from_numpy_array(self.same_chain.numpy())
+        connected_components = list(nx.connected_components(G))
+        longest_connected_component = list(connected_components.pop(connected_components.index(max(connected_components, key=len))))
+        # other_component = list(functools.reduce(lambda a,b: a.update(b), connected_components))
+        other_component = []
+        for cc in connected_components:
+            other_component.extend(list(cc))
+        # chain_letters = np.zeros((self.length(),), dtype='string_')
+        chain_letters = np.chararray((self.length(),), unicode=True)
+        chain_letters[longest_connected_component] = 'A'
+        chain_letters[other_component] = 'B'
         rf2aa.util.writepdb(path,
-            torch.nan_to_num(self.xyz), seq, self.bond_feats, idx_pdb=self.idx)
+            torch.nan_to_num(self.xyz[:,:14]), seq, idx_pdb=self.idx, chain_letters=chain_letters)
 
     def ca_dists(self):
         xyz_ca = self.xyz[:,1]
@@ -89,11 +104,18 @@ class Indep:
     def has_n_terminal_residue(self):
         return torch.flip(is_monotonic(-torch.flip(self.idx,(0,))),(0,))
     
-    def is_valid_for_atomization(self, atom_mask):
+    def human_readable_seq(self):
+        return [rf2aa.chemical.num2aa[s] for s in self.seq]
+        # return np.chararray([rf2aa.chemical.num2aa[s] for s in self.seq], unicode=False)
+    
+    def has_heavy_atoms_and_seq(self, atom_mask):
         want_atom_mask = rf2aa.util.allatom_mask[self.seq]
         has_all_heavy_atoms = (want_atom_mask[:,:rf2aa.chemical.NHEAVYPROT] == atom_mask[:,:rf2aa.chemical.NHEAVYPROT]).all(dim=-1)
         has_sequence = self.seq < 20
-        return self.has_c_terminal_residue() * self.has_n_terminal_residue() * has_all_heavy_atoms * ~self.is_sm * has_sequence
+        return has_all_heavy_atoms * ~self.is_sm * has_sequence
+    
+    def is_valid_for_atomization(self, atom_mask):
+        return self.has_c_terminal_residue() * self.has_n_terminal_residue() * self.has_heavy_atoms_and_seq(atom_mask)
 
 def is_monotonic(idx):
     idx_pad = torch.concat([idx, torch.tensor([9999])])
@@ -162,6 +184,7 @@ def filter_het(pdb_lines, ligand):
         lines.append(l)
         hetatm_ids.append(int(l[7:7+5].strip()))
 
+    violations = []
     for l in pdb_lines:
         if 'CONECT' not in l:
             continue
@@ -170,7 +193,10 @@ def filter_het(pdb_lines, ligand):
             lines.append(l)
             continue
         if any(i in hetatm_ids for i in ids):
-            raise Exception(f'line {l} references atom ids in the target ligand {ligand} and another atom')
+            ligand_atms_bonded_to_protein = [i for i in ids if i in hetatm_ids]
+            violations.append(f'line {l} references atom ids in the target ligand {ligand}: {ligand_atms_bonded_to_protein} and another atom')
+    if violations:
+        raise Exception('\n'.join(violations))
     return lines
 
 def make_indep(pdb, ligand=None):
@@ -333,30 +359,16 @@ class Model:
         o.terminus_type[0] = N_TERMINUS
         o.terminus_type[n_prot-1] = C_TERMINUS
 
-        # is_diffused = torch.
         is_diffused_prot = ~torch.from_numpy(contig_map.inpaint_str)
         is_diffused_sm = torch.zeros(n_sm).bool()
         is_diffused = torch.cat((is_diffused_prot, is_diffused_sm))
-        if contig_map.contig_atoms is not None:
-            is_atomized = torch.zeros(n_protein_hal+n_sm).bool()
-            is_atomized[contig_map.atomize_indices] = 1
-            input_str_mask = torch.logical_or(is_atomized, ~is_diffused) # 1 for motif, 0 for diffused
-            # self.atomizer = AtomizeResidues(o, input_str_mask)
-            # atom_mask = rf2aa.util.allatom_mask[o.seq]
-            # atom_mask[:, 14:] = False # no Hs
-            # ic(contig_map.atomize_indices2atomname)
-            # self.atomizer.featurize_atomized_residues(atom_mask, contig_map.atomize_indices2atomname)
-            # residue indices that will be atomized cannot be marked as motif.
-            for k in contig_map.atomize_indices2atomname:
-                is_diffused_prot[k] = True
-            o, is_diffused, is_seq_masked, self.atomizer = atomize.atomize_and_mask(o, ~is_diffused_prot, contig_map.atomize_indices2atomname)
-            # o, input_str_mask, input_seq_mask = self.atomizer.return_input_tensors()
-            # is_diffused = ~input_str_mask # 1 for diffused, 0 for motif
-            # is_seq_masked = ~input_seq_mask
-            o.xyz[is_diffused] = np.nan
-            o.xyz = get_init_xyz(o.xyz[None, None], o.is_sm).squeeze()
-        else:
-            is_seq_masked = is_diffused
+        is_atom_str_shown = contig_map.atomize_indices2atomname
+        # The motifs for atomization are double-counted.
+        if is_atom_str_shown:
+            is_diffused[list(is_atom_str_shown.keys())] = True
+        is_res_str_shown = ~is_diffused
+        use_guideposts = 'inference' in self.conf and self.conf.inference.contig_as_guidepost
+        o, is_diffused, is_seq_masked, self.atomizer, contig_map.gp_to_ptn_idx0 = transform_indep(o, is_res_str_shown, is_atom_str_shown, use_guideposts, 'anywhere')
 
         # HACK.  ComputeAllAtom in the network requires N and C coords even for atomized residues,
 	    # However, these have no semantic value.  TODO: Remove the network's reliance on these coordinates.
@@ -365,17 +377,6 @@ class Model:
         o.xyz[o.is_sm] += chemical.INIT_CRDS
         #ic(o.xyz)
         
-        # Modify `o` if using guide posts
-        if 'inference' in self.conf and self.conf.inference.contig_as_guidepost:
-            # Make a mask of residues that should be treated as guide posts
-            treat_as_gp = torch.tensor(contig_map.get_mappings()['mask_1d'])
-
-            o, is_diffused, gp_to_ptn_idx0 = gp.make_guideposts(o, treat_as_gp, placement='anywhere')
-            is_seq_masked = is_diffused.clone()
-            o.seq[:L_mapped] = rf2aa.chemical.MASKINDEX  # Otherwise the sequence at the "original" contig positions leaks through.
-
-            # Smuggle out the shuffled gp locations. They're no longer in the order they were in the contigs string.
-            contig_map.gp_to_ptn_idx0 = gp_to_ptn_idx0 
 
         # To see the shapes of the indep struct with contig inserted
         # print(rf2aa.tensor_util.info(rf2aa.tensor_util.to_ordered_dict(o)))
@@ -717,10 +718,15 @@ def pop_unoccupied(indep, atom_mask):
     Removes ligand atoms which are not present in the atom mask.
     Removes residues which do not have N,C,Ca in the atom mask.
     """
+    pop = rf2aa.util.get_prot_sm_mask(atom_mask, indep.seq)
+    pop_mask(indep, pop)
+    atom_mask           = atom_mask[pop]
+    return atom_mask
+
+def pop_mask(indep, pop):
     n_atoms = indep.is_sm.sum()
     assertpy.assert_that(len(indep.atom_frames)).is_equal_to(n_atoms)
 
-    pop = rf2aa.util.get_prot_sm_mask(atom_mask, indep.seq)
     N     = pop.sum()
     pop2d = pop[None,:] * pop[:,None]
 
@@ -732,12 +738,11 @@ def pop_unoccupied(indep, atom_mask):
     indep.is_sm         = indep.is_sm[pop]
     indep.terminus_type = indep.terminus_type[pop]
 
-    n_shift = (~pop).cumsum(dim=0)
-    chiral_indices = indep.chirals[:,:-1]
-    chiral_shift = n_shift[chiral_indices.long()]
-    indep.chirals[:,:-1] = chiral_indices - chiral_shift
-    atom_mask           = atom_mask[pop]
-    return atom_mask
+    if indep.chirals.numel():
+        n_shift = (~pop).cumsum(dim=0)
+        chiral_indices = indep.chirals[:,:-1]
+        chiral_shift = n_shift[chiral_indices.long()]
+        indep.chirals[:,:-1] = chiral_indices - chiral_shift
 
 def centre(indep, is_diffused):
     xyz = indep.xyz
@@ -882,7 +887,6 @@ class AtomizeResidues:
     def featurize_atomized_residues(
         self,
         atom_mask, 
-        atomize_indices2atomnames=None
     ):
         """
         this function takes outputs of the RF2aa dataloader and the generated masks and refeaturizes the example where the 
@@ -890,8 +894,8 @@ class AtomizeResidues:
         that only the tip atoms of the context residues are context and the rest is diffused
         """
         is_motif = self.input_str_mask
-        seq_atomize_all,  xyz_atomize_all, frames_atomize_all, chirals_atomize_all, res_idx_atomize_all, is_atom_motif_all = \
-            self.generate_atomize_protein_features(is_motif, atom_mask, atomize_indices2atomnames)
+        seq_atomize_all,  xyz_atomize_all, frames_atomize_all, chirals_atomize_all, res_idx_atomize_all = \
+            self.generate_atomize_protein_features(is_motif, atom_mask)
         if not res_idx_atomize_all: # no residues atomized, just return the inputs
             return
         
@@ -906,7 +910,7 @@ class AtomizeResidues:
         #handle diffusion specific things such as masking
         # self.construct_diffusion_masks(is_motif, is_atom_motif_all, pop)
     
-    def generate_atomize_protein_features(self, is_motif, atom_mask, atomize_indices2atomnames):
+    def generate_atomize_protein_features(self, is_motif, atom_mask):
         """
         given a motif, generate "atomized" features for the residues in that motif
         skips residues that have any unresolved atoms or neighbors with unresolved atoms
@@ -930,7 +934,6 @@ class AtomizeResidues:
         res_idx_atomize_all = [] # indices of residues that end up getting atomized (0-indexed, contiguous)
         res_atomize_all = [] # residues (integer-coded) that end up getting atomized 
         idx_atomize_all = [] # PDB indices of residues that end up getting atomized
-        is_atom_motif_all = [] # chosen atoms within each atomized residue chosen as the motif
         # track the res_idx and absolute index of the previous C to draw peptide bonds between contiguous residues
         prev_res_idx = -2
         prev_C_index = -2 
@@ -939,37 +942,18 @@ class AtomizeResidues:
             # check if all the atoms in the residue are resolved, if not dont atomize
             if not torch.all(allatom_mask[residue]==atom_mask[res_idx]):
                 raise Exception(f'not all atoms resolved for {residue} at 0-indexed position {res_idx}')
-            N_term = res_idx ==  0
+            N_term = res_idx == 0
             C_term = res_idx == self.indep.idx.shape[0]-1
+            N_resolved = False
+            C_resolved = False
 
-            if N_term:
-                C_resolved = self.indep.idx[res_idx+1]-self.indep.idx[res_idx] == 1
-                N_resolved = True
-            if C_term:
-                N_resolved = self.indep.idx[res_idx]-self.indep.idx[res_idx-1] == 1
-                C_resolved = True
+            C_resolved = (not C_term) and self.indep.idx[res_idx+1]-self.indep.idx[res_idx] == 1
+            N_resolved = (not N_term) and self.indep.idx[res_idx]-self.indep.idx[res_idx-1] == 1
 
-            if not C_term and not N_term:
-                C_resolved = self.indep.idx[res_idx+1]-self.indep.idx[res_idx] == 1
-                N_resolved = self.indep.idx[res_idx]-self.indep.idx[res_idx-1] == 1
-            if not (C_resolved and N_resolved):
-                desc = f'{residue} at 0-indexed position {res_idx}'
-                which_missing = ' and '.join(name for name, is_resolved in (('C-terminal', C_resolved), ('N-terminal', N_resolved)) if not is_resolved)
-                raise Exception(f'both C terminal and N termal residues must be resolved, but {desc} lacks {which_missing}')
-            
             seq_atomize, _, xyz_atomize, _, frames_atomize, bond_feats_atomize, C_index, chirals_atomize = \
                             rf2aa.util.atomize_protein(res_idx, self.indep.seq[None], xyz, atom_mask, n_res_atomize=1)
             
             natoms = seq_atomize.shape[0]
-            if atomize_indices2atomnames is not None: # atoms to keep as motif given during inference
-                is_atom_motif = torch.zeros((natoms), dtype=bool)
-                # get indices of the atom names chosen as motif by user
-                is_atom_motif_indices = [aa2long_[residue].index(atom_name) for atom_name in atomize_indices2atomnames[res_idx.item()]]
-                is_atom_motif[is_atom_motif_indices] = 1
-            elif self.indep.is_sm.any():
-                is_atom_motif = self.choose_sm_contact_motif(xyz_atomize)
-            else:
-                is_atom_motif = self.choose_contiguous_atom_motif(bond_feats_atomize)
             # update the chirals to be after all the other residues
             chirals_atomize[:, :-1] += L
 
@@ -980,18 +964,17 @@ class AtomizeResidues:
             res_idx_atomize_all.append(res_idx)
             res_atomize_all.append(residue)
             idx_atomize_all.append(self.indep.idx[res_idx])
-            is_atom_motif_all.append(is_atom_motif)
 
             # update bond_feats every iteration, update all other features at the end 
             bond_feats_new = torch.zeros((L+natoms, L+natoms))
             bond_feats_new[:L, :L] = self.indep.bond_feats
             bond_feats_new[L:, L:] = bond_feats_atomize
             # add bond between protein and atomized N
-            if not N_term:
+            if N_resolved:
                 bond_feats_new[res_idx-1, L] = 6 # protein (backbone)-atom bond 
                 bond_feats_new[L, res_idx-1] = 6 # protein (backbone)-atom bond 
             # add bond between protein and C, assumes every residue is being atomized one at a time (eg n_res_atomize=1)
-            if not C_term:
+            if C_resolved:
                 bond_feats_new[res_idx+1, L+int(C_index.numpy())] = 6 # protein (backbone)-atom bond 
                 bond_feats_new[L+int(C_index.numpy()), res_idx+1] = 6 # protein (backbone)-atom bond 
             # handle drawing peptide bond between contiguous atomized residues
@@ -1018,7 +1001,7 @@ class AtomizeResidues:
         self.atomized_res_idx = res_idx_atomize_all
         self.atomized_idx = idx_atomize_all
 
-        return seq_atomize_all, xyz_atomize_all, frames_atomize_all, chirals_atomize_all, res_idx_atomize_all, is_atom_motif_all
+        return seq_atomize_all, xyz_atomize_all, frames_atomize_all, chirals_atomize_all, res_idx_atomize_all
 
     def update_rf_features_w_atomized_features(self, \
                                         seq_atomize_all, \
@@ -1085,7 +1068,7 @@ class AtomizeResidues:
         N_atoms = rf2aa.chemical.NHEAVYPROT
         if expect_H:
             N_atoms = rf2aa.chemical.NTOTAL
-        atomized_mask = rf2aa.util.allatom_mask[torch.tensor(self.atomized_res)][:,:N_atoms]
+        atomized_mask = rf2aa.util.allatom_mask[torch.tensor(self.atomized_res, dtype=int)][:,:N_atoms]
         atomized_res_natoms = atomized_mask.sum(dim=1)
         N_atomized_res = len(self.atomized_res)
         N_atomized_atoms = sum(atomized_res_natoms)
@@ -1107,7 +1090,7 @@ class AtomizeResidues:
         if expect_H:
             N_atoms = rf2aa.chemical.NTOTAL
 
-        atomized_mask = rf2aa.util.allatom_mask[torch.tensor(self.atomized_res)][:,:N_atoms]
+        atomized_mask = rf2aa.util.allatom_mask[torch.tensor(self.atomized_res, dtype=int)][:,:N_atoms]
         atomized_res_natoms = atomized_mask.sum(dim=1)
         N_atomized_res = len(self.atomized_res)
         assertpy.assert_that(len(self.atomized_res)).is_equal_to(len(self.atomized_res_idx))
@@ -1255,3 +1238,49 @@ class AtomizeResidues:
 
     def return_input_tensors(self):
         return self.indep, self.input_str_mask, self.input_seq_mask
+
+GP_BOND = 7
+def transform_indep(indep, is_res_str_shown, is_atom_str_shown, use_guideposts, guidepost_placement='anywhere'):
+    indep = copy.deepcopy(indep)
+    use_atomize = is_atom_str_shown is not None and len(is_atom_str_shown) > 0
+    is_diffused = is_masked_seq = ~is_res_str_shown
+    atomizer = None
+    gp_to_ptn_idx0 = None
+
+    if use_guideposts:
+        mask_gp = is_res_str_shown.clone()
+        mask_gp[indep.is_sm] = False
+        if use_atomize:
+            atomized_residues = list(is_atom_str_shown.keys())
+            mask_gp[atomized_residues] = True
+        if mask_gp.sum() == 0:
+            return indep, is_diffused, is_masked_seq, atomizer, {}
+
+
+        indep_length_pre_gp = indep.length()
+        indep, is_diffused, gp_to_ptn_idx0 = gp.make_guideposts(indep, mask_gp)
+        L_added_gp = indep.length() - indep_length_pre_gp
+        if use_atomize:
+            gp_from_ptn_idx0 = {v:k for k,v in gp_to_ptn_idx0.items()}
+            is_atom_str_shown = {gp_from_ptn_idx0[k]: v for k,v in is_atom_str_shown.items()}
+            # Remove redundancy
+            is_diffused[list(is_atom_str_shown.keys())] = True
+        is_masked_seq = is_diffused.clone()
+    if use_atomize:
+        is_ligand = indep.is_sm
+        is_diffused[indep.is_sm] = False
+        indep_length_pre_atomized = indep.length()
+        to_atomize_seq = indep.seq[list(is_atom_str_shown.keys())]
+        is_atom_str_shown = {k.item() if hasattr(k, 'item') else k :v for k,v in is_atom_str_shown.items()}
+        indep, is_diffused, is_masked_seq, atomizer = atomize.atomize_and_mask(indep, ~is_diffused, is_atom_str_shown)
+        assertpy.assert_that(indep.is_sm.sum()).is_equal_to(indep.atom_frames.shape[0])
+        ligand_idx = atomize.atomized_indices_res(atomizer, is_ligand)
+        if use_guideposts:
+            # HACK: use is_masked_seq as gp_idx0.
+            is_gp = ~is_masked_seq
+            is_inter_gp = is_gp[None, :] != is_gp[:, None]
+            is_inter_gp[ligand_idx] = False
+            is_inter_gp[:,ligand_idx] = False
+            indep.bond_feats[is_inter_gp] = GP_BOND
+
+    return indep, is_diffused, is_masked_seq, atomizer, gp_to_ptn_idx0
