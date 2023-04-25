@@ -1,0 +1,12 @@
+# Base inference Configuration.
+defaults:
+  - aa
+
+inference:
+  ckpt_path: /home/ahern/projects/dev_rf_diffusion/train_session2023-04-18_1681815206.1173074/models/BFF_8.pt
+  contig_as_guidepost: True
+  remove_guideposts_from_output: False
+  infer_guidepost_positions: True
+  guidepost_xyz_as_design: True
+  state_dict_to_load: final_state_dict
+

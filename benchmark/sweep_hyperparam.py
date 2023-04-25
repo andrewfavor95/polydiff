@@ -6,11 +6,85 @@
 
 import sys, os, argparse, itertools, json, shutil, re
 import numpy as np
+import pandas as pd
 
 script_dir = os.path.dirname(os.path.realpath(__file__))+'/'
 sys.path.append(script_dir+'util/')
 from icecream import ic 
 import slurm_tools
+import assertpy
+
+def split_string_with_parentheses(string, delimiter=None):
+    '''
+    Splits a string using on delimiter (or whitespace if delimiter is None),
+    ignoring delimiters in between pairs of parentheses.
+    '''
+    if delimiter is None:
+        is_delimiter = lambda x: x.isspace()
+    else:
+        is_delimiter = lambda x: x==delimiter
+    result = []
+    current_word = ''
+    paren_count = 0
+    
+    for char in string:
+        if char == '(':
+            paren_count += 1
+        elif char == ')':
+            paren_count -= 1
+        
+        if is_delimiter(char) and paren_count == 0:
+            if current_word:
+                result.append(current_word)
+            current_word = ''
+        else:
+            current_word += char
+    
+    if current_word:
+        result.append(current_word)
+    
+    return result
+
+def get_arg_combos(arg_str):
+    '''
+    Params:
+        arg_str: key=value string like `
+            c=5
+            (a=1 b=2)|(a=3 b=4)
+        `
+    
+    Returns:
+        List of dictionaries like:
+        `[
+            {'c':'5','a':'1', 'b':'2'},
+            {'c':'5','a':'3', 'b':'4'},
+        ]`
+    '''
+    all_arg_dicts = []
+    for arg in split_string_with_parentheses(arg_str):
+        if arg.startswith('('):
+            arg_dicts = []
+            for c in split_string_with_parentheses(arg, '|'):
+                assertpy.assert_that(c).starts_with('(')
+                assertpy.assert_that(c).ends_with(')')
+                arg_dicts.extend(get_arg_combos(c[1:-1]))
+        else:
+            # base case
+            k, vs = arg.split('=')
+            arg_dicts = []
+            for v in vs.split('|'):
+                arg_dicts.append({k:v})
+        all_arg_dicts.append(arg_dicts)
+            
+    arg_dicts = [dict()]
+    for sub_arg_dicts in all_arg_dicts:
+        next_arg_dicts = []
+        for d1 in arg_dicts:
+            for d2 in sub_arg_dicts:
+                next_arg_dicts.append(dict(d1, **d2))
+        arg_dicts = next_arg_dicts
+
+    return arg_dicts
 
 def main():
 
@@ -32,6 +106,7 @@ def main():
     parser.add_argument('--benchmark_json', type=str, default='benchmarks.json', help='Path to non-standard custom json file of benchmarks')
     parser.add_argument('--use_ligand', default=False, action='store_true', help='Use LigandMPNN instead of regular MPNN.')
     parser.add_argument('--pilot', dest='pilot', action="store_true", default=False)
+    parser.add_argument('--pilot_single', dest='pilot_single', action="store_true", default=False)
 
     args, unknown = parser.parse_known_args()
     if len(unknown)>0:
@@ -58,10 +133,7 @@ def main():
         args.benchmark_json =script_dir+args.benchmark_json
     with open(args.benchmark_json) as f: 
         benchmarks = json.load(f)
-    outdir_is_absolute = args.out.startswith('/')
     input_path = script_dir+'input/' # prepend path to input pdbs in current repo
-    if outdir_is_absolute:
-        input_path = ''
     benchmark_list = []
     if args.benchmarks is not None:
         if args.benchmarks[0]=='all':
@@ -69,80 +141,63 @@ def main():
         else:
             to_run = args.benchmarks
         for bm in to_run:
-            pre = args.out if os.path.basename(args.out) == '' else args.out+'_'
             benchmark_list.append([
-                f'inference.output_prefix={pre}{bm}',
+                f'inference.output_prefix={bm}',
                 benchmarks[bm].replace('inference.input_pdb=','inference.input_pdb='+input_path)
             ])
 
     # parse names of arguments and their value options to be passed into the design script
-    arg_combos = []
-    for argstr in args.args:
-        args_vals = []
+    arg_str = ''.join(args.args)
+    if '--config-name' in arg_str.split():
+        raise Exception('config names must be passed like: --config-name=name_here')
 
-        i = 0
-        tokens = argstr.split()
-        while i<len(tokens):
-            if '--config-name' in tokens[i] and '=' not in tokens[i]: # special case
-                arg = tokens[i]
-                vals = tokens[i+1]
-                i += 2
-            else:
-                arg, vals = tokens[i].split('=')
-                i += 1
-            args_vals.append([f'{arg}={val}' for val in vals.split('|')])
-
-        arg_combos.extend([list(x) for x in itertools.product(*args_vals)])
-
-    # add benchmark-related arguments to the beginning of each argument list
     if len(benchmark_list) > 0:
-        new_combos = []
+        benchmark_arg_groups = []
         for benchmark in benchmark_list: # [output path, input pdb, contig spec]
-            for i, arglist in enumerate(arg_combos):
-                new_arglist = benchmark + arglist
-                new_arglist[0] = new_arglist[0] + f'_cond{i}'
-                new_combos.append(new_arglist)
-        arg_combos = new_combos
-    else:
-        for i in range(len(arg_combos)):
-            pre = args.out if os.path.basename(args.out) == '' else args.out+'_'
-            arg_combos[i] = [f'inference.output_prefix={pre}cond{i}'] + arg_combos[i]
+            benchmark_arg_groups.append(f"({' '.join(benchmark)})")
+        arg_str += ' ' + '|'.join(benchmark_arg_groups)
+    arg_dicts = get_arg_combos(arg_str)
+
+    df = pd.DataFrame.from_dict(arg_dicts, dtype=str)
 
     # make output folder
     os.makedirs(os.path.dirname(args.out), exist_ok=True) 
     os.makedirs(os.path.dirname(args.out)+'/input', exist_ok=True)
 
+    def get_input_copy_path(input_pdb):
+        return os.path.join(os.path.dirname(args.out), 'input', os.path.basename(input_pdb))
+    for input_pdb in df['inference.input_pdb'].unique():
+        shutil.copyfile(input_pdb, get_input_copy_path(input_pdb))
+    
+    df['inference.input_pdb'] = df['inference.input_pdb'].apply(get_input_copy_path)
+
+    out_dir, basename = os.path.split(args.out)
+    def get_output_path(row):
+        output_path_components = []
+        if basename != '':
+            output_path_components.append(basename)
+        existing_prefix = row.get('inference.output_prefix', '')
+        if existing_prefix and not pd.isna(existing_prefix):
+            output_path_components.append(os.path.basename(existing_prefix))
+
+        output_path_components.append(f'cond{row.name}')
+        return os.path.join(out_dir, '_'.join(output_path_components))
+    df['inference.output_prefix'] = df.apply(get_output_path, axis=1)
+
     # output commands with all combos of argument values
     job_fn = os.path.dirname(args.out) + '/jobs.list'
-    ic(args.submit)
-    job_list_file = open(job_fn, 'w') if (args.submit or args.in_proc) else sys.stdout
-    for icond, arglist in enumerate(arg_combos):
-        # log prefix is output prefix
-        log_pre = arglist[0].replace('inference.output_prefix=','')
-
-        # --config-name argument has to go first
-        idx = np.where(['--config-name' in x for x in arglist])[0]
-        if len(idx)>0:
-            i = idx[0]
-            arglist = [arglist[i]]+arglist[:i]+arglist[i+1:]
-
-        extra_args = ' '.join(arglist)
+    job_list_file = open(job_fn, 'w') if args.submit else sys.stdout
+    for _, arg_row in df.iterrows():
+        arg_dict = arg_row.dropna().to_dict()
+        combo = []
+        for k,v in arg_dict.items():
+            combo.append(f'{k}={v}')
+        extra_args = ' '.join(combo)
 
         for istart in np.arange(0, args.num_per_condition, args.num_per_job):
-            log_fn = log_pre+f'_{istart}.log'
+            log_fn = f'{arg_row["inference.output_prefix"]}_{istart}.log'
             print(f'source activate SE3-nvidia; python {args.command} {extra_args} '\
                   f'inference.num_designs={args.num_per_job} inference.design_startnum={istart} >> {log_fn}', file=job_list_file)
-
-        # copy input pdbs / ligand files
-        in_dir = ''
-        for argstr in arglist:
-            if argstr.startswith('inference.input_pdb'):
-                fn = argstr.split(' ')[0].split('=')[1]
-                in_dir = os.path.dirname(fn)+'/'
-                outfn = os.path.dirname(args.out)+'/input/'+os.path.basename(fn)
-                if not os.path.exists(outfn):
-                    shutil.copyfile(fn, outfn)
-                break
 
     if args.submit or args.in_proc:
         job_list_file.close()
@@ -150,7 +205,7 @@ def main():
     if args.submit:
         job_fn = prune_jobs_list(job_fn)
         if args.pilot:
-            job_fn = pilot_jobs_list(job_fn)
+            job_fn = pilot_jobs_list(job_fn, args.pilot_single)
 
         if args.J is not None:
             job_name = args.J
@@ -159,14 +214,23 @@ def main():
         if args.p == 'cpu':
             args.gres = ""
         slurm_job, proc = slurm_tools.array_submit(job_fn, p = args.p, gres=args.gres, log=args.keep_logs, J=job_name, t=args.t, in_proc=args.in_proc)
-        print(f'Submitted array job {slurm_job} with {len(arg_combos)*args.num_per_condition/args.num_per_job} jobs to make {len(arg_combos)*args.num_per_condition} designs')
+        print(f'Submitted array job {slurm_job} with {len(df)*args.num_per_condition/args.num_per_job} jobs to make {len(df)*args.num_per_condition} designs for {len(df)} conditions')
 
-def pilot_jobs_list(jobs_path):
+def pilot_jobs_list(jobs_path, single=False):
     pilot_path = os.path.join(os.path.split(jobs_path)[0], 'jobs.list.pilot')
     with open(jobs_path, 'r') as fh:
         jobs = fh.readlines()
+    job_by_input_pdb = {}
+    for job in jobs:
+        input_pdb = re.match('.*inference\.input_pdb=(\S+).*', job).groups()[0]
+        if input_pdb not in job_by_input_pdb:
+            job_by_input_pdb[input_pdb] = job
+    jobs = list(job_by_input_pdb.values())
     with open(pilot_path, 'w') as fh:
-        fh.write(jobs[0])
+        if single:
+            jobs = jobs[0:1]
+        fh.writelines(jobs)
+    ic(f'running {len(jobs)} pilot jobs for PDBS: {list(job_by_input_pdb.keys())}')
     return pilot_path
         
 def prune_jobs_list(jobs_path):

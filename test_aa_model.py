@@ -1,13 +1,18 @@
 import copy
+import shutil
 import os
 import sys
 import torch
+import assertpy
 import unittest
+from icecream import ic
 
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'RF2-allatom'))
 import rf2aa
+import aa_model
 from aa_model import AtomizeResidues, Indep, Model, make_indep
 import atomize
+ic.configureOutput(includeContext=True)
 
 class AAModelTestCase(unittest.TestCase):
 
@@ -86,6 +91,55 @@ class AAModelTestCase(unittest.TestCase):
                                 new_protein_L+ torch.sum(atomized_residue_lengths[:i+2])]), 1, msg="Incorrect bond placement between neighboring residues")
         
         self.assertTrue(torch.all(indep.same_chain == 1), msg="all nodes should be on the same chain because there is no small molecule")
+
+    def test_ligand_renaming_pdb(self):
+        ligand_name = 'LLK'
+        input_pdb = 'benchmark/input/ra_5an7_no_cov.pdb'
+        atoms_by_ligand = aa_model.hetatm_names(input_pdb)
+        atoms_by_ligand = aa_model.without_H(atoms_by_ligand)
+        want_atoms = atoms_by_ligand[ligand_name]
+        indep = make_indep(input_pdb, ligand_name)
+        out_pdb = 'tmp/out.pdb'
+        indep.write_pdb(out_pdb, lig_name=ligand_name)
+        aa_model.rename_ligand_atoms(input_pdb, out_pdb)
+        atoms_by_ligand = aa_model.hetatm_names(out_pdb)
+        got_atoms = atoms_by_ligand[ligand_name]
+        assertpy.assert_that(want_atoms).is_equal_to(got_atoms)
+
+    
+    def test_ligand_renaming_traj(self):
+        ligand_name = 'LLK'
+        input_pdb = 'benchmark/input/ra_5an7_no_cov.pdb'
+        atoms_by_ligand = aa_model.hetatm_names(input_pdb)
+        atoms_by_ligand = aa_model.without_H(atoms_by_ligand)
+        want_atoms = atoms_by_ligand[ligand_name]
+        n_models = 3
+        traj_pdb = 'test_data/traj_2.pdb'
+        out_pdb = 'tmp/traj.pdb'
+        shutil.copy(traj_pdb, out_pdb)
+        aa_model.rename_ligand_atoms(input_pdb, out_pdb)
+        atoms_by_ligand = aa_model.hetatm_names(out_pdb)
+        got_atoms = atoms_by_ligand[ligand_name]
+        assertpy.assert_that(want_atoms * n_models).is_equal_to(got_atoms)
+    
+    def test_ligand_renaming(self):
+        for input_pdb, ligand_name in [
+                ('benchmark/input/1yzr_no_covalent.pdb', 'HEM')
+            ]:
+            atoms_by_ligand = aa_model.hetatm_names(input_pdb)
+            atoms_by_ligand = aa_model.without_H(atoms_by_ligand)
+            want_atoms = atoms_by_ligand[ligand_name]
+            indep = make_indep(input_pdb, ligand_name)
+            out_pdb = 'tmp/out.pdb'
+            indep.write_pdb(out_pdb, lig_name=ligand_name)
+            aa_model.rename_ligand_atoms(input_pdb, out_pdb)
+            atoms_by_ligand = aa_model.hetatm_names(out_pdb)
+            got_atoms = atoms_by_ligand[ligand_name]
+            ic(got_atoms)
+            ic(want_atoms)
+            assertpy.assert_that(want_atoms).is_equal_to(got_atoms)
+
+           
 
 if __name__ == '__main__':
         unittest.main()

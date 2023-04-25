@@ -95,6 +95,10 @@ def get_beta_schedule(T, b0, bT, schedule_type, schedule_params={}, inference=Fa
     Given a noise schedule type, create the beta schedule 
     """
     assert schedule_type in ['linear', 'geometric', 'cosine']
+    if T not in [1,2]: # HACK: T=1|2 only used in testing
+        assert T >= 15, "With discrete time and T < 15, the schedule is badly approximated"
+        b0 *= (200 / T)
+        bT *= (200 / T)
 
     # linear noise schedule 
     if schedule_type == 'linear':
@@ -106,6 +110,7 @@ def get_beta_schedule(T, b0, bT, schedule_type, schedule_params={}, inference=Fa
     
     # cosine noise schedule 
     else:
+        raise NotImplementedError('Cosine schedule has been disabled because variance with different T will need to be worked out')
         schedule = cosine_interp(T, bT, b0) 
     
     

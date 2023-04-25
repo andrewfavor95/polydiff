@@ -12,7 +12,7 @@ def main():
     # parse --out argument for this script
     parser = argparse.ArgumentParser()
     parser.add_argument('--out', type=str, default='out/out',help='Path prefix for output files')
-    parser.add_argument('--start_step', type=str, default='sweep', choices=['sweep','mpnn','thread_mpnn', 'score'],
+    parser.add_argument('--start_step', type=str, default='sweep', choices=['sweep','mpnn','thread_mpnn', 'score', 'compile'],
         help='Step of pipeline to start at')
     parser.add_argument('--inpaint', action='store_true', default=False, 
         help="Use sweep_hyperparam_inpaint.py, i.e. command-line arguments are in argparse format")
@@ -21,9 +21,11 @@ def main():
     parser.add_argument('--use_ligand', default=False,action='store_true', 
         help='Use LigandMPNN instead of regular MPNN.')
     parser.add_argument('--no_tmalign', default=False,action='store_false', dest='tmalign')
-    parser.add_argument('--af2_gres', type=str, default='',help='--gres argument for alphfold.  If set to the empty string, the arguments used for hyperparameter sweeping are passed to the score_designs.py script')
+    parser.add_argument('--af2_gres', type=str, default='',help='--gres argument for alphfold.')
+    parser.add_argument('--af2_p', type=str, default='gpu',help='-p argument for alphfold.')
     parser.add_argument('--in_proc', dest='in_proc', action="store_true", default=False, help='Do not submit slurm array job, run on current node.')
-    parser.add_argument('--af2_chunk', dest='af2_chunk', default=100, type=int, help='Do not submit slurm array job, run on current node.')
+    parser.add_argument('--mpnn_chunk', dest='mpnn_chunk', default=100, type=int, help='# of structures to mpnn per job.')
+    parser.add_argument('--af2_chunk', dest='af2_chunk', default=100, type=int, help='# of sequences to AF2 per job.')
     parser.add_argument('--score_scripts', dest='score_scripts', default=None)
     args, unknown = parser.parse_known_args()
     score_scripts = "af2,pyrosetta"
@@ -54,7 +56,7 @@ def main():
         if args.use_ligand:
             job_id_prepare_ligandmpnn_params = run_pipeline_step(f'{script_dir}/pdb_to_params.py {outdir}')
             wait_for_jobs(job_id_prepare_ligandmpnn_params)
-        jobid_mpnn = run_pipeline_step(f'{script_dir}mpnn_designs.py --num_seq_per_target {args.num_seq_per_target} --chunk 100 -p cpu --gres "" {"--use_ligand" if args.use_ligand else ""} {outdir} {passed_on_args}')
+        jobid_mpnn = run_pipeline_step(f'{script_dir}mpnn_designs.py --num_seq_per_target {args.num_seq_per_target} --chunk {args.mpnn_chunk} -p cpu --gres "" {"--use_ligand" if args.use_ligand else ""} {outdir} {passed_on_args}')
 
         if args.tmalign:
             jobid_tmalign = run_pipeline_step(f'{script_dir}pair_tmalign.py {outdir} {passed_on_args}')
@@ -75,6 +77,8 @@ def main():
         af2_args = arg_str
         if args.af2_gres:
             af2_args = f' --gres {args.af2_gres}'
+        if args.af2_p:
+            af2_args += f' -p {args.af2_p}'
         af2_args += f' --trb_dir {outdir}'
         af2_args += f' {passed_on_args}'
         if args.af2_unmpnned:

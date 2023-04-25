@@ -1,6 +1,7 @@
 import functools
 import torch
 import assertpy
+from collections import defaultdict
 import torch.nn.functional as F
 import ipdb
 import dataclasses
@@ -59,7 +60,7 @@ class Indep:
     is_sm: torch.Tensor
     terminus_type: torch.Tensor
 
-    def write_pdb(self, path):
+    def write_pdb(self, path, **kwargs):
         seq = self.seq
         seq = torch.where(seq == 20, 0, seq)
         seq = torch.where(seq == 21, 0, seq)
@@ -78,7 +79,7 @@ class Indep:
         chain_letters[longest_connected_component] = 'A'
         chain_letters[other_component] = 'B'
         rf2aa.util.writepdb(path,
-            torch.nan_to_num(self.xyz[:,:14]), seq, idx_pdb=self.idx, chain_letters=chain_letters)
+            torch.nan_to_num(self.xyz[:,:14]), seq, idx_pdb=self.idx, chain_letters=chain_letters, **kwargs)
 
     def ca_dists(self):
         xyz_ca = self.xyz[:,1]
@@ -105,7 +106,7 @@ class Indep:
         return torch.flip(is_monotonic(-torch.flip(self.idx,(0,))),(0,))
     
     def human_readable_seq(self):
-        return [rf2aa.chemical.num2aa[s] for s in self.seq]
+        return human_readable_seq(self.seq)
         # return np.chararray([rf2aa.chemical.num2aa[s] for s in self.seq], unicode=False)
     
     def has_heavy_atoms_and_seq(self, atom_mask):
@@ -116,6 +117,9 @@ class Indep:
     
     def is_valid_for_atomization(self, atom_mask):
         return self.has_c_terminal_residue() * self.has_n_terminal_residue() * self.has_heavy_atoms_and_seq(atom_mask)
+
+def human_readable_seq(seq):
+    return [rf2aa.chemical.num2aa[s] for s in seq]
 
 def is_monotonic(idx):
     idx_pad = torch.concat([idx, torch.tensor([9999])])
@@ -375,8 +379,6 @@ class Model:
         sm_ca = o.xyz[o.is_sm, 1]
         o.xyz[o.is_sm,:3] = sm_ca[...,None,:]
         o.xyz[o.is_sm] += chemical.INIT_CRDS
-        #ic(o.xyz)
-        
 
         # To see the shapes of the indep struct with contig inserted
         # print(rf2aa.tensor_util.info(rf2aa.tensor_util.to_ordered_dict(o)))
@@ -656,9 +658,11 @@ def pad_dim(x, dim, new_l, value=0):
 
 def write_traj(path, xyz_stack, seq, bond_feats, natoms=23, **kwargs):
     xyz23 = pad_dim(xyz_stack, 2, natoms)
+    if bond_feats is not None:
+        bond_feats = bond_feats[None]
     with open(path, 'w') as fh:
         for i, xyz in enumerate(xyz23):
-            rf2aa.util.writepdb_file(fh, xyz, seq, bond_feats=bond_feats[None], modelnum=i, **kwargs)
+            rf2aa.util.writepdb_file(fh, xyz, seq, bond_feats=bond_feats, modelnum=i, **kwargs)
 
 def minifier(argument_map):
     argument_map['out_9'] = None
@@ -1284,3 +1288,52 @@ def transform_indep(indep, is_res_str_shown, is_atom_str_shown, use_guideposts, 
             indep.bond_feats[is_inter_gp] = GP_BOND
 
     return indep, is_diffused, is_masked_seq, atomizer, gp_to_ptn_idx0
+
+
+def hetatm_names(pdb):
+    d = defaultdict(list)
+    with open(pdb) as f:
+        for line in f.readlines():
+            if line.startswith('HETATM'):
+                lig_name = line[17:20].strip()
+                atom_name = line[12:16].strip()
+                element_name = line[76:78].strip()
+                d[lig_name].append((atom_name, element_name))
+    return d
+
+def without_H(atom_elem_by_lig):
+    ''' Drops Hs from a dictionary like {'LG1': [('CB', 'C'), ('H2', 'H')]}'''
+    out = {}
+    for lig, atom_names in atom_elem_by_lig.items():
+        out[lig] = [(atom_name, element) for atom_name, element in atom_names if element != 'H']
+    return out
+
+def rename_ligand_atoms(ref_fn, out_fn):
+    """Copies names of ligand residue and ligand heavy atoms from input pdb
+    into output (design) pdb."""
+
+    ref_atom_names_by_lig = hetatm_names(ref_fn)
+    ref_atom_names_by_lig = without_H(ref_atom_names_by_lig)
+    with open(out_fn) as f:
+        lines = [line.strip() for line in f.readlines()]
+
+    lines2 = []
+    ligand_counters = defaultdict(lambda: 0)
+    for line in lines:
+        if line.startswith('HETATM'):
+            lig_name = line[17:20].strip()
+            element_name = line[76:78].strip()
+            assertpy.assert_that(ref_atom_names_by_lig).contains(lig_name)
+            assertpy.assert_that(element_name).is_not_equal_to('H')
+            ref_atom_name, ref_element_name = ref_atom_names_by_lig[lig_name][ligand_counters[lig_name]]
+            assertpy.assert_that(element_name.upper()).is_equal_to(ref_element_name.upper())
+            ligand_counters[lig_name] += 1
+            line = line[:12] + ref_atom_name.ljust(4, ' ') + line[16:]
+            line = line[:76] + ref_element_name.rjust(2, ' ') + line[78:]
+        if line.startswith('MODEL'):
+            ligand_counters = defaultdict(lambda: 0)
+        lines2.append(line)
+
+    with open(out_fn,'w') as f:
+        for line in lines2:
+            print(line, file=f)

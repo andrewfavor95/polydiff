@@ -108,36 +108,6 @@ def sample(sampler):
         log.info(f'Finished design in {(time.time()-start_time)/60:.2f} minutes')
         save_outputs(sampler, out_prefix, *sampler_out)
 
-def rename_ligand_atoms(ref_fn, out_fn):
-    """Copies names of ligand residue and ligand heavy atoms from input pdb
-    into output (design) pdb."""
-
-    def is_H(atomname):
-        """Returns true if a string starts with 'H' followed by non-letters (numbers)"""
-        letters = ''.join([c for c in atomname.strip() if c.isalpha()])
-        return letters=='H'
-
-    with open(ref_fn) as f:
-        input_lig_lines = [line.strip() for line in f.readlines()
-                           if line.startswith('HETATM') and not is_H(line[13:17])]
-
-    with open(out_fn) as f:
-        lines = [line.strip() for line in f.readlines()]
-
-    lines2 = []
-    i_input = 0
-    for line in lines:
-        if line.startswith('HETATM'):
-            lines2.append(line[:13] + input_lig_lines[i_input][13:21] + line[21:])
-            i_input += 1
-        else:
-            lines2.append(line)
-
-    with open(out_fn,'w') as f:
-        for line in lines2:
-            print(line, file=f)
-
-
 def sample_one(sampler, simple_logging=False):
     # For intermediate output logging
     indep = sampler.sample_init()
@@ -178,7 +148,7 @@ def sample_one(sampler, simple_logging=False):
         seq_stack.append(seq_t)
     
     # deatomize features, if applicable
-    if (sampler.model_adaptor.atomizer is not None) and (not sampler.inf_conf.atomized_output):
+    if (sampler.model_adaptor.atomizer is not None):
         indep, px0_xyz_stack, denoised_xyz_stack, seq_stack = \
             deatomize_sampler_outputs(sampler, indep, px0_xyz_stack, denoised_xyz_stack, seq_stack)
            
@@ -227,44 +197,6 @@ def deatomize_sampler_outputs(sampler, indep, px0_xyz_stack, denoised_xyz_stack,
 def save_outputs(sampler, out_prefix, indep, denoised_xyz_stack, px0_xyz_stack, seq_stack):
     log = logging.getLogger(__name__)
 
-    gp_contig_mappings = {}
-    # If using guideposts, infer their placement from the final pX0 prediction.
-    if sampler._conf.inference.contig_as_guidepost and sampler._conf.inference.infer_guidepost_positions:
-        gp_to_contig_idx0 = sampler.contig_map.gp_to_ptn_idx0  # map from gp_idx0 to the ptn_idx0 in the contig string.
-        is_gp = torch.zeros_like(indep.seq, dtype=bool)
-        is_gp[list(gp_to_contig_idx0.keys())] = True
-
-        # Infer which diffused residues ended up on top of the guide post residues
-        diffused_xyz = denoised_xyz_stack[0, ~is_gp]
-        gp_alone_xyz = denoised_xyz_stack[0, is_gp]
-        gp_alone_to_diffused_idx0 = gp.greedy_guide_post_correspondence(diffused_xyz, gp_alone_xyz)
-
-        gp_contig_mappings = gp.get_infered_mappings(
-            gp_to_contig_idx0, 
-            gp_alone_to_diffused_idx0, 
-            sampler.contig_map.get_mappings()
-        )
-
-        # Optional: Trim guide post residues
-        if sampler._conf.inference.remove_guideposts_from_output:
-            # Guide post slice
-            denoised_xyz_stack_gp = denoised_xyz_stack[:, is_gp]
-            px0_xyz_stack_gp = px0_xyz_stack[:, is_gp]
-            seq_stack_gp = [s[is_gp] for s in seq_stack]
-
-            # Diffused protein slice
-            denoised_xyz_stack = denoised_xyz_stack[:, ~is_gp]
-            px0_xyz_stack = px0_xyz_stack[:, ~is_gp]
-            seq_stack = [s[~is_gp] for s in seq_stack]
-
-            # Save pdb of guide posts
-            aa_model.write_traj(path=f'{out_prefix}_gp.pdb', 
-                                xyz_stack=denoised_xyz_stack_gp[0:1], 
-                                seq=torch.ones(is_gp.sum(), dtype=int) * rf2aa.chemical.aa2num['UNK'],
-                                bond_feats=indep.bond_feats)
-
-    # Save outputs 
-    os.makedirs(os.path.dirname(out_prefix), exist_ok=True)
     final_seq = seq_stack[-1]
 
     if sampler._conf.seq_diffuser.seqdiff is not None:
@@ -272,19 +204,53 @@ def save_outputs(sampler, out_prefix, indep, denoised_xyz_stack, px0_xyz_stack, 
         final_seq = final_seq[:,:20] # [L,20]
 
     # All samplers now use a one-hot seq so they all need this step
+    final_seq[~indep.is_sm, 22:] = 0
     final_seq = torch.argmax(final_seq, dim=-1)
-
-    bfacts = torch.ones_like(final_seq.squeeze())
 
     # replace mask and unknown tokens in the final seq with alanine
     final_seq = torch.where((final_seq == 20) | (final_seq==21), 0, final_seq)
+    seq_design = final_seq.clone()
+    xyz_design = denoised_xyz_stack[0].clone()
+    gp_contig_mappings = {}
+    # If using guideposts, infer their placement from the final pX0 prediction.
+    if sampler._conf.inference.contig_as_guidepost:
+        gp_to_contig_idx0 = sampler.contig_map.gp_to_ptn_idx0  # map from gp_idx0 to the ptn_idx0 in the contig string.
+        is_gp = torch.zeros_like(indep.seq, dtype=bool)
+        is_gp[list(gp_to_contig_idx0.keys())] = True
+
+        # Infer which diffused residues ended up on top of the guide post residues
+        diffused_xyz = denoised_xyz_stack[0, ~is_gp * ~indep.is_sm]
+        gp_alone_xyz = denoised_xyz_stack[0, is_gp]
+        idx_by_gp_sequential_idx = torch.nonzero(is_gp)[:,0].numpy()
+        gp_alone_to_diffused_idx0 = gp.greedy_guide_post_correspondence(diffused_xyz, gp_alone_xyz)
+        match_idx_by_gp_idx = {}
+        for k, v in gp_alone_to_diffused_idx0.items():
+            match_idx_by_gp_idx[idx_by_gp_sequential_idx[k]] = v
+
+        gp_contig_mappings = gp.get_infered_mappings(
+            gp_to_contig_idx0,
+            match_idx_by_gp_idx,
+            sampler.contig_map.get_mappings()
+        )
+
+        if sampler._conf.inference.guidepost_xyz_as_design:
+            gp_idx, match_idx = zip(*match_idx_by_gp_idx.items())
+            gp_idx = np.array(gp_idx)
+            match_idx = np.array(match_idx)
+            xyz_design[match_idx] = xyz_design[gp_idx]
+            seq_design[match_idx] = seq_design[gp_idx]
+        xyz_design = xyz_design[~is_gp]
+        seq_design = seq_design[~is_gp]
+
+    # Save outputs 
+    os.makedirs(os.path.dirname(out_prefix), exist_ok=True)
 
     # determine lengths of protein and ligand for correct chain labeling in output pdb
     chain_Ls = rf2aa.util.Ls_from_same_chain_2d(indep.same_chain)
 
     # pX0 last step
     out = f'{out_prefix}.pdb'
-    aa_model.write_traj(out, denoised_xyz_stack[0:1], final_seq, indep.bond_feats, chain_Ls=chain_Ls, lig_name=sampler._conf.inference.ligand, idx_pdb=indep.idx)
+    aa_model.write_traj(out, xyz_design[None,...], seq_design, indep.bond_feats, chain_Ls=chain_Ls, lig_name=sampler._conf.inference.ligand, idx_pdb=indep.idx)
     des_path = os.path.abspath(out)
 
     # trajectory pdbs
@@ -321,6 +287,9 @@ def save_outputs(sampler, out_prefix, indep, denoised_xyz_stack, px0_xyz_stack, 
 
         # Saved infered guidepost locations. This is probably what downstream applications want.
         trb.update(gp_contig_mappings)        
+    
+    for out_path in des_path, xt_traj_path, x0_traj_path:
+        aa_model.rename_ligand_atoms(sampler._conf.inference.input_pdb, out_path)
 
     with open(f'{out_prefix}.trb','wb') as f_out:
         pickle.dump(trb, f_out)

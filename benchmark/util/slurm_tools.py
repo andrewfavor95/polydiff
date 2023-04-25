@@ -26,7 +26,9 @@ def array_submit(job_list_file, p='gpu', gres='gpu:rtx2080:1', wait_for=None, lo
         with open(job_list_file) as f:
             jobs = f.readlines()
         for job in jobs:
-            job = re.sub('>>', '2>&1 | tee', job)
+            # For logging (hides retcode)
+            # job = re.sub('>>', '2>&1 | tee', job)
+            re.sub('>>.*', '', job)
             print(f'running job after: {job}')
 
             proc = subprocess.run(job, shell=True)

@@ -35,12 +35,12 @@ inference:
   deterministic: False
   zero_weights: False
   ligand: null
-  atomized_output: False
   ema: True
   contig_as_guidepost: False
   remove_guideposts_from_output: True
   state_dict_to_load: model_state_dict
   infer_guidepost_positions: True
+  guidepost_xyz_as_design: True
 
 contigmap:
   contigs: ['20', 'A3-23', '30']

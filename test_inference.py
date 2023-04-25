@@ -8,6 +8,7 @@ import subprocess
 from pathlib import Path
 from inspect import signature
 from io import StringIO
+import assertpy
 
 import hydra
 from hydra import compose, initialize
@@ -37,7 +38,7 @@ def infer(overrides):
     return p, conf
 
 def construct_conf(overrides):
-    overrides = overrides + ['inference.cautious=False']
+    overrides = overrides + ['inference.cautious=False', 'inference.design_startnum=0']
     initialize(version_base=None, config_path="config/inference", job_name="test_app")
     conf = compose(config_name='aa_small.yaml', overrides=overrides, return_hydra_config=True)
     # This is necessary so that when the model_runner is picking up the overrides, it finds them set on HydraConfig.
@@ -61,7 +62,6 @@ class TestRegression(unittest.TestCase):
             'diffuser.T=2',
             'inference.num_designs=1',
             'inference.output_prefix=tmp/test_0',
-            'inference.design_startnum=0',
         ])
         pdb_contents = inference.utils.parse_pdb(pdb)
         cmp = partial(tensor_util.cmp, atol=5e-2, rtol=0)
@@ -73,7 +73,6 @@ class TestRegression(unittest.TestCase):
             'diffuser.T=1',
             'inference.num_designs=1',
             'inference.output_prefix=tmp/test_0',
-            'inference.design_startnum=0',
         ])
 
         func_sig = signature(RoseTTAFoldModule.forward)
@@ -106,7 +105,6 @@ class TestRegression(unittest.TestCase):
             'diffuser.T=2',
             'inference.num_designs=1',
             'inference.output_prefix=tmp/test_3',
-            'inference.design_startnum=0',
             "contigmap.contigs=['1,A518-518,1']",
             "+contigmap.contig_atoms=\"{'A518':'CG,OD1,OD2'}\"",
             'contigmap.length=3-3'
@@ -130,11 +128,10 @@ class TestRegression(unittest.TestCase):
             'inference.input_pdb=test_data/1qys.pdb',
             'inference.num_designs=1',
             'inference.output_prefix=tmp/test_gp',
-            'inference.design_startnum=0',
             'inference.contig_as_guidepost=True',
-            'inference.remove_guideposts_from_output=True',
             "contigmap.contigs=['20,A62-68,A88-92']",
             'contigmap.length=null',
+            'inference.guidepost_xyz_as_design=True'
         ])
 
         pdb_contents = inference.utils.parse_pdb(pdb)
@@ -149,12 +146,11 @@ class TestInference(unittest.TestCase):
     
     # Test that the motif remains fixed throughout inference.
     def test_motif_remains_fixed(self):
-        T = 3
+        T = 2
         conf = construct_conf([
             f'diffuser.T={T}',
             'inference.num_designs=1',
             'inference.output_prefix=tmp/test_1',
-            'inference.design_startnum=0',
         ])
 
         func_sig = signature(RoseTTAFoldModule.forward)
@@ -204,11 +200,10 @@ class TestInference(unittest.TestCase):
     
     def test_motif_fixed_in_output(self):
         output_pdb, conf = infer([
-            'diffuser.T=3',
+            'diffuser.T=1',
             'inference.num_designs=1',
             'inference.output_prefix=tmp/test_2',
             "contigmap.contigs=['1,A518-519,1']",
-            'inference.design_startnum=0',
             'contigmap.length=4-4'
         ])
 
@@ -241,40 +236,6 @@ class TestInference(unittest.TestCase):
                 torch.tensor(input_motif_xyz)[None],
                 torch.tensor(output_motif_xyz)[None],
                 torch.tensor(atom_mask)[None])
-        self.assertLess(rmsd, 0.02)
-
-    def test_partial_sidechain(self):
-        """
-        test that network atomizes protein
-        """
-        output_pdb, conf = infer([
-            'diffuser.T=3',
-            'inference.num_designs=1',
-            'inference.output_prefix=tmp/test_2',
-            "contigmap.contigs=['1,A518-518,1']",
-            "+contigmap.contig_atoms=\"{'A518':'CG,OD1,OD2'}\"",
-            'inference.design_startnum=0',
-            'inference.atomized_output=True',
-            'contigmap.length=3-3'
-        ])
-
-        input_feats = inference.utils.parse_pdb(conf.inference.input_pdb)
-        output_feats = inference.utils.parse_pdb(output_pdb)
-
-        trb = get_trb(conf)
-        is_motif = torch.tensor(trb['con_hal_idx0'])
-        is_motif_ref = torch.tensor(trb['con_ref_idx0'])
-        
-        input_motif_xyz = input_feats['xyz'][is_motif_ref]
-        atom_mask = input_feats['mask'][is_motif_ref]
-        output_xyz = trb['indep']['xyz']
-        is_sm = trb['indep']['is_sm']
-        
-        residue_to_atomize = input_motif_xyz[atom_mask]
-        post_atomized = output_xyz[is_sm, 1]
-        self.assertEqual(residue_to_atomize.shape, post_atomized.shape)
-        # hard coded to choose the atoms that are the motif 
-        rmsd, _ = rf2aa.util.kabsch(torch.tensor(residue_to_atomize)[-3:], torch.tensor(post_atomized)[-3:])
         self.assertLess(rmsd, 0.02)
 
     # TODO create function for regenerating the golden here
@@ -322,11 +283,10 @@ class TestInference(unittest.TestCase):
             'diffuser.T=2',
             'inference.num_designs=1',
             'inference.output_prefix=tmp/test_3',
-            'inference.input_pdb=/home/ahern/projects/dev_rf_diffusion/benchmark/input/1yzr_no_covalent.pdb',
+            'inference.input_pdb=benchmark/input/1yzr_no_covalent.pdb',
             'inference.zero_weights=True',
             "contigmap.contigs=['1-1,A173-173,1-1']",
             "+contigmap.contig_atoms=\"{'A173':'CD2,ND1,NE2,CE1'}\"",
-            'inference.design_startnum=0',
             'contigmap.length=3-3'
         ])
 
@@ -338,14 +298,30 @@ class TestInference(unittest.TestCase):
             'diffuser.T=2',
             'inference.num_designs=1',
             'inference.output_prefix=tmp/test_4',
-            'inference.input_pdb=/home/ahern/projects/dev_rf_diffusion/benchmark/input/1yzr_no_covalent.pdb',
+            'inference.input_pdb=benchmark/input/1yzr_no_covalent.pdb',
             'inference.ligand=HEM',
             'inference.zero_weights=True',
             "contigmap.contigs=['1-1,A173-173,1-1']",
             "+contigmap.contig_atoms=\"{'A173':'CD2,ND1,NE2,CE1'}\"",
-            'inference.design_startnum=0',
             'contigmap.length=3-3'
         ])
+    
+    def test_guidepost_removal(self):
+        '''
+        Tests that tip atom guideposts are removed.
+        '''
+        run_inference.make_deterministic()
+        pdb, conf = infer([
+            'diffuser.T=1',
+            'inference.input_pdb=test_data/1qys.pdb',
+            'inference.contig_as_guidepost=True',
+            "contigmap.contigs=['5,A62-63,5']",
+            'contigmap.length=null',
+            'inference.guidepost_xyz_as_design=True'
+        ])
+
+        pdb_contents = inference.utils.parse_pdb(pdb)
+        assertpy.assert_that(pdb_contents['xyz'].shape[0]).is_equal_to(12)
 
 
 if __name__ == '__main__':

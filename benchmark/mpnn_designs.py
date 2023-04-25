@@ -96,7 +96,7 @@ def run_mpnn(args, filenames):
     else:
         prev_job = None
 
-    job_fn = args.datadir + '/jobs.mpnn.list'
+    job_fn = args.datadir + f'/jobs.{mpnn_flavor}.list'
     job_list_file = open(job_fn, 'w') if args.submit else sys.stdout
     if args.use_ligand:
         mpnn_script = '/net/databases/mpnn/github_repo/ligandMPNN/protein_mpnn_run.py'

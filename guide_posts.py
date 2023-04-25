@@ -521,21 +521,24 @@ def contract(pdb_idx):
       contracted.append(f'{con_ch}{con_s}-{con_e}')
     elif 'L_gap' in locals():
       contracted.append(f'{L_gap}-{L_gap}')
-    
+
     return ','.join(contracted)
 
-def get_infered_mappings(gp_to_sampled_mask_idx0: dict, gp_alone_to_diffused_idx0: dict, original_mappings: dict) -> dict:
+def invert(d):
+   return {v: k for k,v in d.items()}
+
+def get_infered_mappings(motif_by_gp: dict, infered_by_gp: dict, original_mappings: dict) -> dict:
     '''
     The original contig mappings are useless. Because guide posts are free to end up anywhere in the protein,
     we need to make new mappings.
 
     Args
     -------------
-    gp_to_sampled_mask_idx0: This mapping was set in the `insert_contig` function.
+    motif_by_gp:
         (key) gp_idx0: idx0 of the new frame that was appended as a guide post. Could use this to index into indep.xyz.
         (value) sampled_mask_idx0: If the original sampled mask were expanded, the gp would have come from this index.
-    gp_alone_to_diffused_idx0: This mapping was inferred from the final diffused structure.
-        (key) gp_alone_idx0: gp_alone_idx0 = gp_idx0 - L_protein. If the guide posts were the only features, this is the gp idx0.
+    infered_by_gp: This mapping was inferred from the final diffused structure.
+        (key) gp_idx0: See above.
         (value) diffused_idx0: Idx0 of the inferred placement of the guidepost from the final diffusion timestep. 
             Could use this to index into indep.xyz.
     original_contig_map: The original contig_map made when the contig string was sampled at the BEGINNING of a trajectory.
@@ -544,30 +547,24 @@ def get_infered_mappings(gp_to_sampled_mask_idx0: dict, gp_alone_to_diffused_idx
     -------------
     new_mappings: Dictionary of the (infered) correspondence between the motif in the diffused protein and the reference protein.
     '''
-    original_sampled_mask_expanded = expand(original_mappings['sampled_mask'][0])
-    L_ptn = len(original_sampled_mask_expanded)
 
-    # If you removed the diffused protein features, map from gp idx0 to idx0 of the (expanded) original sampled mask.
-    gp_alone_to_sampled_mask_idx0 = {k-L_ptn: v for k, v in gp_to_sampled_mask_idx0.items()}
-
-    # What diffused idx0 should have the reference pdb geometry?
-    ref_pdb_idx_to_diffused_idx0 = {original_sampled_mask_expanded[gp_alone_to_sampled_mask_idx0[gp_idx0]]: diff_idx0
-                                    for gp_idx0, diff_idx0 in gp_alone_to_diffused_idx0.items()}
-    con_ref_pdb_idx = original_mappings['con_ref_pdb_idx']
-    con_hal_idx0 = [ref_pdb_idx_to_diffused_idx0[pdb_idx] for pdb_idx in con_ref_pdb_idx]
+    gp_by_motif = invert(motif_by_gp)
+    con_hal_idx0 = []
+    for i in original_mappings['con_hal_idx0']:
+       gp_i = gp_by_motif[i]
+       infered_i = infered_by_gp[gp_i]
+       con_hal_idx0.append(infered_i)
+    con_hal_idx0 = np.array(con_hal_idx0)
+    
     con_hal_pdb_idx = [('A', i+1) for i in con_hal_idx0]  # Assumes we diffused one chain.
-
-    # Make a new sampled mask based on the infered motif placement.
-    diffused_idx0_to_ref_pdb_idx = {v: k for k,v in ref_pdb_idx_to_diffused_idx0.items()}
-    new_sampled_mask_expanded = [diffused_idx0_to_ref_pdb_idx.get(i) for i in range(L_ptn)]
-
-    new_mappings = {
-        'con_ref_pdb_idx': original_mappings['con_ref_pdb_idx'],
-        'con_ref_idx0': original_mappings['con_ref_idx0'],
+    atomize_indices2atomname = {}
+    for i, v in original_mappings['atomize_indices2atomname'].items():
+        gp_i = gp_by_motif[i]
+        infered_i = infered_by_gp[gp_i]
+        atomize_indices2atomname[infered_i] = v
+    
+    return {
         'con_hal_pdb_idx': con_hal_pdb_idx,
         'con_hal_idx0': con_hal_idx0,
-        'sampled_mask': contract(new_sampled_mask_expanded)
+        'atomize_indices2atomname': atomize_indices2atomname
     }
-
-    return new_mappings
-   
