@@ -566,5 +566,6 @@ def get_infered_mappings(motif_by_gp: dict, infered_by_gp: dict, original_mappin
     return {
         'con_hal_pdb_idx': con_hal_pdb_idx,
         'con_hal_idx0': con_hal_idx0,
-        'atomize_indices2atomname': atomize_indices2atomname
+        'atomize_indices2atomname': atomize_indices2atomname,
+        'motif_by_gp': motif_by_gp,
     }

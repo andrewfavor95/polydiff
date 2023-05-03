@@ -87,6 +87,21 @@ def get_sampler(conf):
     sampler = inference.model_runners.sampler_selector(conf)
     return sampler
 
+def expand_config(conf):
+    confs = {}
+    if conf.inference.guidepost_xyz_as_design:
+        sub_conf = copy.deepcopy(conf)
+        ic(conf.inference.guidepost_xyz_as_design_bb)
+        for val in conf.inference.guidepost_xyz_as_design_bb:
+            ic(val)
+            sub_conf.inference.guidepost_xyz_as_design_bb = val
+            suffix = f'atomized-bb-{val}'
+            confs[suffix] = copy.deepcopy(sub_conf)
+    else:
+        confs = {'': conf}
+    return confs
+
+
 def sample(sampler):
 
     log = logging.getLogger(__name__)
@@ -106,7 +121,17 @@ def sample(sampler):
         ic(f'making design {i_des} of {des_i_start}:{des_i_end}')
         sampler_out = sample_one(sampler)
         log.info(f'Finished design in {(time.time()-start_time)/60:.2f} minutes')
-        save_outputs(sampler, out_prefix, *sampler_out)
+        original_conf = copy.deepcopy(sampler._conf)
+        confs = expand_config(sampler._conf)
+        for suffix, conf in confs.items():
+            sampler._conf = conf
+            out_prefix_suffixed = out_prefix
+            if suffix:
+                out_prefix_suffixed += f'-{suffix}'
+            print(f'{out_prefix_suffixed=}, {conf.inference.guidepost_xyz_as_design_bb=}')
+            # TODO: See what is being altered here, so we don't have to copy sampler_out
+            save_outputs(sampler, out_prefix_suffixed, *(copy.deepcopy(o) for o in sampler_out))
+            sampler._conf = original_conf
 
 def sample_one(sampler, simple_logging=False):
     # For intermediate output logging
@@ -237,8 +262,11 @@ def save_outputs(sampler, out_prefix, indep, denoised_xyz_stack, px0_xyz_stack, 
             gp_idx, match_idx = zip(*match_idx_by_gp_idx.items())
             gp_idx = np.array(gp_idx)
             match_idx = np.array(match_idx)
-            xyz_design[match_idx] = xyz_design[gp_idx]
             seq_design[match_idx] = seq_design[gp_idx]
+            if sampler._conf.inference.guidepost_xyz_as_design_bb:
+                xyz_design[match_idx] = xyz_design[gp_idx]
+            else:
+                xyz_design[match_idx, 4:] = xyz_design[gp_idx, 4:]
         xyz_design = xyz_design[~is_gp]
         seq_design = seq_design[~is_gp]
 

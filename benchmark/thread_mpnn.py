@@ -75,6 +75,8 @@ def main():
             assertpy.assert_that(atom_names_des).does_not_contain_duplicates()
 
             # superimpose reference ligand onto design ligand
+            atom_names = [a.strip() for a in atom_names]
+            atom_names_des = [a.strip() for a in atom_names_des]
             to_align_des = np.isin(np.array(atom_names_des), np.array(atom_names))
             to_align_ref = np.isin(np.array(atom_names), np.array(atom_names_des))
             sm_des = xyz_sm_des[0, to_align_des]
@@ -118,6 +120,8 @@ def main():
         with open(seqdir+name+'.fa') as f:
             lines = f.readlines()
             n_designs = int(len(lines)/2-1)
+            if n_designs == -1:
+                ic(seqdir+name+'.fa')
             for i in range(n_designs):
                 print('writing file', outdir+name+f"_{i}.pdb")
                 seq = lines[2*i + 3].strip() # 2nd seq is 1st design

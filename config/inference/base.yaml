@@ -41,6 +41,7 @@ inference:
   state_dict_to_load: model_state_dict
   infer_guidepost_positions: True
   guidepost_xyz_as_design: True
+  guidepost_xyz_as_design_bb: [False]
 
 contigmap:
   contigs: ['20', 'A3-23', '30']

@@ -499,7 +499,7 @@ class IGSO3():
             mask (np.array or torch.tensor, required): (L,) set of bools. True/1 is NOT diffused, False/0 IS diffused
         Returns:
             np.array : N/CA/C coordinates for each residue in the SLERP
-                        (T,L,3,3), where T is num timesteps
+                        (L,T,3,3), where T is num timesteps
         """
 
         if torch.is_tensor(xyz):

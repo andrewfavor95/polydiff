@@ -233,13 +233,10 @@ def get_trb(row):
     return np.load(path,allow_pickle=True)
 
 def get_af2(row):
-    rundir = row['rundir']
-    d = rundir
-    # if row['mpnn']:
-    path = os.path.join(d, f'af2/{row["name"]}.pdb')
-    if row.get('mpnn'):
-        d = os.path.join(d, 'mpnn')
-        path = os.path.join(d, f'af2/{row["name"]}_{row["mpnn_index"]}.pdb')
+    mpnn_flavor = 'mpnn'
+    if not pd.isna(row['inference.ligand']):
+        mpnn_flavor = 'ligmpnn'
+    path = os.path.join(row['rundir'], mpnn_flavor, f'af2/{row["name"]}_{row["mpnn_index"]}.pdb')
     return path
 
 def load_af2(row, name=None):
@@ -806,8 +803,14 @@ def get_traj_motif(row):
     return traj[0, motif_idx]
 
 def get_design_pdb(row):
-    rundir = row['rundir'] 
-    return os.path.join(rundir, row['name']+'.pdb')
+    mpnn_flavor = 'mpnn'
+    if not pd.isna(row['inference.ligand']):
+        mpnn_flavor = 'ligmpnn'
+    path = os.path.join(row['rundir'], mpnn_flavor, f'{row["name"]}_{row["mpnn_index"]}.pdb')
+    if os.path.exists(path):
+        return path
+    else:
+        return os.path.join(row['rundir'], f'{row["name"]}.pdb')
 
 def get_design(row):
     rundir = row['rundir'] 
