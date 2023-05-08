@@ -159,6 +159,7 @@ preprocess:
   str_self_cond: False
   seq_self_cond: False
   predict_previous: False
+  randomize_frames: False
   
 logging:
   inputs: False

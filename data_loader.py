@@ -1680,6 +1680,9 @@ class DistilledDataset(data.Dataset):
             # Compute all strictly dependent model inputs from the independent inputs.
             rfi_tp1_t = []
             for indep_diffused, t in zip(indep_diffused_tp1_t, t_list):
+                if self.preprocess_param['randomize_frames']:
+                    print('randomizing frames')
+                    indep_diffused.xyz = aa_model.randomly_rotate_frames(indep_diffused.xyz)
                 aa_model.mask_indep(indep_diffused, is_masked_seq)
                 rfi = self.model_adaptor.prepro(indep_diffused, t, is_diffused)
                 rfi_tp1_t.append(rfi)

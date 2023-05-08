@@ -28,7 +28,7 @@ import networkx as nx
 import itertools
 import random
 import guide_posts as gp
-
+import rotation_conversions
 import atomize
 
 
@@ -1337,3 +1337,12 @@ def rename_ligand_atoms(ref_fn, out_fn):
     with open(out_fn,'w') as f:
         for line in lines2:
             print(line, file=f)
+
+def randomly_rotate_frames(xyz):
+    L, _, _ = xyz.shape
+    R_rand = rotation_conversions.random_rotations(L, dtype=xyz.dtype)
+    frame_origins = xyz[:,1:2,:]
+    xyz_centered = xyz - frame_origins
+    rotated = torch.einsum('lab,lib->...lia', R_rand, xyz_centered)
+    rotated += frame_origins
+    return rotated

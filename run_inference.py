@@ -75,11 +75,10 @@ def get_sampler(conf):
         existing = glob.glob(conf.inference.output_prefix + '*.pdb')
         indices = [-1]
         for e in existing:
-            m = re.match('.*_(\d+)\.pdb$', e)
-            if not m:
-                continue
-            m = m.groups()[0]
-            indices.append(int(m))
+            m = re.match(f'{conf.inference.output_prefix}_(\d+).*\.pdb$', e)
+            if m:
+                m = m.groups()[0]
+                indices.append(int(m))
         design_startnum = max(indices) + 1   
 
     conf.inference.design_startnum = design_startnum
@@ -115,7 +114,8 @@ def sample(sampler):
         out_prefix = f'{sampler.inf_conf.output_prefix}_{i_des}'
         sampler.output_prefix = out_prefix
         log.info(f'Making design {out_prefix}')
-        if sampler.inf_conf.cautious and os.path.exists(out_prefix+'.pdb'):
+        existing_outputs = glob.glob(out_prefix + '*.pdb')
+        if sampler.inf_conf.cautious and len(existing_outputs):
             log.info(f'(cautious mode) Skipping this design because {out_prefix}.pdb already exists.')
             continue
         ic(f'making design {i_des} of {des_i_start}:{des_i_end}')
@@ -150,6 +150,9 @@ def sample_one(sampler, simple_logging=False):
             if t%10 == 0:
                 e = t
             print(f'{e}', end='')
+        if sampler._conf.preprocess.randomize_frames:
+            print('randomizing frames')
+            indep.xyz = aa_model.randomly_rotate_frames(indep.xyz)
         px0, x_t, seq_t, tors_t, plddt, rfo = sampler.sample_step(
             t, indep, rfo)
         # assert_that(indep.xyz.shape).is_equal_to(x_t.shape)

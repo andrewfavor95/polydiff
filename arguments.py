@@ -185,6 +185,8 @@ def get_args(in_args=None):
             help='Fraction of the time to mutate according to uniform transitions')
     diff_group.add_argument('-diff_crd_scale',  type=float, default=1./15, 
             help='Coordinate scaling factor for diffusion')
+    diff_group.add_argument('-randomize_frames',  default=False, action='store_true',
+            help='If true, randomize all frames at each step')
 
     # Trunk module properties
     trunk_group = parser.add_argument_group("Trunk module parameters")
@@ -451,7 +453,8 @@ def get_args(in_args=None):
                   'prob_self_cond',
                   'str_self_cond',
                   'seq_self_cond',
-                  'new_self_cond'
+                  'new_self_cond',
+                  'randomize_frames',
                   ]:
         preprocess_param[param] = getattr(args, param)
     if not preprocess_param['sequence_decode']:
