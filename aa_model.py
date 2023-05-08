@@ -520,6 +520,7 @@ class Model:
         alpha_t = torch.cat((alpha, alpha_mask), dim=-1).reshape(-1, L, 3*rf2aa.chemical.NTOTALDOFS) # [n,L,30]
 
         alpha_t = alpha_t.unsqueeze(1) # [n,I,L,30]
+        alpha_t = alpha_t.tile((1,2,1,1))
 
 
 
@@ -554,14 +555,19 @@ class Model:
             t1d=torch.cat((t1d, hotspot_tens[None,None,...,None].to(self.device)), dim=-1)
         
         # return msa_masked, msa_full, seq[None], torch.squeeze(xyz_t, dim=0), idx, t1d, t2d, xyz_t, alpha_t
-        mask_t = torch.ones(1,1,L,L).bool()
+        mask_t = torch.ones(1,2,L,L).bool()
         sctors = torch.zeros((1,L,rf2aa.chemical.NTOTALDOFS,2))
 
         xyz = torch.squeeze(xyz_t, dim=0)
 
         # NO SELF COND
-        xyz_t = torch.zeros(1,1,L,3)
-        t2d = torch.zeros(1,1,L,L,68)
+        xyz_t = torch.zeros(1,2,L,3)
+        t2d = torch.zeros(1,2,L,L,68)
+
+        t2d_xt, mask_t_2d_remade = util.get_t2d(
+            xyz, indep.is_sm, indep.atom_frames)
+        t2d[0,0] = t2d_xt[0]
+        xyz_t[0,0] = xyz[0,:,1]
 
         #ic(xyz.shape)
         # ic(
@@ -595,6 +601,9 @@ class Model:
             # Erase N/C termini markers
             msa_masked[...,-2:] = 0
             msa_full[...,-2:] = 0
+        
+        t1d = torch.tile(t1d, (1,2,1,1))
+        t1d[0,0,:,-1] = -1
 
         # Note: should be batched
         rfi = RFI(
@@ -849,6 +858,40 @@ def forward(model, rfi, **kwargs):
 def mask_indep(indep, is_diffused):
     indep.seq[is_diffused] = MASKINDEX
 
+# def get_xyz_t_t2d(atom_frames, is_sm, xyz):
+#     '''
+#     Params:
+#         xyz: [T, L, 36, 3]
+#         is_sm: [L]
+#         atom_frames: [F, 3, 2]
+#     '''
+#     assertpy.assert_that(is_sm.ndim).is_equal_to(3) # [F, 3, 2]
+#     assertpy.assert_that(atom_frames.ndim).is_equal_to(3) # [F, 3, 2]
+#     assertpy.assert_that(xyz.ndim).is_equal_to(3) # [L, n_atoms, 3]
+#     L, = is_sm.shape
+#     assertpy.assert_that(xyz.shape).is_equal_to((L, 36, 3))
+#     t2d, mask_t_2d_remade = util.get_t2d(
+#         xyz, is_sm, atom_frames)
+#     t2d = t2d[None] # Add batch dimension # [B,T,L,L,44]
+#     return
+
+
+def self_cond_new(indep, rfi, rfo):
+    # RFI is already batched
+    B = 1
+    L = indep.xyz.shape[0]
+    rfi_sc = copy.deepcopy(rfi)
+    zeros = torch.zeros(B,1,L,36-3,3).float().to(rfi.xyz.device)
+    xyz_t = torch.cat((rfo.xyz[-1:], zeros), dim=-2) # [B,T,L,27,3]
+    ic(xyz_t[0].shape, rfi.atom_frames.shape)
+    t2d, mask_t_2d_remade = util.get_t2d(
+        xyz_t[0], indep.is_sm, rfi.atom_frames[0])
+    t2d = t2d[None] # Add batch dimension # [B,T,L,L,44]
+    ic(rfi_sc.xyz_t.shape, rfi_sc.t2d.shape)
+    rfi_sc.xyz_t[0,1] = xyz_t[0, 0, :, 1]
+    rfi_sc.t2d[0, 1] = t2d[0, 0]
+    return rfi_sc
+
 def self_cond(indep, rfi, rfo):
     # RFI is already batched
     B = 1
@@ -859,8 +902,8 @@ def self_cond(indep, rfi, rfo):
     t2d, mask_t_2d_remade = util.get_t2d(
         xyz_t[0], indep.is_sm, rfi.atom_frames[0])
     t2d = t2d[None] # Add batch dimension # [B,T,L,L,44]
-    rfi_sc.xyz_t = xyz_t[:,:,:,1]
-    rfi_sc.t2d = t2d
+    rfi_sc.xyz_t[0,1] = xyz_t[0, 0, :, 1]
+    rfi_sc.t2d[0, 1] = t2d[0, 0]
     return rfi_sc
 
 def diagnose_xyz(xyz):

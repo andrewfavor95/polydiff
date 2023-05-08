@@ -572,14 +572,8 @@ def get_t2d(xyz_t, is_sm, atom_frames):
 
     Parameters:
         xyz_t: [T, L, 36, 3]
-        mask_t: [T, L, 36]
-        seq_cat: [L]
-        same_chain: [L, L]
-        atom_frames: [1, L]?
-
-    Why they are needed:
-    seq_cat: to determine small molecule or amino acid
-    mask_t: 
+        is_sm: [L]
+        atom_frames: [F, 3, 2]
     '''
 
     # assert seq_cat.ndim == 1
