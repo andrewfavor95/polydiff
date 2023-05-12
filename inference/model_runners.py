@@ -73,11 +73,11 @@ class Sampler:
         if needs_model_reload:
             # Load checkpoint, so that we can assemble the config
             self.load_checkpoint()
-            self.assemble_config_from_chk()
+            assemble_config_from_chk(self._conf, self.ckpt)
             # Now actually load the model weights into RF
             self.model = self.load_model()
         else:
-            self.assemble_config_from_chk()
+            assemble_config_from_chk(self._conf, self.ckpt)
 
         # self.initialize_sampler(conf)
         self.initialized=True
@@ -194,54 +194,6 @@ class Sampler:
             self.ckpt_path, map_location=self.device)
         print(f'loaded {self.ckpt_path}')
 
-    def assemble_config_from_chk(self) -> None:
-        """
-        Function for loading model config from checkpoint directly.
-    
-        Takes:
-            - config file
-    
-        Actions:
-            - Replaces all -model and -diffuser items
-            - Throws a warning if there are items in -model and -diffuser that aren't in the checkpoint
-        
-        This throws an error if there is a flag in the checkpoint 'config_dict' that isn't in the inference config.
-        This should ensure that whenever a feature is added in the training setup, it is accounted for in the inference script.
-
-        JW
-        """
-        
-        # get overrides to re-apply after building the config from the checkpoint
-        overrides = []
-        if HydraConfig.initialized():
-            overrides = HydraConfig.get().overrides.task
-            ic(overrides)
-        if 'config_dict' in self.ckpt.keys():
-            print("Assembling -model, -diffuser and -preprocess configs from checkpoint")
-
-            # First, check all flags in the checkpoint config dict are in the config file
-            for cat in ['model','diffuser','seq_diffuser','preprocess']:
-                #assert all([i in self._conf[cat].keys() for i in self.ckpt['config_dict'][cat].keys()]), f"There are keys in the checkpoint config_dict {cat} params not in the config file"
-                for key in self._conf[cat]:
-                    if key == 'chi_type' and self.ckpt['config_dict'][cat][key] == 'circular':
-                        ic('---------------------------------------------SKIPPPING CIRCULAR CHI TYPE')
-                        continue
-                    try:
-                        print(f"USING MODEL CONFIG: self._conf[{cat}][{key}] = {self.ckpt['config_dict'][cat][key]}")
-                        self._conf[cat][key] = self.ckpt['config_dict'][cat][key]
-                    except:
-                        print(f'WARNING: config {cat}.{key} is not saved in the checkpoint. Check that conf.{cat}.{key} = {self._conf[cat][key]} is correct')
-            # add back in overrides again
-            for override in overrides:
-                if override.split(".")[0] in ['model','diffuser','seq_diffuser','preprocess']:
-                    print(f'WARNING: You are changing {override.split("=")[0]} from the value this model was trained with. Are you sure you know what you are doing?') 
-                    mytype = type(self._conf[override.split(".")[0]][override.split(".")[1].split("=")[0]])
-                    self._conf[override.split(".")[0]][override.split(".")[1].split("=")[0]] = mytype(override.split("=")[1])
-        else:
-            print('WARNING: Model, Diffuser and Preprocess parameters are not saved in this checkpoint. Check carefully that the values specified in the config are correct for this checkpoint')     
-
-        print('self._conf:')
-        ic(self._conf)
 
     def load_model(self):
         """Create RosettaFold model from preloaded checkpoint."""
@@ -393,6 +345,7 @@ class Sampler:
         return indep
 
     def _preprocess(self, seq, xyz_t, t, repack=False):
+        raise Exception('should not be called')
         
         """
         Function to prepare inputs to diffusion model
@@ -853,3 +806,53 @@ def sampler_selector(conf: DictConfig):
     else:
         raise ValueError(f'Unrecognized sampler {conf.model_runner}')
     return sampler
+
+
+def assemble_config_from_chk(conf, ckpt) -> None:
+    """
+    Function for loading model config from checkpoint directly.
+
+    Takes:
+        - config file
+
+    Actions:
+        - Replaces all -model and -diffuser items
+        - Throws a warning if there are items in -model and -diffuser that aren't in the checkpoint
+    
+    This throws an error if there is a flag in the checkpoint 'config_dict' that isn't in the inference config.
+    This should ensure that whenever a feature is added in the training setup, it is accounted for in the inference script.
+
+    JW
+    """
+    
+    # get overrides to re-apply after building the config from the checkpoint
+    overrides = []
+    if HydraConfig.initialized():
+        overrides = HydraConfig.get().overrides.task
+        ic(overrides)
+    if 'config_dict' in ckpt.keys():
+        print("Assembling -model, -diffuser and -preprocess configs from checkpoint")
+
+        # First, check all flags in the checkpoint config dict are in the config file
+        for cat in ['model','diffuser','seq_diffuser','preprocess']:
+            #assert all([i in self._conf[cat].keys() for i in self.ckpt['config_dict'][cat].keys()]), f"There are keys in the checkpoint config_dict {cat} params not in the config file"
+            for key in conf[cat]:
+                if key == 'chi_type' and ckpt['config_dict'][cat][key] == 'circular':
+                    ic('---------------------------------------------SKIPPPING CIRCULAR CHI TYPE')
+                    continue
+                try:
+                    print(f"USING MODEL CONFIG: self._conf[{cat}][{key}] = {ckpt['config_dict'][cat][key]}")
+                    conf[cat][key] = ckpt['config_dict'][cat][key]
+                except:
+                    print(f'WARNING: config {cat}.{key} is not saved in the checkpoint. Check that conf.{cat}.{key} = {conf[cat][key]} is correct')
+        # add back in overrides again
+        for override in overrides:
+            if override.split(".")[0] in ['model','diffuser','seq_diffuser','preprocess']:
+                print(f'WARNING: You are changing {override.split("=")[0]} from the value this model was trained with. Are you sure you know what you are doing?') 
+                mytype = type(conf[override.split(".")[0]][override.split(".")[1].split("=")[0]])
+                conf[override.split(".")[0]][override.split(".")[1].split("=")[0]] = mytype(override.split("=")[1])
+    else:
+        print('WARNING: Model, Diffuser and Preprocess parameters are not saved in this checkpoint. Check carefully that the values specified in the config are correct for this checkpoint')     
+
+    print('self._conf:')
+    ic(conf)
