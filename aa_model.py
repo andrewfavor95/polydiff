@@ -603,7 +603,7 @@ class Model:
             msa_full[...,-2:] = 0
         
         t1d = torch.tile(t1d, (1,2,1,1))
-        t1d[0,0,:,-1] = -1
+        t1d[0,1,:,-1] = -1
 
         # Note: should be batched
         rfi = RFI(
