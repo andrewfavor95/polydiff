@@ -261,7 +261,7 @@ def save_outputs(sampler, out_prefix, indep, denoised_xyz_stack, px0_xyz_stack, 
             sampler.contig_map.get_mappings()
         )
 
-        if sampler._conf.inference.guidepost_xyz_as_design:
+        if sampler._conf.inference.guidepost_xyz_as_design and len(match_idx_by_gp_idx):
             gp_idx, match_idx = zip(*match_idx_by_gp_idx.items())
             gp_idx = np.array(gp_idx)
             match_idx = np.array(match_idx)
