@@ -306,6 +306,7 @@ class Trainer():
         # Add seq_diff_type
         config_dict['seq_diffuser']['seqdiff'] = self.seq_diff_type
         config_dict['preprocess'] = self.preprocess_param
+        ic(self.preprocess_param)
         self.config_dict = config_dict
 
     def assemble_train_args(self) -> None:
@@ -795,7 +796,7 @@ class Trainer():
                 id=self.resume
                 resume='must'
             wandb.init(
-                    project="fancy-pants ",
+                    project="multi-scaffold",
                     entity="bakerlab", 
                     name=name,
                     id=id,
@@ -827,6 +828,7 @@ class Trainer():
         dataset_configs, homo = default_dataset_configs(self.loader_param, debug=DEBUG)
         
         print('Making train sets')
+        ic(self.config_dict)
         train_set = DistilledDataset(dataset_configs, 
                                      self.loader_param, self.diffuser, self.seq_diffuser, self.ti_dev, self.ti_flip, self.ang_ref,
                                      self.diffusion_param, self.preprocess_param, self.model_param, self.config_dict, homo)
@@ -976,6 +978,7 @@ class Trainer():
             cb_tor = self.cb_tor,
             lj_lin=self.loss_param['lj_lin']
             ).to(device)
+        
         if self.log_inputs:
             pickle_dir, self.pickle_counter = pickle_function_call(model, 'forward', 'training', minifier=aa_model.minifier)
             print(f'pickle_dir: {pickle_dir}')

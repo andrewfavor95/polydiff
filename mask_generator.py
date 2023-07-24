@@ -9,12 +9,214 @@ from icecream import ic
 import rf2aa.util
 import networkx as nx
 from functools import wraps
+import itertools
 import assertpy
 
 
 #####################################
 # Misc functions for mask generation
 #####################################
+
+def sample_gaps(n, M):
+    """
+    Samples n chunks that sum to M. 
+
+    Adapts below solution for getting close to uniform distibution of numbers: 
+    https://stackoverflow.com/questions/2640053/getting-n-random-numbers-whose-sum-is-m/2640079#2640079
+    """
+
+    nums = np.random.dirichlet(np.ones(n))*M
+
+    # now round to nearest integer, conserving the total sum
+    rounded = []
+    round_up = True
+    for i in range(len(nums)):
+        if round_up:
+            rounded.append(np.ceil(nums[i]))
+            round_up = False
+        else:
+            rounded.append(np.floor(nums[i]))
+            round_up = True
+
+    # ensure all > 0
+    for i in range(len(rounded)):
+        if rounded[i] < 1:
+            rounded[i] = 1
+
+
+    while sum(rounded) > M:
+        ix = np.random.randint(0, len(rounded))
+        if rounded[ix] < 2: # must be at least 1
+            continue
+        rounded[ix] -= 1
+
+    while sum(rounded) != M:
+        ix = np.random.randint(0, len(rounded))
+        rounded[ix] += 1
+
+    assert all([x >= 1 for x in rounded])
+    return [int(x) for x in rounded]
+
+
+def get_chunked_mask(xyz, low_prop, high_prop, max_motif_chunks=8):
+    """
+    Produces a mask of discontiguous protein chunks that are revealed. 
+    Also produces a tensor indicating which chunks are given relative geom. info
+
+    Parameters:
+    -----------
+
+    xyz (torch.tensor): (L, 3) tensor of protein coordinates
+
+    low_prop (float): lower bound on proportion of protein that is masked
+
+    high_prop (float): upper bound on proportion of protein that is masked
+
+    """
+    L = xyz.shape[0]
+    # L = 100
+
+    # decide number of chunks 
+    n_motif_chunks = random.randint(2, max_motif_chunks)
+    # decide what proportion of the protein is masked 
+
+    # prop cannot result in n_unmasked < n_motif_chunks --> clamp high prop
+    max_prop = 1-(n_motif_chunks+1)/L       # add +1 to be safe 
+    high_prop = min(high_prop, max_prop)
+
+    prop = random.uniform(low_prop, high_prop)
+    n_masked   = int(L * prop)
+    n_unmasked = L - n_masked
+
+    # decide the length of each chunk by randomly sampling 
+    # positions to cut a line with n_chunks - 1 cuts
+    cuts    = sorted(random.sample(range(1, n_unmasked), n_motif_chunks - 1))
+    lengths = [cuts[0]] + [cuts[i] - cuts[i-1] for i in range(1, len(cuts))] + [n_unmasked - cuts[-1]]
+    # decide which chunks are given relative geom. info
+    # walk over all unique pairs 
+    motif_pairs = list(itertools.combinations(range(n_motif_chunks), 2))
+    # 33% chance that a pair can see each other
+    pairs_can_see = [random.choice([True, False, False]) for _ in range(len(motif_pairs))]
+
+    # decide location of chunks within the protein
+    # (1) decide order 
+    random.shuffle(lengths)
+
+    # (2) split available space remaining into other chunks between 
+    #     the chunks that have been assigned a length
+    ngap_low  = len(lengths) - 1
+    ngap_high = ngap_low + 1
+    ngap = random.randint(ngap_low, ngap_high)
+    
+    if ngap == (ngap_low): # there's no cterm/nterm gaps 
+        Nterm_gap = False
+        Cterm_gap = False
+    elif ngap == (ngap_low + 1): # there's either a cterm or nterm gap
+        Nterm_gap = random.choice([True, False])
+        Cterm_gap = not Nterm_gap
+    else: # there's both a cterm and nterm gap
+        Nterm_gap = True
+        Cterm_gap = True
+
+    gaps = sample_gaps(ngap, n_masked) # gaps between unmasked chunks 
+    random.shuffle(gaps)
+    # print('This is gaps ', gaps)
+    # print()
+    # print('*********')
+
+
+    chunks = []
+    is_motif = []
+    motif_ids = []
+    cur_motif_id = 0
+    
+    if Nterm_gap:
+        chunks.append(gaps.pop())
+        is_motif.append(False)
+        motif_ids.append(-1)
+
+    
+    for i in range(len(lengths)):
+        chunks.append(lengths[i])
+        is_motif.append(True)
+        motif_ids.append(cur_motif_id)
+        cur_motif_id += 1
+
+        if len(gaps) > 1:                       # more to spare 
+            chunks.append(gaps.pop())
+            is_motif.append(False)
+            motif_ids.append(-1)
+        elif len(gaps) == 1 and not Cterm_gap:  # only one left, but no Cterm gap
+            chunks.append(gaps.pop())
+            is_motif.append(False)
+            motif_ids.append(-1)
+        else:
+            pass # no more to spare
+
+    if Cterm_gap:
+        assert len(gaps) == 1
+        chunks.append(gaps.pop())
+        is_motif.append(False)
+        motif_ids.append(-1)
+
+    
+    assert sum(chunks) == L, f'chunks sum to {sum(chunks)} but should sum to {L}'
+
+    return chunks, is_motif, motif_ids, motif_pairs, pairs_can_see
+
+
+def _get_diffusion_mask_chunked(xyz, prop_low, prop_high, max_motif_chunks=6):
+    """
+    More complicated masking strategy to create discontiguous chunks
+    """
+
+    chunks, chunk_is_motif, motif_ids, ij, ij_can_see = get_chunked_mask(xyz, prop_low, prop_high, max_motif_chunks)
+    chunk_starts = np.cumsum([0] + chunks[:-1])
+    chunk_ends   = np.cumsum(chunks)
+
+    # make 1D array designating which chunks are motif
+    L = xyz.shape[0]
+    mask = torch.zeros(L, L)
+    is_motif = torch.zeros(L)
+    for i in range(len(chunks)):
+        is_motif[chunk_starts[i]:chunk_ends[i]] = chunk_is_motif[i]
+
+
+    # 2D array designating which chunks can see each other
+    for i in range(len(chunks)):
+        for j in range(len(chunks)):
+
+            i_is_motif = chunk_is_motif[i]
+            j_is_motif = chunk_is_motif[j]
+            if (i_is_motif and j_is_motif): # both are motif, so possibly reveal info 
+                
+                
+                ID_i = motif_ids[i]
+                ID_j = motif_ids[j]
+                assert ID_i != -1 and ID_j != -1, 'both motif but one has no ID'
+                
+                # always reveal self vs self 
+                if i == j:
+                    mask[chunk_starts[i]:chunk_ends[i], chunk_starts[j]:chunk_ends[j]] = 1
+                
+                else:
+                    # find out of this (i,j) are allowed to see each other
+                    ix = tuple(sorted([ID_i, ID_j]))
+                    can_see = ij_can_see[ij.index(ix)]
+                    if can_see:
+                        mask[chunk_starts[i]:chunk_ends[i], chunk_starts[j]:chunk_ends[j]] = 1
+
+    return mask.bool(), is_motif.bool()
+
+
+def get_diffusion_mask_chunked(indep, atom_mask, low_prop, high_prop, broken_prop, max_motif_chunks=6):
+    # wrapper to accomodate indep/atom mask input 
+    assert indep.is_sm.sum() == 0, 'small molecules not supported currently for this masking'
+    mask2d, is_motif = _get_diffusion_mask_chunked(indep.xyz, low_prop, high_prop, max_motif_chunks)
+    
+    # spoofing a return of two items: "diffusion_mask, is_atom_motif"
+    return (mask2d, is_motif), None
+
 
 def get_masks(L, min_length, max_length, min_flank, max_flank):
     """
@@ -177,11 +379,15 @@ def get_closest_tip_atoms(indep, atom_mask,
     crds[~atom_mask] = torch.nan
     prot_crds = crds[~indep.is_sm]
     sm_crds = crds[indep.is_sm][:, 1]
+    # ic(prot_crds.shape)
+    # ic(sm_crds.shape)
     dist_res_sidechain_ligand = (prot_crds[:,:, None,...] - sm_crds[ None,None,...]).pow(2).sum(dim=-1).sqrt()
+    # ic(dist_res_sidechain_ligand.shape)
     dist_res_sidechain_ligand = dist_res_sidechain_ligand.nan_to_num(9999)
     dist_res_sidechain = dist_res_sidechain_ligand.min(dim=-1)[0]
     dist = dist_res_sidechain.min(dim=-1)[0]
     is_valid_for_atomization = indep.is_valid_for_atomization(atom_mask)[~indep.is_sm]
+    # ic(is_valid_for_atomization.sum())
     if not is_valid_for_atomization.any():
         ic('No valid residues for atomization, falling back to unconditional generation')
         return torch.zeros(L).bool(), None
@@ -239,6 +445,7 @@ def get_atom_names_within_n_bonds(res, source_node, n_bonds):
     paths = nx.single_source_shortest_path_length(bond_graph, source=source_node,cutoff=n_bonds)
     atoms_within_n_bonds = paths.keys()
     atom_names = [rf2aa.chemical.aa2long[res][i] for i in atoms_within_n_bonds]
+    ic(atom_names)
     return atom_names
 
 def tip_crd(indep, i):
@@ -322,6 +529,10 @@ def _get_triple_contact(xyz, low_prop, high_prop, broken_prop, xyz_less_than=6, 
     L = xyz.shape[0]
     return sample_around_contact(L, indices, len_low, len_high)
 
+
+
+
+ 
 def _get_diffusion_mask_simple(xyz, low_prop, high_prop, broken_prop):
     """
     Function to make a diffusion mask.
@@ -369,6 +580,7 @@ def make_sm_compatible(get_mask):
         diffusion_mask[~indep.is_sm] = diffusion_mask_prot
         return diffusion_mask, None
     return out_get_mask
+
 
 def make_atomized(get_mask, min_atomized_residues=1, max_atomized_residues=5):
     @wraps(get_mask)
@@ -666,6 +878,9 @@ def generate_masks(indep, task, loader_params, chosen_dataset, full_chain=None, 
     loss_str_mask = torch.ones(L).bool()
     loss_str_mask_2d = torch.ones(L,L).bool()
     is_atom_motif = None
+    chunk_sees_relative = None
+    t2d_is_revealed = None 
+
     if task == 'seq2str':
         '''
         Classic structure prediction task.
@@ -689,6 +904,7 @@ def generate_masks(indep, task, loader_params, chosen_dataset, full_chain=None, 
         """
         Hal task but created for the diffusion-based training. 
         """ 
+        mask_fns = list( loader_params['DIFF_MASK_PROBS'].keys() )
         diffusion_mask, is_atom_motif = get_diffusion_mask(
             indep,
             atom_mask,
@@ -697,6 +913,15 @@ def generate_masks(indep, task, loader_params, chosen_dataset, full_chain=None, 
             broken_prop=loader_params['MASK_BROKEN_PROPORTION'],
             diff_mask_probs=loader_params['DIFF_MASK_PROBS'],
             ) 
+
+        if (get_diffusion_mask_chunked in mask_fns) and (type(diffusion_mask) == tuple):
+            # this means chunked diffusion mask was chosen --> unpack 
+            (t2d_is_revealed, diffusion_mask) = diffusion_mask 
+        
+        # ic(diffusion_mask)
+        # ic(is_atom_motif)
+        # sys.exit('Exiting early for debugging')
+
         # ic(is_atom_motif, torch.nonzero(diffusion_mask), diffusion_mask.sum())
         input_str_mask = diffusion_mask.clone()
         input_seq_mask = diffusion_mask.clone()
@@ -924,6 +1149,7 @@ def generate_masks(indep, task, loader_params, chosen_dataset, full_chain=None, 
                 'loss_str_mask':loss_str_mask,
                 'loss_str_mask_2d':loss_str_mask_2d,
                 'is_atom_motif': is_atom_motif,
+                't2d_is_revealed': t2d_is_revealed,
                 }
     
     return mask_dict

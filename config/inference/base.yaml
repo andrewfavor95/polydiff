@@ -160,6 +160,7 @@ preprocess:
   seq_self_cond: False
   predict_previous: False
   randomize_frames: False
+  motif_only_2d: False
   
 logging:
   inputs: False

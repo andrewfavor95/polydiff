@@ -1394,6 +1394,12 @@ def default_dataset_configs(loader_param, debug=False):
             **dataloader_params},
             no_match_okay=debug, diffusion_training=True)
 
+    # ic(train_ID_dict)
+    # ic(weights_dict)
+    # ic(train_dict)
+    # ic(homo)
+    # sys.exit('Exiting early from data_loader')    
+
     #all the pdb sets use the default rf2aa loader_pdb, but the fixbb adaptor will not be applied to the seq2str task
     pdb_config = WeightedDataset(train_ID_dict["pdb"], train_dict["pdb"], {
         'seq2str':      rf2aa.data_loader.loader_pdb,
@@ -1447,6 +1453,9 @@ def default_dataset_configs(loader_param, debug=False):
                                 chid2hash=chid2hash,chid2taxid=chid2taxid)
     sm_compl_config = WeightedDataset(
                 train_ID_dict["sm_compl"], train_dict["sm_compl"], sm_compl_loader_fixbb, weights_dict["sm_compl"])
+
+    # ic(sm_compl_config)
+    # sys.exit('Exiting early from data_loader')
 
     return OrderedDict({
         'pdb': pdb_config,
@@ -1584,6 +1593,8 @@ class DistilledDataset(data.Dataset):
         chosen_dataset, index = self.dataset_index_from_index(index)
         dataset_config = self.dataset_configs[chosen_dataset]
         ID = dataset_config.ids[index]
+        # ic(chosen_dataset, index, ID)
+        # sys.exit('Exiting early')
         if chosen_dataset == "sm_complex":
             sel_item = rf2aa.data_loader.sample_item_sm_compl(dataset_config.dic, ID)
         else:
@@ -1626,6 +1637,7 @@ class DistilledDataset(data.Dataset):
                     task='seq2str'
                 chosen_loader = dataset_config.task_loaders[task]
                 out = chosen_loader(sel_item, sel_item[1],sel_item[2], sel_item[3], self.params, negative=False, fixbb=fixbb)
+            
             elif chosen_dataset == 'pdb' or chosen_dataset == 'pdb_aa':
                 chosen_loader = dataset_config.task_loaders[task]
                 # if p_unclamp > self.unclamp_cut:
@@ -1663,18 +1675,36 @@ class DistilledDataset(data.Dataset):
 
             # Mask the independent inputs.
             run_inference.seed_all(mask_gen_seed) # Reseed the RNGs for test stability.
+
+
             masks_1d = mask_generator.generate_masks(indep, task, self.params, chosen_dataset, None, atom_mask=atom_mask[:, :rf2aa.chemical.NHEAVYPROT])
 
-            is_res_str_shown = masks_1d['input_str_mask']
+            is_res_str_shown  = masks_1d['input_str_mask']
             is_atom_str_shown = masks_1d['is_atom_motif']
             # Cast to non-tensor
             if is_atom_str_shown:
                 is_atom_str_shown = {res_i.item():v for res_i, v in is_atom_str_shown.items()}
+
             indep, is_diffused, is_masked_seq, atomizer, _ = aa_model.transform_indep(indep, is_res_str_shown, is_atom_str_shown, self.params['USE_GUIDE_POSTS'])
 
             run_inference.seed_all(mask_gen_seed) # Reseed the RNGs for test stability.
-            aa_model.centre(indep, is_diffused)
+            
+            
+            aa_model.centre(indep, is_diffused) # center the motif at origin 
             t = random.randint(1, self.diffuser.T)
+            
+            # if displaying motif only in 2d, allow diffusion everywhere
+            if self.conf.preprocess.motif_only_2d:
+                old_is_diffused = is_diffused.clone()
+                is_protein_motif = old_is_diffused * ~indep.is_sm
+
+                new_is_diffused = torch.zeros_like(is_diffused).bool() 
+                new_is_diffused[~indep.is_sm] = True # diffusion over all protein 
+                is_diffused = new_is_diffused
+            else:
+                is_protein_motif = None # prepro handles none case as normal task    
+            
+            
             indep_diffused_tp1_t, t_list = aa_model.diffuse(self.conf, self.diffuser, indep, is_diffused, t)
 
             # Compute all strictly dependent model inputs from the independent inputs.
@@ -1683,9 +1713,17 @@ class DistilledDataset(data.Dataset):
                 if self.preprocess_param['randomize_frames']:
                     print('randomizing frames')
                     indep_diffused.xyz = aa_model.randomly_rotate_frames(indep_diffused.xyz)
+                
+
+                # masks the sequence of indep 
                 aa_model.mask_indep(indep_diffused, is_masked_seq)
-                rfi = self.model_adaptor.prepro(indep_diffused, t, is_diffused)
+
+                # prepare RF inputs 
+                t2d_is_revealed = masks_1d['t2d_is_revealed'] # DJ - new for 3rd template
+                rfi = self.model_adaptor.prepro(indep_diffused, t, is_diffused, is_protein_motif, t2d_is_revealed)
                 rfi_tp1_t.append(rfi)
+
+
 
                 # Sanity checks
                 if torch.sum(~is_diffused) > 0:

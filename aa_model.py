@@ -3,7 +3,7 @@ import torch
 import assertpy
 from collections import defaultdict
 import torch.nn.functional as F
-import ipdb
+# import ipdb
 import dataclasses
 from icecream import ic
 from assertpy import assert_that
@@ -30,6 +30,7 @@ import random
 import guide_posts as gp
 import rotation_conversions
 import atomize
+import sys 
 
 
 NINDEL=1
@@ -48,9 +49,10 @@ C_TERMINUS = 2
 
 @dataclass
 class Indep:
-    seq: torch.Tensor # [L]
-    xyz: torch.Tensor # [L, 36?, 3]
-    idx: torch.Tensor
+    seq:  torch.Tensor # [L]
+    xyz:  torch.Tensor # [L, 36?, 3]
+    xyz2: torch.Tensor # DJ - the original xyz
+    idx:  torch.Tensor 
 
     # SM specific
     bond_feats: torch.Tensor
@@ -385,7 +387,7 @@ class Model:
         return o, is_diffused, is_seq_masked
 
 
-    def prepro(self, indep, t, is_diffused):
+    def prepro(self, indep, t, is_diffused, is_protein_motif=None, t2d_is_revealed=None):
         """
         Function to prepare inputs to diffusion model
         
@@ -520,7 +522,13 @@ class Model:
         alpha_t = torch.cat((alpha, alpha_mask), dim=-1).reshape(-1, L, 3*rf2aa.chemical.NTOTALDOFS) # [n,L,30]
 
         alpha_t = alpha_t.unsqueeze(1) # [n,I,L,30]
-        alpha_t = alpha_t.tile((1,2,1,1))
+
+        if not (self.conf.preprocess.motif_only_2d):
+            # only 2 templates (default)
+            alpha_t = alpha_t.tile((1,2,1,1))
+        else:
+            # 3 templates now 
+            alpha_t = alpha_t.tile((1,3,1,1))
 
 
 
@@ -563,11 +571,46 @@ class Model:
         # NO SELF COND
         xyz_t = torch.zeros(1,2,L,3)
         t2d = torch.zeros(1,2,L,L,68)
+        if (self.conf.preprocess.motif_only_2d):
+            assert (is_protein_motif is not None)
+            assert (t2d_is_revealed is not None)
 
-        t2d_xt, mask_t_2d_remade = util.get_t2d(
-            xyz, indep.is_sm, indep.atom_frames)
-        t2d[0,0] = t2d_xt[0]
+            # only inputting motif in 2d template --> need 3rd template 
+            xyz_t = torch.zeros(1,3,L,3)
+            t2d = torch.zeros(1,3,L,L,68)
+            mask_t = torch.ones(1,3,L,L).bool()
+        
+        # t2d for the Xt (2template)
+        t2d_xt, mask_t_2d_remade = util.get_t2d(xyz, indep.is_sm, indep.atom_frames)
+        t2d[0,0]   = t2d_xt[0]
         xyz_t[0,0] = xyz[0,:,1]
+
+        # T2D for 3template protocol
+        if (self.conf.preprocess.motif_only_2d):
+
+            # set of diffused crds w/ motif sliced in
+            xyz_xt_w_motif = xyz.clone() 
+            xyz_xt_w_motif[0,is_protein_motif,:NHEAVYPROT] = indep.xyz2[is_protein_motif]
+            
+            # t2d containing desired motif 
+            # this construction uses bool mask to allow certain motifs to see others
+            # all motifs can see themselves
+            t2d_motif, _ = util.get_t2d(xyz_xt_w_motif, indep.is_sm, indep.atom_frames, t2d_is_revealed[None])
+            
+            
+            # put it in as third template
+            t2d[0,2] = t2d_motif[0]
+            xyz_t[0,2] = xyz_xt_w_motif[0,:,1]
+            # stack on final feature 
+            blank = torch.ones_like(t2d_is_revealed)*-1 # first two templates will have -1 in this channel
+            cattable_t2d_is_revealed = torch.stack((blank, blank, t2d_is_revealed.int()), dim=-1)
+            cattable_t2d_is_revealed = cattable_t2d_is_revealed.permute(2,0,1) # (L,L,3) -> (3,L,L)
+            cattable_t2d_is_revealed = cattable_t2d_is_revealed[None,...,None] # (3,L,L) -> (1,3,L,L,1)
+
+            t2d = torch.cat((t2d, cattable_t2d_is_revealed), dim=-1)    # (1,3,L,L,69)
+            # sys.exit('debugging')
+
+        # t2d for the motif 
 
         #ic(xyz.shape)
         # ic(
@@ -576,16 +619,11 @@ class Model:
         #     xyz[0, ~is_diffused * ~indep.is_sm][0][:,0], # nan 14:
         # )
 
-        is_protein_motif = ~is_diffused * ~indep.is_sm
-        # idx_diffused = torch.nonzero(is_diffused)
-        # idx_protein_motif  = torch.nonzero(is_protein_motif)
-        # idx_sm = torch.nonzero(indep.is_sm)
+        if is_protein_motif is None:
+            # DJ - adding this bc if motif_only_t2, is_diffused will be 
+            # entire protein --> can't trust it to calculate is_protein_motif
+            is_protein_motif = ~is_diffused * ~indep.is_sm
 
-        # ic(
-        #     idx_diffused,
-        #     idx_protein_motif,
-        #     idx_sm
-        # )
 
         # xyz = torch.nan_to_num(xyz)
         xyz[0, is_diffused*~indep.is_sm,3:] = torch.nan
@@ -602,8 +640,24 @@ class Model:
             msa_masked[...,-2:] = 0
             msa_full[...,-2:] = 0
         
-        t1d = torch.tile(t1d, (1,2,1,1))
-        t1d[0,1,:,-1] = -1
+
+        # T1D 
+        if not (self.conf.preprocess.motif_only_2d): # classic 2template t1d 
+            t1d = torch.tile(t1d, (1,2,1,1))
+            t1d[0,1,:,-1] = -1
+
+        else: # new "3template" t1d
+            t1d = torch.tile(t1d, (1,3,1,1))
+            t1d[0,1,:,-1] # second template (Xt) gets -1 for timestep feature 
+            t1d[0,2,:,-1] # third template (motif) gets -1 for timestep feature
+            
+            # feature for 3rd template - is it motif or not?
+            cattable_is_protein_motif = torch.tile(is_protein_motif[None,None,:,None], (1,3,1,1)).to(device=t1d.device, dtype=t1d.dtype)
+            cattable_is_protein_motif[:,:-1,...] = -1  # first two templates get -1 for the motif feature 
+            t1d = torch.cat((t1d, cattable_is_protein_motif), dim=-1) 
+
+
+
 
         # Note: should be batched
         rfi = RFI(
@@ -714,6 +768,7 @@ def adaptor_fix_bb_indep(out):
     indep = Indep(
         rf2aa.tensor_util.assert_squeeze(seq), # [L]
         true_crds[:,:14], # [L, 14, 3]
+        true_crds[:,:14], # DJ- new xyz2 to keep track of orig AND diffused xyz
         idx_pdb,
 
         # SM specific
@@ -775,6 +830,7 @@ def diffuse(conf, diffuser, indep, is_diffused, t):
         t_list = [t,t]
     else: 
         t_list = [t+1,t]
+
     indep_diffused_t = copy.deepcopy(indep)
     indep_diffused_tplus1 = copy.deepcopy(indep)
     kwargs = {
@@ -825,6 +881,7 @@ def diffuse(conf, diffuser, indep, is_diffused, t):
         assert not torch.isnan(true_crds[:,1,:]).any()
         assert not torch.isnan(tmp_x_t_plus1[is_diffused,1,0]).any()
         assert not torch.isnan(tmp_x_t_plus1[:,1,0]).any()
+
         frames_next = get_next_frames(
                                     xt=tmp_x_t_plus1,
                                     px0=true_crds,
@@ -887,7 +944,6 @@ def self_cond_new(indep, rfi, rfo):
     t2d, mask_t_2d_remade = util.get_t2d(
         xyz_t[0], indep.is_sm, rfi.atom_frames[0])
     t2d = t2d[None] # Add batch dimension # [B,T,L,L,44]
-    ic(rfi_sc.xyz_t.shape, rfi_sc.t2d.shape)
     rfi_sc.xyz_t[0,1] = xyz_t[0, 0, :, 1]
     rfi_sc.t2d[0, 1] = t2d[0, 0]
     return rfi_sc
@@ -898,12 +954,21 @@ def self_cond(indep, rfi, rfo):
     L = indep.xyz.shape[0]
     rfi_sc = copy.deepcopy(rfi)
     zeros = torch.zeros(B,1,L,36-3,3).float().to(rfi.xyz.device)
+    # cat BB prediction with sidechain zeros 
     xyz_t = torch.cat((rfo.xyz[-1:], zeros), dim=-2) # [B,T,L,27,3]
-    t2d, mask_t_2d_remade = util.get_t2d(
-        xyz_t[0], indep.is_sm, rfi.atom_frames[0])
+
+    t2d, mask_t_2d_remade = util.get_t2d(xyz_t[0], indep.is_sm, rfi.atom_frames[0])
     t2d = t2d[None] # Add batch dimension # [B,T,L,L,44]
+    
+    # SECOND template is the previous px0 (index 1)
+    # This spot has -1 confidence in t1d, marking it as SC template
     rfi_sc.xyz_t[0,1] = xyz_t[0, 0, :, 1]
+
+    # add 69th feature to t2d (accomodation for 3-template version)
+    blank = (torch.ones((1,1,L,L,1))*-1).to(rfi.xyz.device)
+    t2d = torch.cat((t2d, blank), dim=-1)
     rfi_sc.t2d[0, 1] = t2d[0, 0]
+
     return rfi_sc
 
 def diagnose_xyz(xyz):
@@ -1291,7 +1356,7 @@ def transform_indep(indep, is_res_str_shown, is_atom_str_shown, use_guideposts, 
     indep = copy.deepcopy(indep)
     use_atomize = is_atom_str_shown is not None and len(is_atom_str_shown) > 0
     is_diffused = is_masked_seq = ~is_res_str_shown
-    atomizer = None
+    atomizer    = None
     gp_to_ptn_idx0 = None
 
     if use_guideposts:
@@ -1313,6 +1378,7 @@ def transform_indep(indep, is_res_str_shown, is_atom_str_shown, use_guideposts, 
             # Remove redundancy
             is_diffused[list(is_atom_str_shown.keys())] = True
         is_masked_seq = is_diffused.clone()
+
     if use_atomize:
         is_ligand = indep.is_sm
         is_diffused[indep.is_sm] = False

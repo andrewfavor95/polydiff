@@ -849,8 +849,13 @@ def assemble_config_from_chk(conf, ckpt) -> None:
         for override in overrides:
             if override.split(".")[0] in ['model','diffuser','seq_diffuser','preprocess']:
                 print(f'WARNING: You are changing {override.split("=")[0]} from the value this model was trained with. Are you sure you know what you are doing?') 
-                mytype = type(conf[override.split(".")[0]][override.split(".")[1].split("=")[0]])
-                conf[override.split(".")[0]][override.split(".")[1].split("=")[0]] = mytype(override.split("=")[1])
+                mytype = type(self._conf[override.split(".")[0]][override.split(".")[1].split("=")[0]])
+
+                if mytype == bool:
+                    # special treatment for bools because they are strings in override 
+                    self._conf[override.split(".")[0]][override.split(".")[1].split("=")[0]] = override.split("=")[1].lower().strip() == 'true'
+                else:
+                    self._conf[override.split(".")[0]][override.split(".")[1].split("=")[0]] = mytype(override.split("=")[1])
     else:
         print('WARNING: Model, Diffuser and Preprocess parameters are not saved in this checkpoint. Check carefully that the values specified in the config are correct for this checkpoint')     
 

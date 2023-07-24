@@ -14,7 +14,8 @@ TRUNK_PARAMS = [
     'n_extra_block', 'n_main_block', 'n_ref_block', 'n_finetune_block',
     'd_msa', 'd_msa_full', 'd_pair', 'd_templ', 'n_head_msa', 'n_head_pair',
     'n_head_templ', 'd_hidden', 'd_hidden_templ', 'p_drop',
-    'use_extra_l1', 'use_atom_frames', 'freeze_track_motif'
+    'use_extra_l1', 'use_atom_frames', 'freeze_track_motif', 'd_templ_1d',
+    'd_templ_2d'
 ]
 SE3_PARAMS = [
     'num_layers', 'num_channels', 'num_degrees', 'n_heads', 'div',
@@ -226,6 +227,8 @@ def get_args(in_args=None):
             help='If True, manually freezes updates to the motif structure in track module')
     trunk_group.add_argument('-assert_single_sequence_input', default=False, action='store_true',
             help='If True, assert expected shapes for single sequence input')
+    trunk_group.add_argument('-d_templ_1d', type=int, default=80)
+    trunk_group.add_argument('-d_templ_2d', type=int, default=68)
 
     # Structure module properties
     str_group = parser.add_argument_group("structure module parameters")
@@ -332,6 +335,8 @@ def get_args(in_args=None):
             help='dimension of t1d raw inputs')
     preprocess_group.add_argument('-d_t2d', type=int, default = 44,
             help = 'dimension of t2d raw inputs')
+    preprocess_group.add_argument('-motif_only_2d', action='store_true', default=False)
+
     diff_group.add_argument('-prob_self_cond', type=float, default=0,
             help='The probability the model will receive self conditioning information during training. Default=0')
     diff_group.add_argument('-new_self_cond', action="store_true", default=True,
@@ -455,6 +460,7 @@ def get_args(in_args=None):
                   'seq_self_cond',
                   'new_self_cond',
                   'randomize_frames',
+                  'motif_only_2d',
                   ]:
         preprocess_param[param] = getattr(args, param)
     if not preprocess_param['sequence_decode']:

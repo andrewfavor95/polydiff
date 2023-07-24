@@ -566,7 +566,7 @@ def get_mu_xt_x0(xt, px0, t, schedule, alphabar_schedule, eps=1e-6):
 
     return mu, sigma
 
-def get_t2d(xyz_t, is_sm, atom_frames):
+def get_t2d(xyz_t, is_sm, atom_frames, mask_t_2d=None):
     '''
     Returns t2d for a template.
 
@@ -588,7 +588,12 @@ def get_t2d(xyz_t, is_sm, atom_frames):
     # mask_t_2d = mask_t_2d.float() * same_chain.float()[None] # (ignore inter-chain region)
     # TODO(Look into atom_frames)
     xyz_t_frames = rf2aa.util.xyz_t_to_frame_xyz_sm_mask(xyz_t[None], is_sm, atom_frames[None])
-    mask_t_2d = torch.ones(1,L,L).bool().to(xyz_t_frames.device)
+
+    if mask_t_2d is None:
+        mask_t_2d = torch.ones(1,L,L).bool().to(xyz_t_frames.device)
+    else:
+        pass
+
     t2d = rf2aa.kinematics.xyz_to_t2d(xyz_t_frames, mask_t_2d[None])
     # Strip batch dimension
     t2d = t2d[0]
