@@ -648,8 +648,8 @@ class Model:
 
         else: # new "3template" t1d
             t1d = torch.tile(t1d, (1,3,1,1))
-            t1d[0,1,:,-1] # second template (Xt) gets -1 for timestep feature 
-            t1d[0,2,:,-1] # third template (motif) gets -1 for timestep feature
+            t1d[0,1,:,-1] = -1 # second template (Xt) gets -1 for timestep feature 
+            t1d[0,2,:,-1] = -1 # third template (motif) gets -1 for timestep feature
             
             # feature for 3rd template - is it motif or not?
             cattable_is_protein_motif = torch.tile(is_protein_motif[None,None,:,None], (1,3,1,1)).to(device=t1d.device, dtype=t1d.dtype)
