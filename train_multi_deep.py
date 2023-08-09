@@ -352,7 +352,9 @@ class Trainer():
                   seq_diffusion_mask, seq_t, is_sm, unclamp=False, negative=False,
                   w_dist=1.0, w_aa=1.0, w_str=1.0, w_all=0.5, w_exp=1.0,
                   w_lddt=1.0, w_blen=1.0, w_bang=1.0, w_lj=0.0, w_hb=0.0,
-                  lj_lin=0.75, use_H=False, w_disp=0.0, w_motif_disp=0.0, w_ax_ang=0.0, w_frame_dist=0.0, eps=1e-6, backprop_non_displacement_on_given=False):
+                  lj_lin=0.75, use_H=False, w_disp=0.0, w_motif_disp=0.0, 
+                  w_ax_ang=0.0, w_frame_dist=0.0, eps=1e-6, w_motif_fape=0.0,
+                  backprop_non_displacement_on_given=False, masks_1d={}):
 
 
         #NB t is 1-indexed
@@ -383,13 +385,15 @@ class Trainer():
 
         # tot_loss += (1.0-w_all)*w_str*tot_str
         loss_weights = {
-            'displacement': w_disp*disp_tscale,
+            'displacement'      : w_disp*disp_tscale,
             'motif_displacement': w_motif_disp*disp_tscale,
-            'aa_cce': w_aa*aa_tscale,
-            'frame_sqL2': w_frame_dist*disp_tscale,
-            'axis_angle': w_ax_ang*disp_tscale,
-            'tot_str': (1.0 - w_all*w_all_tscale)*w_str,
+            'aa_cce'            : w_aa*aa_tscale,
+            'frame_sqL2'        : w_frame_dist*disp_tscale,
+            'axis_angle'        : w_ax_ang*disp_tscale,
+            'tot_str'           : (1.0 - w_all*w_all_tscale)*w_str,
+            'motif_fape'        : w_motif_fape*disp_tscale,
         }
+
         for i in range(4):
             loss_weights[f'c6d_{i}'] = w_dist*c6d_tscale
 
@@ -403,7 +407,10 @@ class Trainer():
  
         # Displacement prediction loss between xyz prev and xyz_true for only motif region.
         if diffusion_mask.any():
-            motif_disp_loss = calc_displacement_loss(pred_in[:,:,diffusion_mask], true[:,diffusion_mask], gamma=0.99, d_clamp=None)
+            motif_disp_loss = calc_displacement_loss(pred_in[:,:,diffusion_mask], 
+                                                     true[:,diffusion_mask], 
+                                                     gamma=0.99, d_clamp=None)
+            
             loss_dict['motif_displacement'] = motif_disp_loss
 
 
@@ -468,8 +475,9 @@ class Trainer():
         
         # get predicted frames 
         R_pred,_ = rigid_from_3_points(N_pred.reshape(I*B,L,3), 
-                                     Ca_pred.reshape(I*B,L,3), 
-                                     C_pred.reshape(I*B,L,3))
+                                       Ca_pred.reshape(I*B,L,3), 
+                                       C_pred.reshape(I*B,L,3))
+        
         R_pred = R_pred.reshape(I,B,L,3,3)
         # get true frames 
         R_true,_ = rigid_from_3_points(N_true, Ca_true, C_true)
@@ -501,11 +509,28 @@ class Trainer():
         tot_str, str_loss = calc_str_loss(pred, true, mask_2d, same_chain, negative=negative,
                                               A=10.0, d_clamp=None if unclamp else 10.0, gamma=1.0)
         
+        
+        
+        # FAPE on motif residues 
+        t2d_is_revealed = masks_1d['t2d_is_revealed']
+        tot_motif_fape, _ = calc_str_loss(pred, true, t2d_is_revealed.to(device=pred.device), same_chain, negative=negative,
+                                              A=10.0, d_clamp=None if unclamp else 10.0, gamma=1.0)
+
+        # Report RMSD on motif chunks 
+        is_protein_motif = masks_1d['input_str_mask']
+        motif_rmsd      = calc_discontiguous_motif_rmsd(pred.detach(), true.detach(), is_protein_motif)
+        non_motif_rmsd  = calc_discontiguous_motif_rmsd(pred.detach(), true.detach(), ~is_protein_motif)
+        loss_dict['motif_rmsd'] = motif_rmsd
+        loss_dict['non_motif_rmsd'] = non_motif_rmsd
+        loss_weights['motif_rmsd'] = 0.0
+        loss_weights['non_motif_rmsd'] = 0.0
+        
         # dj - str loss timestep scheduling: 
         # scale w_all to keep the contributions of BB/ALLatom fape summing to 1.0
         loss_s.append(str_loss)
         
         loss_dict['tot_str'] = tot_str
+        loss_dict['motif_fape'] = tot_motif_fape
 
 
         for k, loss in loss_dict.items():
@@ -643,8 +668,8 @@ class Trainer():
         # loss_dict['hb'] = float(hb_loss.detach())
         
         loss_dict['total_loss'] = float(tot_loss.detach())
-
         loss_dict = rf2aa.tensor_util.cpu(loss_dict)
+
         return tot_loss, loss_dict, loss_weights
 
     def calc_acc(self, prob, dist, idx_pdb, mask_2d, return_cnt=False):
@@ -1080,6 +1105,10 @@ class Trainer():
                     # Take 1 step back in time to get the training example to feed to the model
                     # For this model evaluation msa_prev, pair_prev, and state_prev are all None and i_cycle is
                     # constant at 0
+                    if DEBUG: 
+                        # torch.save(rfi_tp1, 'rfi_tp1_bugfixed.pt')
+                        pass 
+
                     with torch.no_grad():
                         with ddp_model.no_sync():
                             with torch.cuda.amp.autocast(enabled=USE_AMP):
@@ -1091,6 +1120,10 @@ class Trainer():
                                         )
                                 rfi_t = aa_model.self_cond(indep, rfi_t, rfo)
                                 xyz_prev_orig = rfi_t.xyz[0,:,:14].clone()
+                if DEBUG:
+                    # torch.save(rfi_t, 'rfi_t_bugfixed.pt')
+                    # sys.exit('exiting early')
+                    pass 
 
                 with ExitStack() as stack:
                     if counter%self.ACCUM_STEP != 0:
@@ -1110,6 +1143,7 @@ class Trainer():
                         indep.same_chain = indep.same_chain.to(gpu)
                         indep.idx = indep.idx.to(gpu)
                         true_crds = torch.zeros((1,L,36,3)).to(gpu)
+
                         true_crds[0,:,:14,:] = indep.xyz[:,:14,:]
                         mask_crds = ~torch.isnan(true_crds).any(dim=-1)
                         true_crds, mask_crds = resolve_equiv_natives(pred_crds[-1], true_crds, mask_crds)
@@ -1142,27 +1176,65 @@ class Trainer():
                         true_crds[:,:,14:] = 0
                         xyz_t[:] = 0
                         seq_t[:] = 0
-                        loss, loss_dict, loss_weights = self.calc_loss(logit_s, c6d,
-                                logit_aa_s, label_aa_s, mask_aa_s, None,
-                                pred_crds, alphas, true_crds, mask_crds,
-                                mask_BB, mask_2d, same_chain,
-                                pred_lddts, indep.idx[None], chosen_dataset, chosen_task, diffusion_mask=diffusion_mask,
-                                seq_diffusion_mask=seq_diffusion_mask, seq_t=seq_t, xyz_in=xyz_t, is_sm=indep.is_sm, unclamp=unclamp,
-                                negative=negative, t=int(little_t), **self.loss_param)
+
+                        loss, loss_dict, loss_weights = self.calc_loss(
+                                logit_s, 
+                                c6d,
+                                logit_aa_s, 
+                                label_aa_s, 
+                                mask_aa_s, 
+                                None,
+                                pred_crds, 
+                                alphas, 
+                                true_crds, 
+                                mask_crds,
+                                mask_BB, 
+                                mask_2d, 
+                                same_chain,
+                                pred_lddts, 
+                                indep.idx[None], 
+                                chosen_dataset, 
+                                chosen_task, 
+                                diffusion_mask=diffusion_mask,
+                                seq_diffusion_mask=seq_diffusion_mask, 
+                                seq_t=seq_t, 
+                                xyz_in=xyz_t, 
+                                is_sm=indep.is_sm, 
+                                unclamp=unclamp,
+                                negative=negative, 
+                                t=int(little_t), 
+                                masks_1d=masks_1d,
+                                **self.loss_param)
+
+
+                        # Loss dict containing losses scaled by their weights 
+                        weighted_loss_dict = dict()
+                        for k,v in loss_dict.items(): 
+                            w = loss_weights.get(k,1)
+                            weighted_loss_dict[k] = (loss_dict[k]*w)
+
+                        weighted_loss_dict = rf2aa.tensor_util.cpu(weighted_loss_dict)
+                        
                         # Force all model parameters to participate in loss. Truly a cursed workaround.
                         loss += 0.0 * (logits_pae.mean() + logits_pde.mean() + alphas.mean() + pred_lddts.mean() + p_bind.mean())
                     loss = loss / self.ACCUM_STEP
 
+                    if DEBUG and False: 
+                        report_gradient_norms(loss_dict, ddp_model, scaler, optimizer, int(little_t))
+
                     if gpu != 'cpu':
                         print(f'DEBUG: {rank=} {gpu=} {counter=} size: {indep.xyz.shape[0]} {torch.cuda.max_memory_reserved(gpu) / 1024**3:.2f} GB reserved {torch.cuda.max_memory_allocated(gpu) / 1024**3:.2f} GB allocated {torch.cuda.get_device_properties(gpu).total_memory / 1024**3:.2f} GB total')
                     if not torch.isnan(loss):
-                        scaler.scale(loss).backward()
+                        with torch.autograd.set_detect_anomaly(True):
+                            scaler.scale(loss).backward()
                     else:
                         msg = f'NaN loss encountered, skipping: {context_msg}'
                         if not DEBUG:
                             print(msg)
                         else:
                             raise Exception(msg)
+
+
                     if counter%self.ACCUM_STEP == 0:
                         # gradient clipping
                         scaler.unscale_(optimizer)
@@ -1188,7 +1260,7 @@ class Trainer():
                     max_mem = torch.cuda.max_memory_allocated()/1e9
                     train_time  = time.time() - start_time
                     
-
+                    #### Writing losses to stdout ####
                     if 'diff' in chosen_task:
                         task_str = f'diff_t{int(little_t)}'
                     else:
@@ -1201,6 +1273,16 @@ class Trainer():
                         str_stack.append(f'{k}--{round( float(loss_dict[k]), 4)}')
                     outstr += '  '.join(str_stack)
                     sys.stdout.write(outstr+'\n')
+
+                     #### Writing WEIGHTED losses to stdout #### 
+                    w_outstr = f"Local WEIGHTED {task_str} | {chosen_dataset[0]}: [{epoch}/{self.n_epoch}] Batch: [{counter*self.batch_size*world_size}/{self.n_train}] Time: {train_time} Loss dict: "
+                    wstr_stack = [] 
+                    for k in sorted(list(loss_dict.keys())):
+                        w = loss_weights.get(k,1)
+                        wstr_stack.append(f'{k}--{round(float(loss_dict[k]*w), 4)}')
+                    w_outstr += '  '.join(wstr_stack)
+                    sys.stdout.write(w_outstr+'\n')
+
                     
                     if rank == 0:
                         loss_dict.update({'t':little_t, 'total_examples':epoch*self.n_train+counter*world_size, 'dataset':chosen_dataset[0], 'task':chosen_task[0]})
@@ -1337,6 +1419,8 @@ def make_trainer(args, model_param, loader_param, loss_param, diffusion_param, p
         # loader_param['DATAPKL'] = 'subsampled_dataset.pkl'
         # loader_param['DATAPKL_AA'] = 'subsampled_all-atom-dataset.pkl'
         os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
+        os.environ['TORCH_DISTRIBUTED_DEBUG'] = 'DETAIL'
+        print('set os.environ variables')
         ic.configureOutput(includeContext=True)
     else:
         DEBUG = False 

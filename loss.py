@@ -3,10 +3,11 @@ import numpy as np
 from opt_einsum import contract as einsum
 
 from util import rigid_from_3_points, get_mu_xt_x0
-from kinematics import get_dih
+from kinematics import get_dih, th_kabsch
 from scoring import HbHybType
 from icecream import ic
 from diff_util import th_min_angle 
+import time 
 
 torch.autograd.set_detect_anomaly(True)
 
@@ -217,6 +218,98 @@ def get_t(N, Ca, C, non_ideal=False, eps=1e-5):
     Ts = Ts.view(I,B,L,3)
     t = Ts[:,:,None] - Ts[:,:,:,None] # t[0,1] = residue 0 -> residue 1 vector
     return einsum('iblkj, iblmk -> iblmj', Rs, t) # (I,B,L,L,3)
+
+
+def calc_discontiguous_motif_rmsd(pred, true, is_computed):
+    """
+    Computes Kabsh RMSD over each contiguous chunk of residues in <is_computed>. 
+
+    Assumes the islands of True are independent.
+    """
+    assert len(pred.shape) == 5     # (I,B,L,atoms,3)
+    pred = pred[-1,0]               # (L,atoms,3)
+    assert len(true.shape) == 4     # (B,L,atoms,3)
+    true = true[0]                  # (L,atoms,3)
+
+    chunk_start_stops = torch.where(torch.diff(torch.cat([torch.tensor([0]), is_computed, torch.tensor([0])])))[0].view(-1,2)
+
+    rmsds = []
+
+    for start, stop in chunk_start_stops:
+        cur_pred = pred[start:stop,:3,:]
+        cur_true = true[start:stop,:3,:]
+
+        rms,_,_ = th_kabsch(cur_pred.reshape(-1,3), cur_true.reshape(-1,3))
+        rmsds.append(rms)
+
+    return torch.tensor(rmsds).mean()
+    
+
+
+def _get_grad_norm(parameters):
+    """
+    Returns the norm of the gradient for a list of parameters.
+
+    calculation from https://discuss.pytorch.org/t/check-the-norm-of-gradients/27961
+    """
+    total_norm = 0
+    for p in parameters:
+        if p.grad is not None:
+            param_norm = p.grad.data.norm(2)
+            total_norm += param_norm.item() ** 2
+    return total_norm ** (1. / 2)
+
+
+def report_gradient_norms(loss_dict, 
+                          model, 
+                          scaler, 
+                          optimizer,
+                          t): 
+    """
+    Backprops loss for each loss in loss_dict, 
+    and reports norms of gradient for each.
+    """
+    print('Calculating all gradient norms...')
+
+    # save original gradients
+    original_gradients = {}
+    for param in model.parameters():
+        original_gradients[param] = param.grad.detach().clone() if param.grad is not None else None
+
+    # zero gradients for clean slate 
+    optimizer.zero_grad()
+
+    with torch.set_grad_enabled(True):
+        with torch.autograd.set_detect_anomaly(True):
+            with open('gradient_norms3.csv', 'a') as f:
+                
+                good_names, good_norms = [], []
+                for name, loss in loss_dict.items():
+                    print('On loss', name, '...')
+                    if (loss > 0) and (name != 'total_loss'):
+                        scaler.scale(loss).backward(retain_graph=True)
+
+                        # report gradient norms
+                        tot_norm = _get_grad_norm(model.parameters())
+
+                        good_names.append(name)
+                        good_norms.append(tot_norm)
+
+                        optimizer.zero_grad()
+                
+                # report gradient norms
+                outstr = ','.join([f'{name}:{norm}' for name, norm in zip(good_names, good_norms)])
+                outstr = f't:{t},{outstr}'
+                f.write(outstr + '\n')
+    
+    # restore original gradients
+    for param in model.parameters():
+        if original_gradients[param] is not None:
+            param.grad = original_gradients[param]
+    
+    print('Done calculating gradient norms.')
+    return True 
+
 
 def calc_str_loss(pred, true, mask_2d, same_chain, negative=False, d_clamp=10.0, d_clamp_inter=10.0, A=10.0, gamma=0.99, eps=1e-6):
     '''

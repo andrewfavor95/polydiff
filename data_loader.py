@@ -27,6 +27,8 @@ import rf2aa.kinematics
 import rf2aa.chemical
 import guide_posts as gp
 
+import matplotlib.pyplot as plt 
+
 # for diffusion training
 import mask_generator
 from icecream import ic
@@ -1592,7 +1594,7 @@ class DistilledDataset(data.Dataset):
 
         chosen_dataset, index = self.dataset_index_from_index(index)
         dataset_config = self.dataset_configs[chosen_dataset]
-        ID = dataset_config.ids[index]
+        ID = dataset_config.ids[index] 
         # ic(chosen_dataset, index, ID)
         # sys.exit('Exiting early')
         if chosen_dataset == "sm_complex":
@@ -1688,7 +1690,21 @@ class DistilledDataset(data.Dataset):
             indep, is_diffused, is_masked_seq, atomizer, _ = aa_model.transform_indep(indep, is_res_str_shown, is_atom_str_shown, self.params['USE_GUIDE_POSTS'])
 
             run_inference.seed_all(mask_gen_seed) # Reseed the RNGs for test stability.
-            
+
+            # fig, ax = plt.subplots(1,3, figsize=(12,5))
+            # Ltmp = is_res_str_shown.shape[0]
+            # ax[0].imshow(is_res_str_shown.cpu().numpy()[None].repeat(Ltmp, axis=0))
+            # ax[0].set_title('input_str_mask/is_res_str_shown')
+
+            # ax[1].imshow(is_diffused.cpu().numpy()[None].repeat(Ltmp, axis=0))
+            # ax[1].set_title('is_diffused')
+
+            # ax[2].imshow(masks_1d['t2d_is_revealed'].cpu().numpy())
+            # ax[2].set_title('t2d_is_revealed')
+
+            # plt.show()
+            # plt.savefig('1d_2d_masks_before_diffusion.png')
+            # sys.exit('debugging masks before diffusion')
             
             aa_model.centre(indep, is_diffused) # center the motif at origin 
             t = random.randint(1, self.diffuser.T)
@@ -1696,10 +1712,10 @@ class DistilledDataset(data.Dataset):
             # if displaying motif only in 2d, allow diffusion everywhere
             if self.conf.preprocess.motif_only_2d:
                 old_is_diffused = is_diffused.clone()
-                is_protein_motif = old_is_diffused * ~indep.is_sm
+                is_protein_motif = ~old_is_diffused * ~indep.is_sm
 
                 new_is_diffused = torch.zeros_like(is_diffused).bool() 
-                new_is_diffused[~indep.is_sm] = True # diffusion over all protein 
+                new_is_diffused[~indep.is_sm] = True # diffusion over all protein, no SM diffusion 
                 is_diffused = new_is_diffused
             else:
                 is_protein_motif = None # prepro handles none case as normal task    
@@ -1722,7 +1738,6 @@ class DistilledDataset(data.Dataset):
                 t2d_is_revealed = masks_1d['t2d_is_revealed'] # DJ - new for 3rd template
                 rfi = self.model_adaptor.prepro(indep_diffused, t, is_diffused, is_protein_motif, t2d_is_revealed)
                 rfi_tp1_t.append(rfi)
-
 
 
                 # Sanity checks

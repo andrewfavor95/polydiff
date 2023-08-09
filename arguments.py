@@ -302,6 +302,8 @@ def get_args(in_args=None):
             help='Parameters to be used for each loss schedule')
     loss_group.add_argument('-w_motif_disp', type=float, default=0.0,
             help="Weight on motif displacement")
+    loss_group.add_argument('-w_motif_fape', type=float, default=0.0, 
+            help="Weight on motif fape")
     loss_group.add_argument('-backprop_non_displacement_on_given',action='store_true', default=False,
             help='True, apply all losses, not just the displacement loss on the given region')
 
@@ -444,7 +446,8 @@ def get_args(in_args=None):
                 'use_tschedule',\
                 'scheduled_losses',\
                 'scheduled_types',\
-                'scheduled_params']:
+                'scheduled_params',\
+                'w_motif_fape']:
         loss_param[param] = getattr(args, param)
     
     # Collect preprocess_params
