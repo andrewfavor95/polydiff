@@ -519,6 +519,7 @@ def get_tip_gaussian_mask(indep, atom_mask, *args, std_dev=8, **kwargs):
     is_motif = torch.zeros(indep.length()).bool()
     return is_motif, is_atom_motif
 
+
 def _get_triple_contact(xyz, low_prop, high_prop, broken_prop, xyz_less_than=6, seq_dist_greater_than=10, len_low=1, len_high=3):
     contacts = get_contacts(xyz, xyz_less_than, seq_dist_greater_than)
     if not contacts.any():
@@ -530,6 +531,48 @@ def _get_triple_contact(xyz, low_prop, high_prop, broken_prop, xyz_less_than=6, 
     return sample_around_contact(L, indices, len_low, len_high)
 
 
+def _get_triple_contact_3template(xyz, 
+                                  low_prop, 
+                                  high_prop, 
+                                  xyz_less_than=6, 
+                                  seq_dist_greater_than=10, 
+                                  len_low=1, 
+                                  len_high=7):
+
+    contacts = get_contacts(xyz, xyz_less_than, seq_dist_greater_than)
+    if not contacts.any():
+        return _get_diffusion_mask_chunked(xyz, low_prop, high_prop, max_motif_chunks=6)
+
+    # find the third contact
+    indices = find_third_contact(contacts)
+    if indices is None:
+        return _get_diffusion_mask_chunked(xyz, low_prop, high_prop, max_motif_chunks=6)
+    
+    L = xyz.shape[0]
+    # 1d tensor describing which residues are motif
+    is_motif = sample_around_contact(L, indices, len_low, len_high)
+
+    # now get the 2d tensor describing which residues can see each other
+    # For these, all motif chunks can see each other
+    mask_2d = is_motif[:, None] * is_motif[None, :]
+
+    return mask_2d, is_motif
+
+
+
+def get_triple_contact_3template(indep, 
+                                 atom_mask, 
+                                 low_prop, 
+                                 high_prop, 
+                                 broken_prop):
+    """
+    Triple contact fxn that is compatable w/ 3template mode
+    """
+    assert indep.is_sm.sum() == 0, 'small molecules not yet supported'
+    mask2d, is_motif = _get_triple_contact_3template(indep.xyz, low_prop, high_prop)
+
+    # spoofing a return of two items: "diffusion_mask, is_atom_motif"
+    return (mask2d, is_motif), None
 
 
  
@@ -914,8 +957,12 @@ def generate_masks(indep, task, loader_params, chosen_dataset, full_chain=None, 
             diff_mask_probs=loader_params['DIFF_MASK_PROBS'],
             ) 
 
-        if (get_diffusion_mask_chunked in mask_fns) and (type(diffusion_mask) == tuple):
-            # this means chunked diffusion mask was chosen --> unpack 
+        # 3 template stuff
+        cond_A = ((get_diffusion_mask_chunked in mask_fns) or (get_triple_contact in mask_fns))
+        cond_B = (type(diffusion_mask) == tuple)
+        if  (cond_A and cond_B):
+            # this means a mask generator which is aware of 3template diffusion was used 
+            assert (len(diffusion_mask) == 2) and (type(diffusion_mask) == tuple)
             (t2d_is_revealed, diffusion_mask) = diffusion_mask 
         
         # ic(diffusion_mask)

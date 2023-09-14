@@ -58,6 +58,8 @@ def get_args(in_args=None):
             help="If true, will set model to do sanity checks on inputs")
     train_group.add_argument("-out_dir", default=None,
             help="output directory")
+    train_group.add_argument("-grad_clip", default=0.2, action='store', type=float,
+            help='grad norm clipping value')
 
     # data-loading parameters
     data_group = parser.add_argument_group("data loading parameters")
@@ -188,6 +190,8 @@ def get_args(in_args=None):
             help='Coordinate scaling factor for diffusion')
     diff_group.add_argument('-randomize_frames',  default=False, action='store_true',
             help='If true, randomize all frames at each step')
+    diff_group.add_argument('-eye_frames',  default=False, action='store_true',
+            help='If true, ensure all frames are identity at each step')
 
     # Trunk module properties
     trunk_group = parser.add_argument_group("Trunk module parameters")
@@ -304,6 +308,12 @@ def get_args(in_args=None):
             help="Weight on motif displacement")
     loss_group.add_argument('-w_motif_fape', type=float, default=0.0, 
             help="Weight on motif fape")
+    loss_group.add_argument('-w_nonmotif_fape', type=float, default=0.0,
+            help="Weight on nonmotif fape")
+    loss_group.add_argument('-norm_fape', type=float, default=10.0, 
+            help="Divisor for FAPE loss")
+    loss_group.add_argument('-clamp_fape', type=float, default=10.0,
+                help="Clamp for FAPE loss (max distance applied)")
     loss_group.add_argument('-backprop_non_displacement_on_given',action='store_true', default=False,
             help='True, apply all losses, not just the displacement loss on the given region')
 
@@ -447,7 +457,10 @@ def get_args(in_args=None):
                 'scheduled_losses',\
                 'scheduled_types',\
                 'scheduled_params',\
-                'w_motif_fape']:
+                'w_motif_fape',
+                'w_nonmotif_fape',
+                'norm_fape',
+                'clamp_fape']:
         loss_param[param] = getattr(args, param)
     
     # Collect preprocess_params
@@ -463,6 +476,7 @@ def get_args(in_args=None):
                   'seq_self_cond',
                   'new_self_cond',
                   'randomize_frames',
+                  'eye_frames',
                   'motif_only_2d',
                   ]:
         preprocess_param[param] = getattr(args, param)

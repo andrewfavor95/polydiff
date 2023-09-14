@@ -1683,6 +1683,7 @@ class DistilledDataset(data.Dataset):
 
             is_res_str_shown  = masks_1d['input_str_mask']
             is_atom_str_shown = masks_1d['is_atom_motif']
+            
             # Cast to non-tensor
             if is_atom_str_shown:
                 is_atom_str_shown = {res_i.item():v for res_i, v in is_atom_str_shown.items()}
@@ -1727,8 +1728,12 @@ class DistilledDataset(data.Dataset):
             rfi_tp1_t = []
             for indep_diffused, t in zip(indep_diffused_tp1_t, t_list):
                 if self.preprocess_param['randomize_frames']:
-                    print('randomizing frames')
+                    assert not self.preprocess_param['eye_frames']
                     indep_diffused.xyz = aa_model.randomly_rotate_frames(indep_diffused.xyz)
+                
+                if self.preprocess_param['eye_frames']:
+                    assert not self.preprocess_param['randomize_frames']
+                    indep_diffused.xyz = aa_model.eye_frames2(indep_diffused.xyz)
                 
 
                 # masks the sequence of indep 

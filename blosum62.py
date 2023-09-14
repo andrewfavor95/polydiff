@@ -100,7 +100,7 @@ To calculate p(A|B), do this:
     3. the result is p(col|row)
 """
 # probability of j (col) conditioned on i (row)
-p_j_given_i = 2**b62_sij.astype(np.float)
+p_j_given_i = 2**b62_sij.astype(float)
 p_j_given_i *= marginals[None,:]          # casts along the row 
 p_j_given_i /= p_j_given_i.sum(axis=-1, keepdims=True)
 

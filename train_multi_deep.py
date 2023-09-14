@@ -157,7 +157,8 @@ class Trainer():
                  model_param={}, loader_param={}, loss_param={}, batch_size=1, accum_step=1, 
                  maxcycle=4, diffusion_param={}, preprocess_param={}, outdir=None, wandb_prefix='',
                  metrics=None, zero_weights=False, log_inputs=False, n_write_pdb=100,
-                 reinitialize_missing_params=False, verbose_checks=False, saves_per_epoch=None, resume=False):
+                 reinitialize_missing_params=False, verbose_checks=False, saves_per_epoch=None, resume=False,
+                 grad_clip=0.2):
 
         self.model_name = model_name #"BFF"
         self.ckpt_load_path = ckpt_load_path
@@ -175,6 +176,7 @@ class Trainer():
         self.rate_deque = collections.deque(maxlen=200)
         self.verbose_checks=verbose_checks
         self.resume=resume
+        self.grad_clip=grad_clip
 
         self.outdir = self.outdir or f'./train_session{get_datetime()}'
         ic(self.outdir)
@@ -354,6 +356,7 @@ class Trainer():
                   w_lddt=1.0, w_blen=1.0, w_bang=1.0, w_lj=0.0, w_hb=0.0,
                   lj_lin=0.75, use_H=False, w_disp=0.0, w_motif_disp=0.0, 
                   w_ax_ang=0.0, w_frame_dist=0.0, eps=1e-6, w_motif_fape=0.0,
+                  w_nonmotif_fape=0.0, norm_fape=10.0, clamp_fape=10.0,
                   backprop_non_displacement_on_given=False, masks_1d={}):
 
 
@@ -392,6 +395,7 @@ class Trainer():
             'axis_angle'        : w_ax_ang*disp_tscale,
             'tot_str'           : (1.0 - w_all*w_all_tscale)*w_str,
             'motif_fape'        : w_motif_fape*disp_tscale,
+            'nonmotif_fape'     : w_nonmotif_fape*disp_tscale,
         }
 
         for i in range(4):
@@ -511,19 +515,23 @@ class Trainer():
         
         
         
-        # FAPE on motif residues 
+        # FAPE on motif residues -- has smaller normalizer and smaller clamp distance
         t2d_is_revealed = masks_1d['t2d_is_revealed']
         tot_motif_fape, _ = calc_str_loss(pred, true, t2d_is_revealed.to(device=pred.device), same_chain, negative=negative,
-                                              A=10.0, d_clamp=None if unclamp else 10.0, gamma=1.0)
+                                              A=norm_fape/2, d_clamp=None if unclamp else clamp_fape/2, gamma=1.0)
+        
+        # FAPE on non-motif residues
+        tot_nonmotif_fape, _ = calc_str_loss(pred, true, ~t2d_is_revealed.to(device=pred.device), same_chain, negative=negative,
+                                             A=norm_fape, d_clamp=None if unclamp else clamp_fape, gamma=1.0)
 
         # Report RMSD on motif chunks 
         is_protein_motif = masks_1d['input_str_mask']
         motif_rmsd      = calc_discontiguous_motif_rmsd(pred.detach(), true.detach(), is_protein_motif)
         non_motif_rmsd  = calc_discontiguous_motif_rmsd(pred.detach(), true.detach(), ~is_protein_motif)
-        loss_dict['motif_rmsd'] = motif_rmsd
-        loss_dict['non_motif_rmsd'] = non_motif_rmsd
-        loss_weights['motif_rmsd'] = 0.0
-        loss_weights['non_motif_rmsd'] = 0.0
+        loss_dict['motif_rmsd']         = motif_rmsd
+        loss_dict['non_motif_rmsd']     = non_motif_rmsd
+        loss_weights['motif_rmsd']      = 0.0
+        loss_weights['non_motif_rmsd']  = 0.0
         
         # dj - str loss timestep scheduling: 
         # scale w_all to keep the contributions of BB/ALLatom fape summing to 1.0
@@ -531,6 +539,7 @@ class Trainer():
         
         loss_dict['tot_str'] = tot_str
         loss_dict['motif_fape'] = tot_motif_fape
+        loss_dict['nonmotif_fape'] = tot_nonmotif_fape
 
 
         for k, loss in loss_dict.items():
@@ -1129,6 +1138,7 @@ class Trainer():
                     if counter%self.ACCUM_STEP != 0:
                         stack.enter_context(ddp_model.no_sync())
                     with torch.cuda.amp.autocast(enabled=USE_AMP):
+                        
                         rfo = aa_model.forward(
                                         ddp_model,
                                         rfi_t,
@@ -1238,7 +1248,7 @@ class Trainer():
                     if counter%self.ACCUM_STEP == 0:
                         # gradient clipping
                         scaler.unscale_(optimizer)
-                        torch.nn.utils.clip_grad_norm_(ddp_model.parameters(), 0.2)
+                        torch.nn.utils.clip_grad_norm_(ddp_model.parameters(), self.grad_clip) # default is 0.2 
                         scaler.step(optimizer)
                         scale = scaler.get_scale()
                         scaler.update()
@@ -1346,12 +1356,16 @@ class Trainer():
                         indep_true = atomize.deatomize(atomizer, indep_true)
                         motif_deatomized = atomize.convert_atomized_mask(atomizer, ~is_diffused)
 
+                    rfi_t_writeable = copy.deepcopy(rfi_t)
+                    rf2aa.tensor_util.to_device(rfi_t_writeable, torch.device('cpu'))
+
                     with open(f'{prefix}_info.pkl', 'wb') as fh:
                         pickle.dump({
                             'motif': motif_deatomized,
                             'masks_1d': masks_1d,
                             'idx': indep_true.idx,
                             'is_sm': indep_true.is_sm,
+                            'rfi_t': rfi_t_writeable,
                         }, fh)
 
                     if self.log_inputs:
@@ -1467,7 +1481,8 @@ def make_trainer(args, model_param, loader_param, loss_param, diffusion_param, p
                     verbose_checks=args.verbose_checks,
                     saves_per_epoch=args.saves_per_epoch,
                     outdir=args.out_dir,
-                    resume=args.resume)
+                    resume=args.resume,
+                    grad_clip=args.grad_clip)
     return train
 
 if __name__ == "__main__":
