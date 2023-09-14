@@ -36,6 +36,7 @@ import pickle
 import random
 from apply_masks import mask_inputs
 import util
+from util import mask_sequence_chunks
 import math
 from functools import partial
 import pandas as pd
@@ -1595,8 +1596,7 @@ class DistilledDataset(data.Dataset):
         chosen_dataset, index = self.dataset_index_from_index(index)
         dataset_config = self.dataset_configs[chosen_dataset]
         ID = dataset_config.ids[index] 
-        # ic(chosen_dataset, index, ID)
-        # sys.exit('Exiting early')
+
         if chosen_dataset == "sm_complex":
             sel_item = rf2aa.data_loader.sample_item_sm_compl(dataset_config.dic, ID)
         else:
@@ -1707,7 +1707,13 @@ class DistilledDataset(data.Dataset):
             # plt.savefig('1d_2d_masks_before_diffusion.png')
             # sys.exit('debugging masks before diffusion')
             
-            aa_model.centre(indep, is_diffused) # center the motif at origin 
+            
+            if not self.conf.preprocess.motif_only_2d:
+                aa_model.centre(indep, is_diffused) # center the motif at origin 
+            else:
+                # center entire protein at origin
+                aa_model.centre(indep, torch.ones_like(is_diffused).bool())
+
             t = random.randint(1, self.diffuser.T)
             
             # if displaying motif only in 2d, allow diffusion everywhere
@@ -1737,6 +1743,14 @@ class DistilledDataset(data.Dataset):
                 
 
                 # masks the sequence of indep 
+                if self.preprocess_param['p_show_motif_seq'] > 0.0:
+                    # sometimes mask the sequence
+                    P = self.preprocess_param['p_show_motif_seq']
+                    orig_dtype = is_masked_seq.dtype
+                    is_masked_seq = mask_sequence_chunks(is_masked_seq.numpy().astype(bool), P)
+                    is_masked_seq = torch.from_numpy(is_masked_seq)
+                    is_masked_seq = is_masked_seq.to(dtype=orig_dtype)
+
                 aa_model.mask_indep(indep_diffused, is_masked_seq)
 
                 # prepare RF inputs 

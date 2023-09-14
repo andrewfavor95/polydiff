@@ -11,6 +11,8 @@ from scoring import *
 import rf2aa.kinematics
 import rf2aa.util
 
+
+
 def generate_Cbeta(N,Ca,C):
     # recreate Cb given N,Ca,C
     b = Ca - N 
@@ -53,6 +55,60 @@ def th_dih_v(ab,bc,cd):
 def th_dih(a,b,c,d):
     return th_dih_v(a-b,b-c,c-d)
 
+def find_contiguous_true_indices(arr):
+    """
+    Find the (start, stop) indices of each contiguous set of True values in a boolean array.
+
+    Args:
+    arr (numpy.ndarray): Input boolean array.
+
+    Returns:
+    list of tuples: List of (start, stop) index pairs for each contiguous True segment.
+    """
+    if torch.is_tensor(arr):
+        arr = arr.numpy()
+    assert arr.dtype == bool
+    
+    # Find the indices where True values start and stop
+    stops = np.where(arr[:-1] & ~arr[1:])[0] + 1
+    starts = np.where(~arr[:-1] & arr[1:])[0] + 1
+
+    # Handle the case where the array starts with True
+    if arr[0]:
+        starts = np.insert(starts, 0, 0)
+
+    # Handle the case where the array ends with True
+    if arr[-1]:
+        stops = np.append(stops, len(arr))
+
+    # Pair the start and stop indices
+    indices = list(zip(starts, stops))
+
+    return indices
+    
+
+def mask_sequence_chunks(is_masked, p=0.5):
+    """
+    Take some regions that are unmasked and mask them with probability p, in a contiguous/chunked fashion.
+    """
+    is_masked = is_masked.copy()
+    is_revealed = ~is_masked
+
+    revealed_indices = find_contiguous_true_indices(is_revealed)
+
+    print('revealed indices are: ', revealed_indices)
+    for start,stop in revealed_indices:
+
+        if np.random.rand() < p:
+            n_mask      = np.random.randint(1, stop - start+1)             # how many within here to mask? 
+            mask_start  = np.random.randint(start, stop - n_mask+1)
+            mask_stop   = mask_start + n_mask
+            print('masking from ', mask_start, ' to ', mask_stop, ' out of ', start, ' to ', stop)
+            is_masked[mask_start:mask_stop+1] = True # mask it 
+    
+    return is_masked
+
+    
 # More complicated version splits error in CA-N and CA-C (giving more accurate CB position)
 # It returns the rigid transformation from local frame to global frame
 def rigid_from_3_points(N, Ca, C, non_ideal=False, eps=1e-8):

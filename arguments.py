@@ -192,6 +192,8 @@ def get_args(in_args=None):
             help='If true, randomize all frames at each step')
     diff_group.add_argument('-eye_frames',  default=False, action='store_true',
             help='If true, ensure all frames are identity at each step')
+    diff_group.add_argument('-p_show_motif_seq', default=1.0, type=float, 
+            help='Fraction of the time to show the motif sequence during training')
 
     # Trunk module properties
     trunk_group = parser.add_argument_group("Trunk module parameters")
@@ -478,6 +480,7 @@ def get_args(in_args=None):
                   'randomize_frames',
                   'eye_frames',
                   'motif_only_2d',
+                  'p_show_motif_seq',
                   ]:
         preprocess_param[param] = getattr(args, param)
     if not preprocess_param['sequence_decode']:
