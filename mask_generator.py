@@ -559,6 +559,51 @@ def _get_triple_contact_3template(xyz,
     return mask_2d, is_motif
 
 
+def _get_multi_triple_contact_3template(xyz,
+                                         low_prop,
+                                         high_prop,
+                                         n_triples=2,
+                                         xyz_less_than=6,
+                                         seq_dist_greater_than=10,
+                                         len_low=1,
+                                         len_high=7):
+    """
+    Gets 2d mask + 1d is motif for multiple triple contacts. 
+    """
+    
+    contacts = get_contacts(xyz, xyz_less_than, seq_dist_greater_than)
+
+    if not contacts.any():
+        print('returning simple diffusion mask')
+        return _get_diffusion_mask_chunked(xyz, low_prop, high_prop, max_motif_chunks=6)
+
+    is_motif_stack = []
+    mask_2d_stack = []
+    for i in range(n_triples): 
+        indices = find_third_contact(contacts)
+        if indices is None:
+            print('returning simple diffusion mask')
+            return _get_diffusion_mask_chunked(xyz, low_prop, high_prop, max_motif_chunks=6)
+        L = xyz.shape[0]
+        # 1d tensor describing which residues are motif
+        tmp_is_motif = sample_around_contact(L, indices, len_low, len_high)
+        # now get the 2d tensor describing which residues can see each other
+        # For these, all motif chunks can see each other
+        tmp_mask_2d = tmp_is_motif[:, None] * tmp_is_motif[None, :]
+
+        is_motif_stack.append(tmp_is_motif)
+        mask_2d_stack.append(tmp_mask_2d)
+
+    is_motif = torch.stack(is_motif_stack, dim=0).bool()
+    mask_2d = torch.stack(mask_2d_stack, dim=0).bool()
+
+    is_motif = torch.any(is_motif, dim=0)
+    mask_2d = torch.any(mask_2d, dim=0)
+
+    return mask_2d, is_motif
+
+
+
 
 def get_triple_contact_3template(indep, 
                                  atom_mask, 
@@ -570,6 +615,22 @@ def get_triple_contact_3template(indep,
     """
     assert indep.is_sm.sum() == 0, 'small molecules not yet supported'
     mask2d, is_motif = _get_triple_contact_3template(indep.xyz, low_prop, high_prop)
+
+    # spoofing a return of two items: "diffusion_mask, is_atom_motif"
+    return (mask2d, is_motif), None
+
+
+def get_multi_triple_contact_3template(indep,
+                                        atom_mask,
+                                        low_prop,
+                                        high_prop,
+                                        broken_prop,
+                                        n_triples=2):
+    """
+    Get multiple triple contacts
+    """
+    assert indep.is_sm.sum() == 0, 'small molecules not yet supported'
+    mask2d, is_motif = _get_multi_triple_contact_3template(indep.xyz, low_prop, high_prop, n_triples=n_triples)
 
     # spoofing a return of two items: "diffusion_mask, is_atom_motif"
     return (mask2d, is_motif), None
