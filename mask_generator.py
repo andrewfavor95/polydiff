@@ -749,9 +749,14 @@ def _get_sm_contact_3template(xyz,
         cur_min_seq_dist = min_seq_dist # could possibly increment this if needed 
 
         for i in range(n_chunk_revealed):
-        
+            print('on chunk ',i) 
             chunk_size = torch.randint(chunk_size_min, chunk_size_max, size=(1,)).item()
-            chosen_idx = random.choice(where_is_contacting)
+
+            #chosen_idx = random.choice(where_is_contacting.tolist())
+            p = torch.ones_like(where_is_contacting)/len(where_is_contacting)
+            chosen_idx = p.multinomial(num_samples=1, replacement=False)
+            chosen_idx = chosen_idx.item()
+            chosen_idx = where_is_contacting[chosen_idx]
 
             # find min and max indices for revealed chunk
             min_index = max(0, chosen_idx - chunk_size//2)
@@ -763,8 +768,12 @@ def _get_sm_contact_3template(xyz,
             start = max(0,min_index-cur_min_seq_dist)
             end = min(protein_is_contacting.numel(), max_index+cur_min_seq_dist)
             protein_is_contacting[start:end] = False # remove this option from where_is_contacting 
+            
             where_is_contacting = protein_is_contacting.nonzero().squeeze()
-
+            if len(where_is_contacting.shape) == 0:
+                # ensures where_is_contacting is a 1d tensor
+                where_is_contacting = where_is_contacting.unsqueeze(0)
+            
             if protein_is_contacting.sum() == 0:
                 break # can't make any more chunks
 
