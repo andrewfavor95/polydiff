@@ -800,6 +800,7 @@ def pop_mask(indep, pop):
 
     indep.seq           = indep.seq[pop]
     indep.xyz           = indep.xyz[pop]
+    indep.xyz2          = indep.xyz2[pop]
     indep.idx           = indep.idx[pop]
     indep.bond_feats    = indep.bond_feats[pop2d].reshape(N,N)
     indep.same_chain    = indep.same_chain[pop2d].reshape(N,N)
@@ -1352,7 +1353,12 @@ class AtomizeResidues:
         return self.indep, self.input_str_mask, self.input_seq_mask
 
 GP_BOND = 7
-def transform_indep(indep, is_res_str_shown, is_atom_str_shown, use_guideposts, guidepost_placement='anywhere'):
+def transform_indep(indep, 
+                    is_res_str_shown, 
+                    is_atom_str_shown, 
+                    use_guideposts, 
+                    guidepost_placement='anywhere'):
+    
     indep = copy.deepcopy(indep)
     use_atomize = is_atom_str_shown is not None and len(is_atom_str_shown) > 0
     is_diffused = is_masked_seq = ~is_res_str_shown

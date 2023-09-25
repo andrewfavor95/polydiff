@@ -96,14 +96,14 @@ def mask_sequence_chunks(is_masked, p=0.5):
 
     revealed_indices = find_contiguous_true_indices(is_revealed)
 
-    print('revealed indices are: ', revealed_indices)
+    # print('revealed indices are: ', revealed_indices)
     for start,stop in revealed_indices:
 
         if np.random.rand() < p:
             n_mask      = np.random.randint(1, stop - start+1)             # how many within here to mask? 
             mask_start  = np.random.randint(start, stop - n_mask+1)
             mask_stop   = mask_start + n_mask
-            print('masking from ', mask_start, ' to ', mask_stop, ' out of ', start, ' to ', stop)
+            # print('masking from ', mask_start, ' to ', mask_stop, ' out of ', start, ' to ', stop)
             is_masked[mask_start:mask_stop+1] = True # mask it 
     
     return is_masked

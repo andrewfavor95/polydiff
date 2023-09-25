@@ -492,10 +492,11 @@ class Trainer():
 
 
         # convert to axis angle representation and calculate axis-angle loss 
-        axis_angle_pred = rot_conv.matrix_to_axis_angle(R_pred)
-        axis_angle_true = rot_conv.matrix_to_axis_angle(R_true)
-        ax_ang_loss = axis_angle_loss(axis_angle_pred, axis_angle_true)
-        
+        # axis_angle_pred = rot_conv.matrix_to_axis_angle(R_pred)
+        # axis_angle_true = rot_conv.matrix_to_axis_angle(R_true)
+        # ax_ang_loss = axis_angle_loss(axis_angle_pred, axis_angle_true)
+        ax_ang_loss = 0 
+        assert w_ax_ang == 0.0, 'Axis angle loss turned off by DJ'
         # append to dictionary  
         loss_dict['axis_angle'] = ax_ang_loss
 
@@ -533,6 +534,7 @@ class Trainer():
         loss_weights['motif_rmsd']      = 0.0
         loss_weights['non_motif_rmsd']  = 0.0
         
+        
         # dj - str loss timestep scheduling: 
         # scale w_all to keep the contributions of BB/ALLatom fape summing to 1.0
         loss_s.append(str_loss)
@@ -541,10 +543,18 @@ class Trainer():
         loss_dict['motif_fape'] = tot_motif_fape
         loss_dict['nonmotif_fape'] = tot_nonmotif_fape
 
-
         for k, loss in loss_dict.items():
-            weight = loss_weights[k]
-            tot_loss += loss*weight
+
+            if 'motif_rmsd' not in k:
+                weight = loss_weights[k]
+                tot_loss += loss*weight
+            else: 
+                if is_protein_motif.any():
+                    weight = loss_weights[k]
+                    tot_loss += loss*weight
+                else:
+                    # no motif, rmsd will be nan --> don't add to loss
+                    pass
 
 
         # tot_loss += 0.0 * (pred_tors.mean() + pred_lddt.mean())
@@ -1132,7 +1142,12 @@ class Trainer():
                 if DEBUG:
                     # torch.save(rfi_t, 'rfi_t_bugfixed.pt')
                     # sys.exit('exiting early')
-                    pass 
+                    # rfo_dict = dataclasses.asdict(rfo)
+                    # for k,v in rfo_dict.items():
+                    #     if torch.is_tensor(v):
+                    #         ic(k, torch.isnan(v).sum())
+                    # sys.exit('debugging')
+                    pass
 
                 with ExitStack() as stack:
                     if counter%self.ACCUM_STEP != 0:

@@ -562,7 +562,7 @@ def _get_triple_contact_3template(xyz,
 def _get_multi_triple_contact_3template(xyz,
                                          low_prop,
                                          high_prop,
-                                         n_triples=2,
+                                         max_triples=2,
                                          xyz_less_than=6,
                                          seq_dist_greater_than=10,
                                          len_low=1,
@@ -574,15 +574,16 @@ def _get_multi_triple_contact_3template(xyz,
     contacts = get_contacts(xyz, xyz_less_than, seq_dist_greater_than)
 
     if not contacts.any():
-        print('returning simple diffusion mask')
+        print('***returning simple diffusion mask')
         return _get_diffusion_mask_chunked(xyz, low_prop, high_prop, max_motif_chunks=6)
 
     is_motif_stack = []
     mask_2d_stack = []
+    n_triples = random.randint(1, max_triples)
     for i in range(n_triples): 
         indices = find_third_contact(contacts)
         if indices is None:
-            print('returning simple diffusion mask')
+            print('***returning simple diffusion mask')
             return _get_diffusion_mask_chunked(xyz, low_prop, high_prop, max_motif_chunks=6)
         L = xyz.shape[0]
         # 1d tensor describing which residues are motif
@@ -625,12 +626,12 @@ def get_multi_triple_contact_3template(indep,
                                         low_prop,
                                         high_prop,
                                         broken_prop,
-                                        n_triples=2):
+                                        max_triples=2):
     """
     Get multiple triple contacts
     """
     assert indep.is_sm.sum() == 0, 'small molecules not yet supported'
-    mask2d, is_motif = _get_multi_triple_contact_3template(indep.xyz, low_prop, high_prop, n_triples=n_triples)
+    mask2d, is_motif = _get_multi_triple_contact_3template(indep.xyz, low_prop, high_prop, max_triples=max_triples)
 
     # spoofing a return of two items: "diffusion_mask, is_atom_motif"
     return (mask2d, is_motif), None
@@ -714,6 +715,90 @@ sm_mask_fallback = {
     get_closest_tip_atoms: get_tip_gaussian_mask
 }
 
+
+def _get_sm_contact_3template(xyz, 
+                              is_sm, 
+                              low_prop, 
+                              high_prop, 
+                              contact_cut=8,
+                              chunk_size_min=1,
+                              chunk_size_max=7,
+                              min_seq_dist=9): 
+    """
+    Produces mask2d and is_motif for small molecule, possibly with contacting protein chunks
+    """
+    assert len(xyz.shape) == 3
+    ca      = xyz[~is_sm, 1,:]
+    sm_xyz  = xyz[is_sm, 1,:]
+
+    dmap = torch.cdist(ca, sm_xyz)
+    dmap = dmap < contact_cut   
+    protein_is_contacting = dmap.any(dim=-1) # which CA's are contacting sm 
+    where_is_contacting = protein_is_contacting.nonzero().squeeze()
+
+    
+    n_chunk_revealed = random.randint(0,4)
+
+    if n_chunk_revealed == 0:
+        is_motif = is_sm.clone()
+        is_motif_2d = is_motif[:, None] * is_motif[None, :]
+        return is_motif_2d, is_motif
+    
+    else: 
+        is_motif = is_sm.clone()
+        cur_min_seq_dist = min_seq_dist # could possibly increment this if needed 
+
+        for i in range(n_chunk_revealed):
+        
+            chunk_size = torch.randint(chunk_size_min, chunk_size_max, size=(1,)).item()
+            chosen_idx = random.choice(where_is_contacting)
+
+            # find min and max indices for revealed chunk
+            min_index = max(0, chosen_idx - chunk_size//2)
+            max_index = min(protein_is_contacting.numel(), 1+chosen_idx + chunk_size//2)
+            # reveal chunk 
+            is_motif[min_index:max_index] = True
+
+            # update where_is_contacting
+            start = max(0,min_index-cur_min_seq_dist)
+            end = min(protein_is_contacting.numel(), max_index+cur_min_seq_dist)
+            protein_is_contacting[start:end] = False # remove this option from where_is_contacting 
+            where_is_contacting = protein_is_contacting.nonzero().squeeze()
+
+            if protein_is_contacting.sum() == 0:
+                break # can't make any more chunks
+
+        
+        is_motif_2d = is_motif[:, None] * is_motif[None, :]
+
+        return is_motif_2d, is_motif
+    
+
+def get_unconditional_3template(indep, atom_mask, low_prop, high_prop, broken_prop):
+    """
+    Unconditional protein generation task. Nothing is motif. 
+    """
+    L = indep.length()
+    is_motif = torch.zeros(L).bool()
+    is_motif_2d = is_motif[:, None] * is_motif[None, :]
+
+    return (is_motif_2d, is_motif), None
+
+
+def get_sm_contact_mask(indep, 
+                        atom_mask, 
+                        low_prop, 
+                        high_prop, 
+                        broken_prop):
+    """
+    Gets a small molecule contact mask. Either SM alone, SM+1protein chunk, or SM+2protein chunks
+    """
+    indep.write_pdb('check_indep_sm.pdb')
+    mask2d, is_motif = _get_sm_contact_3template(indep.xyz, indep.is_sm, low_prop, high_prop)
+
+    return (mask2d, is_motif), None
+
+
 def get_diffusion_mask(
         indep, atom_mask, low_prop, high_prop, broken_prop,
         diff_mask_probs):
@@ -724,8 +809,13 @@ def get_diffusion_mask(
     get_mask = np.random.choice(masks, p=props)
 
     # Use fallback mask if no small molecule present.
-    if not indep.is_sm.any():
-        get_mask = sm_mask_fallback.get(get_mask, get_mask)
+    # if not indep.is_sm.any():
+    #     get_mask = sm_mask_fallback.get(get_mask, get_mask)
+
+
+    # sm_compatable masks only
+    if indep.is_sm.any(): 
+        get_mask = get_sm_contact_mask
     
     return get_mask(indep, atom_mask, low_prop=low_prop, high_prop=high_prop, broken_prop=broken_prop)
 
@@ -1025,7 +1115,7 @@ def generate_masks(indep, task, loader_params, chosen_dataset, full_chain=None, 
             # this means a mask generator which is aware of 3template diffusion was used 
             assert (len(diffusion_mask) == 2) and (type(diffusion_mask) == tuple)
             (t2d_is_revealed, diffusion_mask) = diffusion_mask 
-        
+
         # ic(diffusion_mask)
         # ic(is_atom_motif)
         # sys.exit('Exiting early for debugging')
@@ -1039,7 +1129,7 @@ def generate_masks(indep, task, loader_params, chosen_dataset, full_chain=None, 
 
         ## loss masks 
         loss_seq_mask[diffusion_mask] = False  # Dont score where diffusion mask is True (i.e., where things are not diffused)
-
+    
     elif task == 'diff' and chosen_dataset == 'complex':
         '''
         Diffusion task for complexes. Default is to diffuse the whole of the complete chain.

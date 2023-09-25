@@ -26,6 +26,7 @@ from rf2aa.tensor_util import assert_equal
 import rf2aa.kinematics
 import rf2aa.chemical
 import guide_posts as gp
+import dataclasses
 
 import matplotlib.pyplot as plt 
 
@@ -1662,6 +1663,7 @@ class DistilledDataset(data.Dataset):
                         {**rf2aa.data_loader.default_dataloader_params, **self.params, "P_ATOMIZE_MODRES": -1}, num_protein_chains=1, num_ligand_chains=1, 
                         fixbb=fixbb,
                     )
+
                 except Exception as e:
                     print(f'WARNING: hit exception {str(e)} on item {item_context}')
                     out = self.fallback_out()
@@ -1688,9 +1690,13 @@ class DistilledDataset(data.Dataset):
             if is_atom_str_shown:
                 is_atom_str_shown = {res_i.item():v for res_i, v in is_atom_str_shown.items()}
 
-            indep, is_diffused, is_masked_seq, atomizer, _ = aa_model.transform_indep(indep, is_res_str_shown, is_atom_str_shown, self.params['USE_GUIDE_POSTS'])
+            indep, is_diffused, is_masked_seq, atomizer, _ = aa_model.transform_indep(indep, 
+                                                                                      is_res_str_shown, 
+                                                                                      is_atom_str_shown, 
+                                                                                      self.params['USE_GUIDE_POSTS'])
 
             run_inference.seed_all(mask_gen_seed) # Reseed the RNGs for test stability.
+
 
             # fig, ax = plt.subplots(1,3, figsize=(12,5))
             # Ltmp = is_res_str_shown.shape[0]
@@ -1721,8 +1727,7 @@ class DistilledDataset(data.Dataset):
                 old_is_diffused = is_diffused.clone()
                 is_protein_motif = ~old_is_diffused * ~indep.is_sm
 
-                new_is_diffused = torch.zeros_like(is_diffused).bool() 
-                new_is_diffused[~indep.is_sm] = True # diffusion over all protein, no SM diffusion 
+                new_is_diffused = torch.ones_like(is_diffused).bool() # diffuse over all tokens
                 is_diffused = new_is_diffused
             else:
                 is_protein_motif = None # prepro handles none case as normal task    
@@ -1751,6 +1756,9 @@ class DistilledDataset(data.Dataset):
                     is_masked_seq = torch.from_numpy(is_masked_seq)
                     is_masked_seq = is_masked_seq.to(dtype=orig_dtype)
 
+                    # ensure no sm atoms are masked in sequence 
+                    is_masked_seq[indep.is_sm] = False
+
                 aa_model.mask_indep(indep_diffused, is_masked_seq)
 
                 # prepare RF inputs 
@@ -1764,6 +1772,17 @@ class DistilledDataset(data.Dataset):
                     assert torch.mean(rfi.xyz[:,~is_diffused,1] - indep.xyz[None,~is_diffused,1]) < 0.001
 
             run_inference.seed_all(mask_gen_seed) # Reseed the RNGs for test stability.
+            
+            # assert not nans in rfis 
+            for i,rfi_dict in enumerate(rfi_tp1_t):
+                rfi_dict = dataclasses.asdict(rfi_dict)
+                for k,v in rfi_dict.items():
+                    if torch.is_tensor(v):
+                        if 'xyz' not in k:
+                            assert not torch.isnan(v).any(), f'nan in {k}'
+                        else: 
+                            assert not torch.isnan(v.squeeze()[:,1:2,:]).any(), f'nan in {k}'
+            
             return indep, rfi_tp1_t, chosen_dataset, sel_item, t, is_diffused, task, atomizer, masks_1d, item_context
 
 
