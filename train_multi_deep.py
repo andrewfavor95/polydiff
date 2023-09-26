@@ -830,7 +830,7 @@ class Trainer():
                 id=self.resume
                 resume='must'
             wandb.init(
-                    project="multi-scaffold",
+                    project="motif_scaffold_na",
                     entity="bakerlab", 
                     name=name,
                     id=id,

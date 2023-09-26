@@ -21,14 +21,13 @@ import sys
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'RF2-allatom'))
 import rf2aa.data_loader
 import rf2aa.util
-from rf2aa.util import idx_from_Ls, same_chain_2d_from_Ls, bond_feats_from_Ls
 import rf2aa.tensor_util
 from rf2aa.tensor_util import assert_equal
 import rf2aa.kinematics
 import rf2aa.chemical
 import guide_posts as gp
-from rf2aa.chemical import INIT_CRDS, INIT_NA_CRDS, NAATOKENS, MASKINDEX, UNKINDEX, \
-    NTOTAL, NBTYPES, CHAIN_GAP, num2aa, METAL_RES_NAMES, aa2num, atomnum2atomtype
+
+import matplotlib.pyplot as plt 
 
 # for diffusion training
 import mask_generator
@@ -37,16 +36,16 @@ import pickle
 import random
 from apply_masks import mask_inputs
 import util
+from util import mask_sequence_chunks
 import math
 from functools import partial
 import pandas as pd
 
-# import run_inference
+import run_inference
 import aa_model
 import atomize
 import error
 
-from hotspots import make_hotspot_id, make_hotspot_vector, default_hotspot_vector, make_hotspot_id_distil
 
 USE_DEFAULT = '__USE_DEFAULT__'
 
@@ -73,7 +72,6 @@ def set_data_loader_params(args):
         "PDB_LIST"   : "%s/list_v02.csv"%base_dir,
         #"PDB_LIST"    : "/gscratch2/list_2021AUG02.csv",
         "FB_LIST"    : "%s/list_b1-3.csv"%fb_dir,
-        "DNA_DISTIL_LIST"  : "/projects/ml/prot_dna/prot_na_distill.csv",
         "VAL_PDB"    : "%s/val/xaa"%base_dir,
         #"VAL_PDB"   : "/gscratch2/PDB_val/xaa",
         "VAL_COMPL"  : "%s/val_lists/xaa"%compl_dir,
@@ -94,7 +92,6 @@ def set_data_loader_params(args):
         "CN_DIR"     : cn_dir,
         "CN_DICT"    : os.path.join(cn_dir, 'cn_ideal_train_test.pt'),
         "COMPL_DIR"  : compl_dir,
-        "TF_DIR"     : "/projects/ml/prot_dna",
         "MINTPLT" : 0,
         "MAXTPLT" : 5,
         "MINSEQ"  : 1,
@@ -121,7 +118,7 @@ def set_data_loader_params(args):
         "FLANK_LOW" : 3,
         "STR2SEQ_FULL_LOW" : 0.9,
         "STR2SEQ_FULL_HIGH" : 1.0,
-        "MAX_LENGTH" : 256,
+        "MAX_LENGTH" : 260,
         "MAX_COMPLEX_CHAIN" : 200,
         "TASK_NAMES" : ['seq2str'],
         "TASK_P" : [1.0],
@@ -130,18 +127,13 @@ def set_data_loader_params(args):
         "DIFF_MASK_HIGH":args.diff_mask_high,
         "DATASETS":args.dataset,
         "DATASET_PROB":args.dataset_prob,
-        "P_UNCOND":args.p_uncond,
-        "P_FREE":args.p_free,
         "MASK_MIN_PROPORTION":args.mask_min_proportion,
         "MASK_MAX_PROPORTION":args.mask_max_proportion,
         "MASK_BROKEN_PROPORTION":args.mask_broken_proportion,
         "SPOOF_ITEM":args.spoof_item,
-        "MOL_DIR":rf2aa.data_loader.default_dataloader_params['MOL_DIR'], # Check this
+        "MOL_DIR":rf2aa.data_loader.default_dataloader_params['MOL_DIR'],
         "DISCONTIGUOUS_CROP": True,
-        "USE_GUIDE_POSTS": args.use_guide_posts,
-        'BINDING_DISTANCE_CUTOFF':None,
-        "BACKBONE_HOTSPOTS": False,
-        "BASE_SPECIFIC_HOTSPOTS": False
+        "USE_GUIDE_POSTS": args.use_guide_posts
     }
     for param in PARAMS:
         if hasattr(args, param.lower()):
@@ -1368,501 +1360,6 @@ def loader_complex_fixbb(item, L_s, taxID, assem, params, negative=False, pick_t
            xyz_t.float(), f1d_t.float(), xyz_prev.float(), \
            chain_idx, False, False, complete_chain, mask #complete chain is [chainA or B, length of first chain]
 
-def find_complementary_base(seq, xyz, index):
-    # A: N1 close to N3 on T -> seq = 22, atom = 15, seq = 25, atom = 14
-    # T: N3 close to N1 on A -> seq = 25, atom = 14, seq = 22, atom = 15
-    # G: N1 close to N3 on C -> seq = 24, atom = 15, seq = 23, atom = 14
-    # C: N3 close to N1 on G -> seq = 23, atom = 14, seq = 24, atom = 15
-
-    if seq[index] == 22: # A
-        target = xyz[index:index+1, 15]
-        candidates = xyz[:, 14]
-        distances = torch.cdist(target, candidates).flatten()
-        distances[seq != 25] = 999999
-        distances[distances == 0] = 999999
-        complementary_base_index = distances.argmin()
-    
-    elif seq[index] == 25: # T
-        target = xyz[index:index+1, 14]
-        candidates = xyz[:, 15]
-        distances = torch.cdist(target, candidates).flatten()
-        distances[seq != 22] = 999999
-        distances[distances == 0] = 999999
-        complementary_base_index = distances.argmin()
-
-    elif seq[index] == 24: # G
-        target = xyz[index:index+1, 15]
-        candidates = xyz[:, 14]
-        distances = torch.cdist(target, candidates).flatten()
-        distances[seq != 23] = 999999
-        distances[distances == 0] = 999999
-        complementary_base_index = distances.argmin()
-    
-    elif seq[index] == 23: # C
-        target = xyz[index:index+1, 14]
-        candidates = xyz[:, 15]
-        distances = torch.cdist(target, candidates).flatten()
-        distances[seq != 24] = 999999
-        distances[distances == 0] = 999999
-        complementary_base_index = distances.argmin()
-    
-    else:
-        complementary_base_index = 'failed' # shouldn't use this base
-    
-    return complementary_base_index
-
-
-def na_motif_preserving_crop(seq, xyz, na_contacts, prot_contacts, Ls, cropsize):
-    selection = np.random.randint(len(na_contacts))
-    na_contact_ind = na_contacts[selection]
-    prot_contact_ind = prot_contacts[selection]
-
-    if len(Ls) == 3:
-        complementary_base_index = find_complementary_base(seq, xyz, na_contact_ind)
-
-    if len(Ls) == 3 and complementary_base_index != 'failed':            
-        # determine complementarity direction
-        complementarity_direction = dna_complementarity_direction(seq, xyz, Ls)
-    
-        if na_contact_ind < Ls[0] + Ls[1]:
-            right_na_expand = np.random.randint(min(10, (Ls[0] + Ls[1]) - na_contact_ind), min(20, (Ls[0] + Ls[1]) - na_contact_ind) + 1)
-            left_na_expand = np.random.randint(min(10, na_contact_ind - Ls[0]), min(20, na_contact_ind - Ls[0]) + 1)
-        else:
-            right_na_expand = np.random.randint(min(10, (Ls[0] + Ls[1] + Ls[2]) - na_contact_ind), min(20, (Ls[0] + Ls[1] + Ls[2]) - na_contact_ind) + 1)
-            left_na_expand = np.random.randint(min(10, na_contact_ind - (Ls[0] + Ls[1])), min(20, na_contact_ind - (Ls[0] + Ls[1])) + 1)
-
-        na_start_one = na_contact_ind - left_na_expand
-        na_end_one = na_contact_ind + right_na_expand
-
-        if complementarity_direction == 'same':
-            na_start_two = complementary_base_index - left_na_expand
-            na_end_two = complementary_base_index + right_na_expand
-        else:
-            na_start_two = complementary_base_index - right_na_expand
-            na_end_two = complementary_base_index + left_na_expand
-
-        cropsize_left_for_protein = cropsize - (2 * (na_end_one - na_start_one))
-        prot_crop_start = np.random.randint(max(0, prot_contact_ind - (cropsize_left_for_protein - 50)), max(1, prot_contact_ind - 50))
-        prot_crop_end = min(prot_crop_start + cropsize_left_for_protein, Ls[0])
-        
-        crop = torch.zeros(sum(Ls))
-        crop[na_start_one:na_end_one] = 1
-        crop[na_start_two:na_end_two] = 1
-        crop[prot_crop_start:prot_crop_end] = 1
-
-    elif len(Ls) == 2 or complementary_base_index == 'failed':
-        left_na_expand = np.random.randint(min(10, na_contact_ind - Ls[1]), min(20, na_contact_ind - Ls[1]) + 1)
-        right_na_expand = np.random.randint(min(10, (Ls[0] + Ls[1]) - na_contact_ind), min(20, (Ls[0] + Ls[1]) - na_contact_ind) + 1)
-        na_start_one = na_contact_ind - left_na_expand
-        na_end_one = na_contact_ind + right_na_expand
-        cropsize_left_for_protein = cropsize - (na_end_one - na_start_one)
-        prot_crop_start = np.random.randint(max(0, prot_contact_ind - (cropsize_left_for_protein - 50)), max(1, prot_contact_ind - 50))
-        prot_crop_end = min(prot_crop_start + cropsize_left_for_protein, Ls[0])
-
-        crop = torch.zeros(sum(Ls))
-        crop[na_start_one:na_end_one] = 1
-        crop[prot_crop_start:prot_crop_end] = 1
-
-    
-    return crop.bool()
-
-def na_motif_preserving_tight_crop(seq, xyz, na_contacts, prot_contacts, Ls, cropsize):
-    selection = np.random.randint(len(na_contacts))
-    na_contact_ind = na_contacts[selection]
-    prot_contact_ind = prot_contacts[selection]
-
-    if len(Ls) == 3:
-        complementary_base_index = find_complementary_base(seq, xyz, na_contact_ind)
-
-    if len(Ls) == 3 and complementary_base_index != 'failed':            
-        # determine complementarity direction
-        complementarity_direction = dna_complementarity_direction(seq, xyz, Ls)
-    
-        if na_contact_ind < Ls[0] + Ls[1]:
-            right_na_expand = np.random.randint(min(10, (Ls[0] + Ls[1]) - na_contact_ind), min(20, (Ls[0] + Ls[1]) - na_contact_ind) + 1)
-            left_na_expand = np.random.randint(min(10, na_contact_ind - Ls[0]), min(20, na_contact_ind - Ls[0]) + 1)
-        else:
-            right_na_expand = np.random.randint(min(10, (Ls[0] + Ls[1] + Ls[2]) - na_contact_ind), min(20, (Ls[0] + Ls[1] + Ls[2]) - na_contact_ind) + 1)
-            left_na_expand = np.random.randint(min(10, na_contact_ind - (Ls[0] + Ls[1])), min(20, na_contact_ind - (Ls[0] + Ls[1])) + 1)
-
-        na_start_one = na_contact_ind - left_na_expand
-        na_end_one = na_contact_ind + right_na_expand
-
-        if complementarity_direction == 'same':
-            na_start_two = complementary_base_index - left_na_expand
-            na_end_two = complementary_base_index + right_na_expand
-        else:
-            na_start_two = complementary_base_index - right_na_expand
-            na_end_two = complementary_base_index + left_na_expand
-
-        prot_crop_left = np.random.randint(15, 45)
-        prot_crop_right = np.random.randint(15, 45)
-        prot_crop_start = max(0, prot_contact_ind - prot_crop_left)
-        prot_crop_end = min(Ls[0], prot_contact_ind + prot_crop_right)
-        
-        crop = torch.zeros(sum(Ls))
-        crop[na_start_one:na_end_one] = 1
-        crop[na_start_two:na_end_two] = 1
-        crop[prot_crop_start:prot_crop_end] = 1
-
-    elif len(Ls) == 2 or complementary_base_index == 'failed':
-        left_na_expand = np.random.randint(min(10, na_contact_ind - Ls[1]), min(20, na_contact_ind - Ls[1]) + 1)
-        right_na_expand = np.random.randint(min(10, (Ls[0] + Ls[1]) - na_contact_ind), min(20, (Ls[0] + Ls[1]) - na_contact_ind) + 1)
-        na_start_one = na_contact_ind - left_na_expand
-        na_end_one = na_contact_ind + right_na_expand
-        prot_crop_left = np.random.randint(15, 45)
-        prot_crop_right = np.random.randint(15, 45)
-        prot_crop_start = max(0, prot_contact_ind - prot_crop_left)
-        prot_crop_end = min(Ls[0], prot_contact_ind + prot_crop_right)
-
-        crop = torch.zeros(sum(Ls))
-        crop[na_start_one:na_end_one] = 1
-        crop[prot_crop_start:prot_crop_end] = 1
-
-    
-    return crop.bool()
-
-
-# we can assume first L will always be protein, remaining Ls will be DNA
-def contacting_dna_protein_residues(xyz, Ls, closest_k=6):
-    is_nucleic_acid = torch.cat([torch.zeros(Ls[0])] + [torch.ones(L) for L in Ls[1:]]).bool()
-    
-    # na_seq = seq[is_nucleic_acid]
-    na_coords = xyz[is_nucleic_acid, 18] # C5 on C, N7 on A, N7 on G, C7 on T - should be fine
-    prot_coords = xyz[~is_nucleic_acid, 1] # Ca
-
-    distances = torch.cdist(na_coords, prot_coords)
-    distances[distances == 0] = 9999999999 # spoofing
-
-    smallest_indices = torch.topk(distances.view(-1), k=closest_k, largest=False).indices
-    smallest_indices = np.unravel_index(smallest_indices.numpy(), distances.shape)
-    na_contacts = smallest_indices[0]
-    prot_contacts = smallest_indices[1]
-    
-    return na_contacts + Ls[0], prot_contacts
-
-
-base_complement = {
-    22: 25,
-    25: 22,
-    24: 23,
-    23: 24,
-    26: 26
-}
-
-def similar(seq_one, seq_two, thresh=0.9):
-    comp = seq_one == seq_two
-    return (sum(comp) / len(comp) > thresh).item()
-
-
-def dna_complementarity_direction(seq, xyz, Ls): # TODO better way is to match the substring
-    assert len(Ls) == 3
-    na_one_start = Ls[0]
-    na_two_start = Ls[0] + Ls[1]
-    seq_one = seq[na_one_start:na_two_start]
-    seq_two = seq[na_two_start:]
-    seq_one_complement = torch.tensor([base_complement[res.item()] for res in seq_one])
-
-    if len(seq_one) != len(seq_two):
-        return 'reverse' # defaulting to reverse
-    
-    flip = seq_two.flip(0)
-    
-    if similar(seq_one_complement, flip) or similar(seq_one_complement[1:], flip[:-1]) or similar(seq_one_complement[:-1], flip[1:]):
-        return 'reverse'
-    if similar(seq_one_complement, seq_two) or similar(seq_one_complement[1:], seq_two[:-1]) or similar(seq_one_complement[:-1], seq_two[1:]):
-        return 'same'
-    else: # failed to find complementarity
-        return 'reverse'
-    
-
-def loader_na_complex_diff(item, params, native_NA_frac=0.25, negative=False, pick_top=True, random_noise=5.0, fixbb=False):
-    pdb_set = item['CHAINID']
-    msa_id = item['HASH']
-    Ls = item['LEN']
-
-    ## HACK to work like the old dataloader. If/when frank introduces updates, go with those updates
-    pdb_ids = pdb_set.split(':')
-    if len(pdb_ids) == 4:
-        pdb_ids = pdb_ids[0:1] + pdb_ids[2:]
-        Ls = Ls[0:1] + Ls[2:]
-
-
-    # read MSA for protein
-    a3mA = rf2aa.data_loader.get_msa(params['PDB_DIR'] + '/a3m/' + msa_id[:3] + '/' + msa_id + '.a3m.gz', msa_id)
-
-    # read PDBs
-    # pdb_ids = pdb_set.split(':')
-    pdbA = torch.load(params['PDB_DIR']+'/torch/pdb/'+pdb_ids[0][1:3]+'/'+pdb_ids[0]+'.pt')
-    pdbB = torch.load(params['NA_DIR']+'/torch/'+pdb_ids[1][1:3]+'/'+pdb_ids[1]+'.pt')
-    pdbC = None
-    if (len(pdb_ids)==3):
-        pdbC = torch.load(params['NA_DIR']+'/torch/'+pdb_ids[2][1:3]+'/'+pdb_ids[2]+'.pt')
-
-    # msa for NA is sequence only
-    msaB,insB = rf2aa.data_loader.parse_fasta_if_exists(
-        pdbB['seq'], params['NA_DIR']+'/torch/'+pdb_ids[1][1:3]+'/'+pdb_ids[1]+'.afa', 
-        maxseq=5000,
-        rmsa_alphabet=True
-    )
-    a3mB = {'msa':torch.from_numpy(msaB), 'ins':torch.from_numpy(insB)}
-    NMDLS=1
-    if (len(pdb_ids)==3):
-        msaC,insC = rf2aa.data_loader.parse_fasta_if_exists(
-            pdbC['seq'], params['NA_DIR']+'/torch/'+pdb_ids[2][1:3]+'/'+pdb_ids[2]+'.afa', 
-            maxseq=5000,
-            rmsa_alphabet=True
-        )
-        a3mC = {'msa':torch.from_numpy(msaC), 'ins':torch.from_numpy(insC)}
-        a3mB = rf2aa.data_loader.merge_a3m_hetero(a3mB, a3mC, Ls[1:])
-        # if (pdbB['seq']==pdbC['seq']):
-            # NMDLS=2 # flip B and C
-    a3m = rf2aa.data_loader.merge_a3m_hetero(a3mA, a3mB, [Ls[0],sum(Ls[1:])])
-
-    # note: the block below is due to differences in the way RNA and DNA structures are processed
-    # to support NMR, RNA structs return multiple states
-    # For protein/NA complexes get rid of the 'NMODEL' dimension (if present)
-    # NOTE there are a very small number of protein/NA NMR models:
-    #       - ideally these should return the ensemble, but that requires reprocessing of PDBs
-    if (len(pdbB['xyz'].shape) > 3):
-         pdbB['xyz'] = pdbB['xyz'][0,...]
-         pdbB['mask'] = pdbB['mask'][0,...]
-    if (pdbC is not None and len(pdbC['xyz'].shape) > 3):
-         pdbC['xyz'] = pdbC['xyz'][0,...]
-         pdbC['mask'] = pdbC['mask'][0,...]
-
-    # read template info
-    tpltA = torch.load(params['PDB_DIR'] + '/torch/hhr/' + msa_id[:3] + '/' + msa_id + '.pt')
-    ntempl = np.random.randint(params['MINTPLT'], params['MAXTPLT']-1)
-    xyz_t, f1d_t, mask_t = rf2aa.data_loader.TemplFeaturize(tpltA, sum(Ls), params, offset=0, npick=ntempl, pick_top=pick_top, random_noise=random_noise) 
-    xyz_t[:,Ls[0]:] = INIT_NA_CRDS.reshape(1,1,NTOTAL,3).repeat(1,sum(Ls[1:]),1,1) + torch.rand(1,sum(Ls[1:]),1,3)*random_noise - random_noise/2
-
-    if (np.random.rand()<=native_NA_frac):
-        natNA_templ = pdbB['xyz']
-        maskNA_templ = pdbB['mask']
-
-        if pdbC is not None:
-            natNA_templ = torch.cat((pdbB['xyz'], pdbC['xyz']), dim=0)
-            maskNA_templ =  torch.cat((pdbB['mask'], pdbC['mask']), dim=0)
-
-        # construct template from NA
-        xyz_t_B = INIT_CRDS.reshape(1,1,NTOTAL,3).repeat(1,sum(Ls),1,1) + torch.rand(1,sum(Ls),1,3)*random_noise - random_noise/2
-        #xyz_t_B[:,Ls[0]:,:23] = natNA_templ
-        mask_t_B = torch.full((1,sum(Ls),NTOTAL), False)
-        mask_t_B[:,Ls[0]:,:23] = maskNA_templ
-        xyz_t_B[mask_t_B] = natNA_templ[maskNA_templ]
-
-        seq_t_B = torch.cat( (torch.full((1, Ls[0]), 20).long(),  a3mB['msa'][0:1]), dim=1)
-        seq_t_B[seq_t_B>21] -= 1 # remove mask token
-        f1d_t_B = torch.nn.functional.one_hot(seq_t_B, num_classes=NAATOKENS-1).float()
-        conf_B = torch.cat( (
-            torch.zeros((1,Ls[0],1)),
-            torch.full((1,sum(Ls[1:]),1),1.0),
-        ),dim=1).float()
-        f1d_t_B = torch.cat((f1d_t_B, conf_B), -1)
-
-        xyz_t = torch.cat((xyz_t,xyz_t_B),dim=0)
-        f1d_t = torch.cat((f1d_t,f1d_t_B),dim=0)
-        mask_t = torch.cat((mask_t,mask_t_B),dim=0)
-
-    # get MSA features
-    msa = a3m['msa'].long()
-    ins = a3m['ins'].long()
-    if len(msa) > params['BLOCKCUT']:
-        msa, ins = rf2aa.data_loader.MSABlockDeletion(msa, ins)
-    seq, msa_seed_orig, msa_seed, msa_extra, mask_msa = rf2aa.data_loader.MSAFeaturize(msa, ins, params, L_s=Ls, fixbb=fixbb)
-
-    xyz = torch.full((NMDLS, sum(Ls), NTOTAL, 3), np.nan).float()
-    mask = torch.full((NMDLS, sum(Ls), NTOTAL), False)
-    if (len(pdb_ids)==3):
-        xyz[:,:Ls[0],:14] = pdbA['xyz'][None,...]
-        xyz[0,Ls[0]:,:23] = torch.cat((pdbB['xyz'], pdbC['xyz']), dim=0)
-        mask[:,:Ls[0],:14] = pdbA['mask'][None,...]
-        mask[0,Ls[0]:,:23] = torch.cat((pdbB['mask'], pdbC['mask']), dim=0)
-        if (NMDLS==2): # B & C are identical
-            xyz[1,Ls[0]:,:23] = torch.cat((pdbC['xyz'], pdbB['xyz']), dim=0)
-            mask[1,Ls[0]:,:23] = torch.cat((pdbC['mask'], pdbB['mask']), dim=0)
-    else:
-        xyz[0,:Ls[0],:14] = pdbA['xyz']
-        xyz[0,Ls[0]:,:23] = pdbB['xyz']
-        mask[0,:Ls[0],:14] = pdbA['mask']
-        mask[0,Ls[0]:,:23] = pdbB['mask']
-    xyz = torch.nan_to_num(xyz)
-
-    # other features
-    idx = idx_from_Ls(Ls)
-    same_chain = same_chain_2d_from_Ls(Ls)
-    bond_feats = bond_feats_from_Ls(Ls)
-    ch_label = torch.cat([torch.full((L_,), i) for i,L_ in enumerate(Ls)]).long()
-
-
-    # Do cropping
-    # import pickle
-    # pickle.dump([seq, xyz, mask, Ls, params, negative], open('/home/ptkim/temp/0_pre_crop.pkl', 'wb'))
-
-    # if sum(Ls) > params['CROP']:
-    if True: # always crop!
-        # na_contacts, prot_contacts = contacting_dna_protein_residues(xyz.squeeze(), Ls)
-        na_contacts, prot_contacts = contacting_dna_protein_residues(xyz.squeeze(), Ls, closest_k=2)
-        sel = na_motif_preserving_tight_crop(seq.squeeze(), xyz.squeeze(), na_contacts, prot_contacts, Ls, params['CROP'])
-        # cropref = np.random.randint(xyz.shape[0])
-        # sel = get_na_crop(seq[0], xyz[cropref], mask[cropref], torch.arange(sum(Ls)), Ls, params, negative)
-
-        seq = seq[:,sel]
-        msa_seed_orig = msa_seed_orig[:,:,sel]
-        msa_seed = msa_seed[:,:,sel]
-        msa_extra = msa_extra[:,:,sel]
-        mask_msa = mask_msa[:,:,sel]
-        xyz = xyz[:,sel]
-        mask = mask[:,sel]
-        xyz_t = xyz_t[:,sel]
-        f1d_t = f1d_t[:,sel]
-        mask_t = mask_t[:,sel]
-        #
-        idx = idx[sel]
-        same_chain = same_chain[sel][:,sel]
-        bond_feats = bond_feats[sel][:,sel]
-        ch_label = ch_label[sel]
-
-    xyz_prev = xyz_t[0].clone()
-    mask_prev = mask_t[0].clone()
-    chirals = torch.Tensor()
-    dist_matrix = rf2aa.data_loader.get_bond_distances(bond_feats)
-
-    return seq.long(), msa_seed_orig.long(), msa_seed.float(), msa_extra.float(), mask_msa,\
-           xyz.float(), mask, idx.long(), \
-           xyz_t.float(), f1d_t.float(), mask_t, \
-           xyz_prev.float(), mask_prev, \
-           same_chain, False, negative, torch.zeros(seq.shape), bond_feats, dist_matrix, chirals, ch_label, 'C1', "na_compl", item
-
-def loader_dna_distil(item, params, random_noise=5.0, fixbb=False):
-    # collect info
-    gene_id = item['gene_id']
-    Ls = item['LEN']
-    oligo = item['oligo']
-    dnaseq = item['DNA sequence']
-    HASH = item['HASH']
-    
-    if len(Ls) > 3:
-        Ls = Ls[0:1] + Ls[2:]
-
-    nmer = 1 # 2 if oligo == 'dimer' else 1
-
-    ##################################
-    # Load and prepare sequence data #
-    ##################################
-    # protein MSA from an a3m file
-    a3mA = rf2aa.data_loader.get_msa(params["TF_DIR"]+f'/a3m/{gene_id[:2]}/{gene_id}_domain.a3m', HASH)
-
-    # oligomerize protein
-    if nmer > 1:
-        msaA, insA = rf2aa.data_loader.merge_a3m_homo(a3mA['msa'].long(), a3mA['ins'].long(), nmer)
-        a3mA['msa'] = msaA
-        a3mA['ins'] = insA
-    
-    # DNA from a single sequence
-    fseq = dnaseq
-    DNAPAIRS = {'A':'T','T':'A','C':'G','G':'C'}
-    rseq = ''.join([DNAPAIRS[x] for x in fseq][::-1])
-
-    # NOTE: padding?
-
-    # convert sequence to numbers and merge
-    alphabet = np.array(list("00000000000000000000-0ACGTD00000"), dtype='|S1').view(np.uint8)
-    msaB = np.array([list(fseq)], dtype='|S1').view(np.uint8)
-    msaC = np.array([list(rseq)], dtype='|S1').view(np.uint8)
-    for i in range(alphabet.shape[0]):
-        msaB[msaB == alphabet[i]] = i
-        msaC[msaC == alphabet[i]] = i
-    insB = np.zeros((1,Ls[-2]))
-    insC = np.zeros((1,Ls[-1]))
-    a3mB = {'msa': torch.from_numpy(msaB), 'ins': torch.from_numpy(insB), 'label': HASH}
-    a3mC = {'msa': torch.from_numpy(msaC), 'ins': torch.from_numpy(insC), 'label': HASH}
-
-    a3mB = rf2aa.data_loader.merge_a3m_hetero(a3mB, a3mC, [Ls[-2], Ls[-1]])
-    a3m  = rf2aa.data_loader.merge_a3m_hetero(a3mA, a3mB, [sum(Ls[:nmer]),sum(Ls[nmer:])])
-
-    # get MSA features
-    msa = a3m['msa'].long()
-    ins = a3m['ins'].long()
-    if len(msa) > params['BLOCKCUT']:
-        msa, ins = rf2aa.data_loader.MSABlockDeletion(msa, ins)
-    seq, msa_seed_orig, msa_seed, msa_extra, mask_msa = rf2aa.data_loader.MSAFeaturize(msa, ins, params, L_s=Ls, fixbb=fixbb)
-
-    ###################################
-    # Load and prepare structure data #
-    ###################################
-    # load predicted structure as "truth"
-    xyz, mask, _, _ = rf2aa.parsers.parse_pdb_distil(
-            params["TF_DIR"]+f'/distill/{gene_id[:2]}/{gene_id}_{dnaseq}_00_init_min_bbcst_0001.pdb',
-            seq=True,
-            lddtmask=True
-            )
-    
-    if oligo == 'dimer':
-        if np.random.rand() > 0.5:
-            xyz = np.concatenate((xyz[:Ls[0]], xyz[Ls[0] * 2:]))
-            mask = np.concatenate((mask[:Ls[0]], mask[Ls[0] * 2:]))
-        else:
-            xyz = xyz[Ls[0]:]
-            mask = mask[Ls[0]:]
-
-    xyz = torch.from_numpy(xyz)
-    mask = torch.from_numpy(mask)
-
-    # read template info (no template)
-    # NOTE: use templates?
-    ntempl = 0
-    tpltA = {'ids':[]} # a fake tpltA
-    xyz_t, f1d_t, mask_t = rf2aa.data_loader.TemplFeaturize(tpltA, sum(Ls), params, offset=0, npick=ntempl, pick_top=True, random_noise=random_noise)
-    NAstart = sum(Ls[:nmer])
-    xyz_t[:,NAstart:] = INIT_NA_CRDS.reshape(1,1,NTOTAL,3).repeat(1,sum(Ls[-2:]),1,1) + torch.rand(1,sum(Ls[-2:]),1,3)*random_noise
-
-    # other features
-    idx = idx_from_Ls(Ls)
-    same_chain = same_chain_2d_from_Ls(Ls)
-    bond_feats = bond_feats_from_Ls(Ls).long()
-    ch_label = torch.cat([torch.full((L_,), i) for i,L_ in enumerate(Ls)]).long()
-
-
-    ###############
-    # Do cropping #
-    ###############
-    
-    # if sum(Ls) > params['CROP']:
-    if True: # always crop!
-        # na_contacts, prot_contacts = contacting_dna_protein_residues(xyz.squeeze(), Ls)
-        na_contacts, prot_contacts = contacting_dna_protein_residues(xyz.squeeze(), Ls, closest_k=2)
-        sel = na_motif_preserving_tight_crop(seq.squeeze(), xyz.squeeze(), na_contacts, prot_contacts, Ls, params['CROP'])
-        seq = seq[:,sel]
-        msa_seed_orig = msa_seed_orig[:,:,sel]
-        msa_seed = msa_seed[:,:,sel]
-        msa_extra = msa_extra[:,:,sel]
-        mask_msa = mask_msa[:,:,sel]
-        xyz = xyz[sel]
-        mask = mask[sel]
-        xyz_t = xyz_t[:,sel]
-        f1d_t = f1d_t[:,sel]
-        mask_t = mask_t[:,sel]
-        #
-        idx = idx[sel]
-        same_chain = same_chain[sel][:,sel]
-        bond_feats = bond_feats[sel][:,sel]
-        ch_label = ch_label[sel]
-
-    chirals = torch.Tensor()
-    dist_matrix = rf2aa.data_loader.get_bond_distances(bond_feats)
-    xyz_prev = xyz_t[0].clone()
-    mask_prev = mask_t[0].clone()
-
-    return seq.long(), msa_seed_orig.long(), msa_seed.float(), msa_extra.float(), mask_msa,\
-           xyz.float(), mask, idx.long(), \
-           xyz_t.float(), f1d_t.float(), mask_t, \
-           xyz_prev.float(), mask_prev, \
-           same_chain, False, False, \
-           torch.zeros(seq.shape), bond_feats, dist_matrix, chirals, \
-           ch_label, 'C1', "dna_distil", item
-
 
 @dataclass
 class WeightedDataset:
@@ -1900,6 +1397,12 @@ def default_dataset_configs(loader_param, debug=False):
             **dataloader_params},
             no_match_okay=debug, diffusion_training=True)
 
+    # ic(train_ID_dict)
+    # ic(weights_dict)
+    # ic(train_dict)
+    # ic(homo)
+    # sys.exit('Exiting early from data_loader')    
+
     #all the pdb sets use the default rf2aa loader_pdb, but the fixbb adaptor will not be applied to the seq2str task
     pdb_config = WeightedDataset(train_ID_dict["pdb"], train_dict["pdb"], {
         'seq2str':      rf2aa.data_loader.loader_pdb,
@@ -1913,14 +1416,14 @@ def default_dataset_configs(loader_param, debug=False):
     # def pdb_aa_loader_fixbb(item, *args, **kwargs):
     #     return sm_compl_loader_fixbb(item + [()], *args, **kwargs)
 
-    # pdb_aa_config = WeightedDataset(train_ID_dict["pdb"], train_dict["pdb"], {
-    #     'seq2str':      rf2aa.data_loader.loader_pdb,
-    #     'str2seq':      rf2aa.data_loader.loader_pdb, 
-    #     'str2seq_full': rf2aa.data_loader.loader_pdb, 
-    #     'hal':          rf2aa.data_loader.loader_pdb, 
-    #     'hal_ar':       rf2aa.data_loader.loader_pdb,
-    #     'diff':         rf2aa.data_loader.loader_pdb},
-    #     weights_dict["pdb"])
+    pdb_aa_config = WeightedDataset(train_ID_dict["pdb"], train_dict["pdb"], {
+        'seq2str':      rf2aa.data_loader.loader_pdb,
+        'str2seq':      rf2aa.data_loader.loader_pdb, 
+        'str2seq_full': rf2aa.data_loader.loader_pdb, 
+        'hal':          rf2aa.data_loader.loader_pdb, 
+        'hal_ar':       rf2aa.data_loader.loader_pdb,
+        'diff':         rf2aa.data_loader.loader_pdb},
+        weights_dict["pdb"])
 
 
     compl_config = WeightedDataset(train_ID_dict["compl"], train_dict["compl"], {
@@ -1931,37 +1434,16 @@ def default_dataset_configs(loader_param, debug=False):
         'hal_ar':      rf2aa.data_loader.loader_complex,
         'diff':        rf2aa.data_loader.loader_complex},
         weights_dict["compl"])
-
-    nacompl_config = WeightedDataset(train_ID_dict["na_compl"], train_dict["na_compl"], {
-        'seq2str':      rf2aa.data_loader.loader_na_complex,
-        'str2seq':      rf2aa.data_loader.loader_na_complex, 
-        'str2seq_full': rf2aa.data_loader.loader_na_complex, 
-        'hal':          rf2aa.data_loader.loader_na_complex, 
-        'hal_ar':       rf2aa.data_loader.loader_na_complex,
-        'diff':         loader_na_complex_diff},
-        weights_dict["na_compl"]
-    )
-
-    distill_config = WeightedDataset(train_ID_dict["dna_distil"], train_dict["dna_distil"], {
-        'seq2str':      rf2aa.data_loader.loader_na_complex,
-        'str2seq':      rf2aa.data_loader.loader_na_complex, 
-        'str2seq_full': rf2aa.data_loader.loader_na_complex, 
-        'hal':          rf2aa.data_loader.loader_na_complex, 
-        'hal_ar':       rf2aa.data_loader.loader_na_complex,
-        'diff':         loader_dna_distil},
-        weights_dict["dna_distil"]
-    )
-    
     
     # neg_config = WeightedDataset(neg_IDs, neg_dict, loader_complex, neg_weights)
-    # fb_config = WeightedDataset(train_ID_dict["fb"], train_dict["fb"], {
-    #                     'seq2str':      rf2aa.data_loader.loader_fb,
-    #                     'str2seq':      rf2aa.data_loader.loader_fb, 
-    #                     'str2seq_full': rf2aa.data_loader.loader_fb, 
-    #                     'hal':          rf2aa.data_loader.loader_fb, 
-    #                     'hal_ar':       rf2aa.data_loader.loader_fb,
-    #                     'diff':         rf2aa.data_loader.loader_fb},
-    #                     weights_dict["fb"])
+    fb_config = WeightedDataset(train_ID_dict["fb"], train_dict["fb"], {
+                        'seq2str':      rf2aa.data_loader.loader_fb,
+                        'str2seq':      rf2aa.data_loader.loader_fb, 
+                        'str2seq_full': rf2aa.data_loader.loader_fb, 
+                        'hal':          rf2aa.data_loader.loader_fb, 
+                        'hal_ar':       rf2aa.data_loader.loader_fb,
+                        'diff':         rf2aa.data_loader.loader_fb},
+                        weights_dict["fb"])
     # cn_config = WeightedDataset(cn_IDs, cn_dict, {
     #                     'seq2str':      None,
     #                     'str2seq':      loader_cn_fixbb,
@@ -1970,23 +1452,64 @@ def default_dataset_configs(loader_param, debug=False):
     #                     'hal_ar':       loader_cn_fixbb,
     #                     'diff':         loader_cn_fixbb},
     #                     cn_weights)
-    # sm_compl_loader_fixbb = partial(rf2aa.data_loader.loader_sm_compl_assembly, \
-    #                             chid2hash=chid2hash,chid2taxid=chid2taxid)
-    # sm_compl_config = WeightedDataset(
-    #             train_ID_dict["sm_compl"], train_dict["sm_compl"], sm_compl_loader_fixbb, weights_dict["sm_compl"])
+    sm_compl_loader_fixbb = partial(rf2aa.data_loader.loader_sm_compl_assembly, \
+                                chid2hash=chid2hash,chid2taxid=chid2taxid)
+    sm_compl_config = WeightedDataset(
+                train_ID_dict["sm_compl"], train_dict["sm_compl"], sm_compl_loader_fixbb, weights_dict["sm_compl"])
+
+    # ic(sm_compl_config)
+    # sys.exit('Exiting early from data_loader')
 
     return OrderedDict({
         'pdb': pdb_config,
         'complex': compl_config,
         # 'negative': neg_config,
-        # 'fb': fb_config,
+        'fb': fb_config,
         # 'cn': cn_config,
         # AA configs
-        # 'pdb_aa': pdb_aa_config,
-        # 'sm_complex': sm_compl_config,
-        'na_compl': nacompl_config,
-        'dna_distil': distill_config
+        'pdb_aa': pdb_aa_config,
+        'sm_complex': sm_compl_config,
         }), homo
+
+
+fallback_spoof = {
+    'chosen_dataset': 'sm_complex',
+    'mask_gen_seed': 38968613,
+    'sel_item': {   'ASSEMBLY': 1,
+                    'CHAINID': '3gnc_C',
+                    'CLUSTER': 19246,
+                    'COVALENT': [],
+                    'DEPOSITION': '2009-03-16',
+                    'HASH': '022964',
+                    'LEN_EXIST': 383,
+                    'LIGAND': [('I', '396', 'QQQ')],
+                    'LIGATOMS': 16,
+                    'LIGATOMS_RESOLVED': 16,
+                    'LIGXF': [('I', 8)],
+                    'PARTNERS': [   (   'C',
+                                        2,
+                                        190,
+                                        2.7337806224823,
+                                        'polypeptide(L)'),
+                                    (   [('J', '397', 'EPE')],
+                                        [('J', 9)],
+                                        0,
+                                        7.141089916229248,
+                                        'nonpoly'),
+                                    (   'A',
+                                        0,
+                                        0,
+                                        7.238761901855469,
+                                        'polypeptide(L)'),
+                                    (   'D',
+                                        3,
+                                        0,
+                                        16.770910263061523,
+                                        'polypeptide(L)')],
+                    'RESOLUTION': 2.15,
+                    'SEQUENCE': 'GPGSMAAATFHWDDPLLLDQQLADDERMVRDAAHAYAQGKLAPRVTEAFRHETTDAAIFREMGEIGLLGPTIPEQYGGPGLDYVSYGLIAREVERVDSGYRSMMSVQSSLVMVPIFEFGSDAQKEKYLPKLATGEWIGCFGLTEPNHGSDPGSMVTRARKVPGGYSLSGSKMWITNSPIADVFVVWAKLDEDGRDEIRGFILEKGCKGLSAPAIHGKVGLRASITGEIVLDEAFVPEENILPHVKGLRGPFTCLNSARYGIAWGALGAAESCWHIARQYVLDRKQFGRPLAANQLIQKKLADMQTEITLGLQGVLRLGRMKDEGTAAVEITSIMKRNSCGKALDIARLARDMLGGNGISDEFGVARHLVNLEVVNTYEGTHDIHALILGRAQTGIQAFF'},
+    'task': 'diff'
+}
 
 class DistilledDataset(data.Dataset):
     def __init__(self,
@@ -2028,9 +1551,20 @@ class DistilledDataset(data.Dataset):
         conf = OmegaConf.create(conf)
         self.conf = conf
         self.model_adaptor = aa_model.Model(conf)
-        self.backbone_hotspot_indices_dict = pickle.load(open('/home/ptkim/projects/aa_nucleic_diffusion/precomputed_hotspots/combined_backbone_hotspot_indices.pkl', 'rb'))
-        self.base_hotspot_indices_dict = pickle.load(open('/home/ptkim/projects/aa_nucleic_diffusion/precomputed_hotspots/combined_base_specific_hotspot_indices.pkl', 'rb'))
-        self.base_hotspot_indices_distil_dict = pickle.load(open('/home/ptkim/projects/aa_nucleic_diffusion/precomputed_hotspots_distil/combined_base_specific_hotspot_indices.pkl', 'rb'))
+        self.last_idx = None
+        def fallback_out():
+            spoof = fallback_spoof
+            mask_gen_seed = spoof['mask_gen_seed']
+            sel_item = spoof['sel_item']
+            chosen_dataset = spoof['chosen_dataset']
+            dataset_config = self.dataset_configs[chosen_dataset]
+            out = dataset_config.task_loaders(
+                        sel_item,
+                        {**rf2aa.data_loader.default_dataloader_params, **self.params, "P_ATOMIZE_MODRES": -1}, num_protein_chains=1, num_ligand_chains=1, 
+                        fixbb=True,
+                    )
+            return out
+        self.fallback_out = fallback_out
 
     def __len__(self):
         return sum(len(d.ids) for d in self.dataset_configs.values())
@@ -2054,14 +1588,15 @@ class DistilledDataset(data.Dataset):
         return d
 
     def __getitem__(self, index):
-        # mask_gen_seed = np.random.randint(0, 99999999)
+        mask_gen_seed = np.random.randint(0, 99999999)
         p_unclamp = np.random.rand()
         task_idx = np.random.choice(np.arange(len(self.task_names)), 1, p=self.p_task)[0]
         task = self.task_names[task_idx]
 
         chosen_dataset, index = self.dataset_index_from_index(index)
         dataset_config = self.dataset_configs[chosen_dataset]
-        ID = dataset_config.ids[index]
+        ID = dataset_config.ids[index] 
+
         if chosen_dataset == "sm_complex":
             sel_item = rf2aa.data_loader.sample_item_sm_compl(dataset_config.dic, ID)
         else:
@@ -2081,13 +1616,13 @@ class DistilledDataset(data.Dataset):
             chosen_dataset = spoof['chosen_dataset']
             dataset_config = self.dataset_configs[chosen_dataset]
             self.spoofed=True
-        # run_inference.seed_all(mask_gen_seed) # Reseed the RNGs for test stability.
+        run_inference.seed_all(mask_gen_seed) # Reseed the RNGs for test stability.
 
         item_context = pprint.pformat({
             'chosen_dataset': chosen_dataset,
             'sel_item': sel_item,
-            'task': task})
-            # 'mask_gen_seed': mask_gen_seed}, indent=4)
+            'task': task,
+            'mask_gen_seed': mask_gen_seed}, indent=4)
         
         with error.context(item_context):
             if chosen_dataset == 'cn':
@@ -2104,6 +1639,7 @@ class DistilledDataset(data.Dataset):
                     task='seq2str'
                 chosen_loader = dataset_config.task_loaders[task]
                 out = chosen_loader(sel_item, sel_item[1],sel_item[2], sel_item[3], self.params, negative=False, fixbb=fixbb)
+            
             elif chosen_dataset == 'pdb' or chosen_dataset == 'pdb_aa':
                 chosen_loader = dataset_config.task_loaders[task]
                 # if p_unclamp > self.unclamp_cut:
@@ -2120,18 +1656,15 @@ class DistilledDataset(data.Dataset):
                 else:
                     out = chosen_loader(sel_item, self.params, unclamp=False,fixbb=fixbb)
             elif chosen_dataset == 'sm_complex':
-                out = dataset_config.task_loaders(
-                    sel_item,
-                    {**rf2aa.data_loader.default_dataloader_params, **self.params, "P_ATOMIZE_MODRES": -1}, num_protein_chains=1, num_ligand_chains=1, 
-                    fixbb=fixbb,
-                )
-            elif chosen_dataset == 'na_compl':
-                chosen_loader = dataset_config.task_loaders[task]
-                out = chosen_loader(sel_item, {**rf2aa.data_loader.default_dataloader_params, **self.params}, fixbb=fixbb)
-
-            elif chosen_dataset == 'dna_distil':
-                chosen_loader = dataset_config.task_loaders[task]
-                out = chosen_loader(sel_item, {**rf2aa.data_loader.default_dataloader_params, **self.params}, fixbb=fixbb)
+                try:
+                    out = dataset_config.task_loaders(
+                        sel_item,
+                        {**rf2aa.data_loader.default_dataloader_params, **self.params, "P_ATOMIZE_MODRES": -1}, num_protein_chains=1, num_ligand_chains=1, 
+                        fixbb=fixbb,
+                    )
+                except Exception as e:
+                    print(f'WARNING: hit exception {str(e)} on item {item_context}')
+                    out = self.fallback_out()
             else:
                 raise Exception(f'chosen_dataset {chosen_dataset} not implemented')
             
@@ -2143,79 +1676,94 @@ class DistilledDataset(data.Dataset):
             atom_mask = aa_model.pop_unoccupied(indep, atom_mask)
 
             # Mask the independent inputs.
-            # run_inference.seed_all(mask_gen_seed) # Reseed the RNGs for test stability.
-            masks_1d = mask_generator.generate_masks(L=indep.length(), task=task, loader_params=self.params, chosen_dataset=chosen_dataset, full_chain=None, xyz=indep.xyz, atom_mask=atom_mask[:, :rf2aa.chemical.NHEAVYPROT], seq=indep.seq)
+            run_inference.seed_all(mask_gen_seed) # Reseed the RNGs for test stability.
 
-            is_res_seq_shown = masks_1d['input_seq_mask']
-            is_res_str_shown = masks_1d['input_str_mask']
+
+            masks_1d = mask_generator.generate_masks(indep, task, self.params, chosen_dataset, None, atom_mask=atom_mask[:, :rf2aa.chemical.NHEAVYPROT])
+
+            is_res_str_shown  = masks_1d['input_str_mask']
             is_atom_str_shown = masks_1d['is_atom_motif']
-            atomizer = None
-            if is_atom_str_shown is not None:
-                is_atom_str_shown = {res_i.item():v for res_i, v in is_atom_str_shown.items()}
-                is_atomized = torch.zeros(indep.length()).bool()
-                for k in is_atom_str_shown.keys():
-                    is_atomized[k] = True
-
-                indep, atomizer = atomize.atomize(indep, is_atomized)
-                assert indep.is_sm.shape[0] == indep.xyz.shape[0]
-                L = indep.seq.shape[0]
-                is_atom_seq_shown = {res_i: [e for e in rf2aa.chemical.aa2long[atomizer.indep_initial_copy.seq[res_i]][:rf2aa.chemical.NHEAVYPROT] if e is not None]
-                                    for res_i in is_atom_str_shown.keys()}
-                str_shown_indices = atomize.atom_indices(atomizer, is_res_str_shown, is_atom_str_shown)
-                seq_shown_indices = atomize.atom_indices(atomizer, is_res_seq_shown, is_atom_seq_shown)
-                is_diffused = torch.ones(L).bool()
-                is_masked_seq = torch.ones(L).bool()
-                is_diffused[str_shown_indices] = False
-                is_masked_seq[seq_shown_indices] = False
-            else:
-                is_diffused = is_masked_seq = ~is_res_str_shown
             
-            if self.params['USE_GUIDE_POSTS']:
-                    mask_gp = masks_1d['input_str_mask'].clone()
-                    indep, is_diffused, gp_to_ptn_idx0 = gp.make_guideposts(indep, mask_gp)
-                    is_masked_seq = is_diffused.clone()
+            # Cast to non-tensor
+            if is_atom_str_shown:
+                is_atom_str_shown = {res_i.item():v for res_i, v in is_atom_str_shown.items()}
 
-            # run_inference.seed_all(mask_gen_seed) # Reseed the RNGs for test stability.
-            aa_model.centre(indep, is_diffused)
+            indep, is_diffused, is_masked_seq, atomizer, _ = aa_model.transform_indep(indep, is_res_str_shown, is_atom_str_shown, self.params['USE_GUIDE_POSTS'])
+
+            run_inference.seed_all(mask_gen_seed) # Reseed the RNGs for test stability.
+
+            # fig, ax = plt.subplots(1,3, figsize=(12,5))
+            # Ltmp = is_res_str_shown.shape[0]
+            # ax[0].imshow(is_res_str_shown.cpu().numpy()[None].repeat(Ltmp, axis=0))
+            # ax[0].set_title('input_str_mask/is_res_str_shown')
+
+            # ax[1].imshow(is_diffused.cpu().numpy()[None].repeat(Ltmp, axis=0))
+            # ax[1].set_title('is_diffused')
+
+            # ax[2].imshow(masks_1d['t2d_is_revealed'].cpu().numpy())
+            # ax[2].set_title('t2d_is_revealed')
+
+            # plt.show()
+            # plt.savefig('1d_2d_masks_before_diffusion.png')
+            # sys.exit('debugging masks before diffusion')
+            
+            
+            if not self.conf.preprocess.motif_only_2d:
+                aa_model.centre(indep, is_diffused) # center the motif at origin 
+            else:
+                # center entire protein at origin
+                aa_model.centre(indep, torch.ones_like(is_diffused).bool())
+
             t = random.randint(1, self.diffuser.T)
+            
+            # if displaying motif only in 2d, allow diffusion everywhere
+            if self.conf.preprocess.motif_only_2d:
+                old_is_diffused = is_diffused.clone()
+                is_protein_motif = ~old_is_diffused * ~indep.is_sm
+
+                new_is_diffused = torch.zeros_like(is_diffused).bool() 
+                new_is_diffused[~indep.is_sm] = True # diffusion over all protein, no SM diffusion 
+                is_diffused = new_is_diffused
+            else:
+                is_protein_motif = None # prepro handles none case as normal task    
+            
+            
             indep_diffused_tp1_t, t_list = aa_model.diffuse(self.conf, self.diffuser, indep, is_diffused, t)
 
             # Compute all strictly dependent model inputs from the independent inputs.
             rfi_tp1_t = []
             for indep_diffused, t in zip(indep_diffused_tp1_t, t_list):
+                if self.preprocess_param['randomize_frames']:
+                    assert not self.preprocess_param['eye_frames']
+                    indep_diffused.xyz = aa_model.randomly_rotate_frames(indep_diffused.xyz)
+                
+                if self.preprocess_param['eye_frames']:
+                    assert not self.preprocess_param['randomize_frames']
+                    indep_diffused.xyz = aa_model.eye_frames2(indep_diffused.xyz)
+                
+
+                # masks the sequence of indep 
+                if self.preprocess_param['p_show_motif_seq'] > 0.0:
+                    # sometimes mask the sequence
+                    P = self.preprocess_param['p_show_motif_seq']
+                    orig_dtype = is_masked_seq.dtype
+                    is_masked_seq = mask_sequence_chunks(is_masked_seq.numpy().astype(bool), P)
+                    is_masked_seq = torch.from_numpy(is_masked_seq)
+                    is_masked_seq = is_masked_seq.to(dtype=orig_dtype)
+
                 aa_model.mask_indep(indep_diffused, is_masked_seq)
-                rfi = self.model_adaptor.prepro(indep_diffused, t, is_diffused)
+
+                # prepare RF inputs 
+                t2d_is_revealed = masks_1d['t2d_is_revealed'] # DJ - new for 3rd template
+                rfi = self.model_adaptor.prepro(indep_diffused, t, is_diffused, is_protein_motif, t2d_is_revealed)
                 rfi_tp1_t.append(rfi)
+
 
                 # Sanity checks
                 if torch.sum(~is_diffused) > 0:
                     assert torch.mean(rfi.xyz[:,~is_diffused,1] - indep.xyz[None,~is_diffused,1]) < 0.001
 
-            # run_inference.seed_all(mask_gen_seed) # Reseed the RNGs for test stability.
-
-            if self.params['BACKBONE_HOTSPOTS']: # Figure out later how I will condition on hotspots (probably yet another command line argument)
-                if chosen_dataset == 'na_compl':
-                    hotspot_id = make_hotspot_id(out[-1])
-                    hotspot = make_hotspot_vector(indep, self.backbone_hotspot_indices_dict, hotspot_id)
-                else:
-                    hotspot = default_hotspot_vector(indep.length())
-
-                rfi_tp1_t[0].t1d = torch.cat((rfi_tp1_t[0].t1d, hotspot), dim=-1)
-                rfi_tp1_t[1].t1d = torch.cat((rfi_tp1_t[1].t1d, hotspot), dim=-1)
-
-            if self.params['BASE_SPECIFIC_HOTSPOTS']:
-                if chosen_dataset == 'na_compl':
-                    hotspot_id = make_hotspot_id(out[-1])
-                    hotspot = make_hotspot_vector(indep, self.base_hotspot_indices_dict, hotspot_id)
-                elif chosen_dataset == 'dna_distil':
-                    hotspot_id = make_hotspot_id_distil(out[-1])
-                    hotspot = make_hotspot_vector(indep, self.base_hotspot_indices_distil_dict, hotspot_id)
-                else:
-                    hotspot = default_hotspot_vector(indep.length())
-                
-                rfi_tp1_t[0].t1d = torch.cat((rfi_tp1_t[0].t1d, hotspot), dim=-1)
-                rfi_tp1_t[1].t1d = torch.cat((rfi_tp1_t[1].t1d, hotspot), dim=-1)
-
+            run_inference.seed_all(mask_gen_seed) # Reseed the RNGs for test stability.
             return indep, rfi_tp1_t, chosen_dataset, sel_item, t, is_diffused, task, atomizer, masks_1d, item_context
 
 
@@ -2273,7 +1821,7 @@ class DistributedWeightedSampler(data.Sampler):
         print('Just entered DistributedWeightedSampler __iter__')
         g = torch.Generator()
         g.manual_seed(self.epoch)
-        # run_inference.seed_all(self.epoch * self.num_replicas + self.rank) # Reseed the RNGs for test stability.
+        run_inference.seed_all(self.epoch * self.num_replicas + self.rank) # Reseed the RNGs for test stability.
 
         # get indices (fb + pdb models)
         # indices = torch.arange(len(self.dataset))
