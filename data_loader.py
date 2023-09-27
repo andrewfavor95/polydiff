@@ -29,7 +29,7 @@ import rf2aa.chemical
 import guide_posts as gp
 from rf2aa.chemical import INIT_CRDS, INIT_NA_CRDS, NAATOKENS, MASKINDEX, UNKINDEX, \
     NTOTAL, NBTYPES, CHAIN_GAP, num2aa, METAL_RES_NAMES, aa2num, atomnum2atomtype
-
+import ipdb
 # for diffusion training
 import mask_generator
 from icecream import ic
@@ -37,11 +37,12 @@ import pickle
 import random
 from apply_masks import mask_inputs
 import util
+from util import mask_sequence_chunks
 import math
 from functools import partial
 import pandas as pd
 
-# import run_inference
+import run_inference
 import aa_model
 import atomize
 import error
@@ -1735,18 +1736,16 @@ def loader_na_complex_diff(item, params, native_NA_frac=0.25, negative=False, pi
            xyz_prev.float(), mask_prev, \
            same_chain, False, negative, torch.zeros(seq.shape), bond_feats, dist_matrix, chirals, ch_label, 'C1', "na_compl", item
 
-def loader_dna_distil(item, params, random_noise=5.0, fixbb=False):
+
+def loader_distil_tf(item, params, random_noise=5.0, pick_top=True, native_NA_frac=0.05, negative=False):
     # collect info
     gene_id = item['gene_id']
     Ls = item['LEN']
     oligo = item['oligo']
     dnaseq = item['DNA sequence']
     HASH = item['HASH']
-    
-    if len(Ls) > 3:
-        Ls = Ls[0:1] + Ls[2:]
 
-    nmer = 1 # 2 if oligo == 'dimer' else 1
+    nmer = 2 if oligo == 'dimer' else 1
 
     ##################################
     # Load and prepare sequence data #
@@ -1787,34 +1786,27 @@ def loader_dna_distil(item, params, random_noise=5.0, fixbb=False):
     ins = a3m['ins'].long()
     if len(msa) > params['BLOCKCUT']:
         msa, ins = rf2aa.data_loader.MSABlockDeletion(msa, ins)
-    seq, msa_seed_orig, msa_seed, msa_extra, mask_msa = rf2aa.data_loader.MSAFeaturize(msa, ins, params, L_s=Ls, fixbb=fixbb)
+    seq, msa_seed_orig, msa_seed, msa_extra, mask_msa = rf2aa.data_loader.MSAFeaturize(msa, ins, params, L_s=Ls)
 
     ###################################
     # Load and prepare structure data #
     ###################################
     # load predicted structure as "truth"
-    xyz, mask, _, _ = rf2aa.parsers.parse_pdb_distil(
-            params["TF_DIR"]+f'/distill/{gene_id[:2]}/{gene_id}_{dnaseq}_00_init_min_bbcst_0001.pdb',
+    xyz, mask, _, pdbseq = parse_pdb(
+            params["TF_DIR"]+f'/distill/{gene_id[:2]}/{gene_id}_{dnaseq}.pdb',
             seq=True,
             lddtmask=True
             )
-    
-    if oligo == 'dimer':
-        if np.random.rand() > 0.5:
-            xyz = np.concatenate((xyz[:Ls[0]], xyz[Ls[0] * 2:]))
-            mask = np.concatenate((mask[:Ls[0]], mask[Ls[0] * 2:]))
-        else:
-            xyz = xyz[Ls[0]:]
-            mask = mask[Ls[0]:]
 
     xyz = torch.from_numpy(xyz)
     mask = torch.from_numpy(mask)
+    pdbseq = torch.from_numpy(pdbseq)
 
     # read template info (no template)
     # NOTE: use templates?
     ntempl = 0
     tpltA = {'ids':[]} # a fake tpltA
-    xyz_t, f1d_t, mask_t = rf2aa.data_loader.TemplFeaturize(tpltA, sum(Ls), params, offset=0, npick=ntempl, pick_top=True, random_noise=random_noise)
+    xyz_t, f1d_t, mask_t, _ = rf2aa.data_loader.TemplFeaturize(tpltA, sum(Ls), params, offset=0, npick=ntempl, pick_top=True, random_noise=random_noise)
     NAstart = sum(Ls[:nmer])
     xyz_t[:,NAstart:] = INIT_NA_CRDS.reshape(1,1,NTOTAL,3).repeat(1,sum(Ls[-2:]),1,1) + torch.rand(1,sum(Ls[-2:]),1,3)*random_noise
 
@@ -1824,16 +1816,13 @@ def loader_dna_distil(item, params, random_noise=5.0, fixbb=False):
     bond_feats = bond_feats_from_Ls(Ls).long()
     ch_label = torch.cat([torch.full((L_,), i) for i,L_ in enumerate(Ls)]).long()
 
-
     ###############
     # Do cropping #
     ###############
     
-    # if sum(Ls) > params['CROP']:
-    if True: # always crop!
-        # na_contacts, prot_contacts = contacting_dna_protein_residues(xyz.squeeze(), Ls)
-        na_contacts, prot_contacts = contacting_dna_protein_residues(xyz.squeeze(), Ls, closest_k=2)
-        sel = na_motif_preserving_tight_crop(seq.squeeze(), xyz.squeeze(), na_contacts, prot_contacts, Ls, params['CROP'])
+    if sum(Ls) > params['CROP']:
+        sel = get_na_crop(seq[0], xyz, mask, torch.arange(sum(Ls)), Ls, params, negative=False)
+
         seq = seq[:,sel]
         msa_seed_orig = msa_seed_orig[:,:,sel]
         msa_seed = msa_seed[:,:,sel]
@@ -1852,8 +1841,7 @@ def loader_dna_distil(item, params, random_noise=5.0, fixbb=False):
 
     chirals = torch.Tensor()
     dist_matrix = rf2aa.data_loader.get_bond_distances(bond_feats)
-    xyz_prev = xyz_t[0].clone()
-    mask_prev = mask_t[0].clone()
+    xyz_prev, mask_prev = rf2aa.data_loader.generate_xyz_prev(xyz_t, mask_t, params)
 
     return seq.long(), msa_seed_orig.long(), msa_seed.float(), msa_extra.float(), mask_msa,\
            xyz.float(), mask, idx.long(), \
@@ -1861,7 +1849,137 @@ def loader_dna_distil(item, params, random_noise=5.0, fixbb=False):
            xyz_prev.float(), mask_prev, \
            same_chain, False, False, \
            torch.zeros(seq.shape), bond_feats, dist_matrix, chirals, \
-           ch_label, 'C1', "dna_distil", item
+           ch_label, 'C1', "distil_tf", item
+
+
+# def loader_dna_distil(item, params, random_noise=5.0, fixbb=False):
+#     # collect info
+#     gene_id = item['gene_id']
+#     Ls = item['LEN']
+#     oligo = item['oligo']
+#     dnaseq = item['DNA sequence']
+#     HASH = item['HASH']
+    
+#     if len(Ls) > 3:
+#         Ls = Ls[0:1] + Ls[2:]
+
+#     nmer = 1 # 2 if oligo == 'dimer' else 1
+
+#     ##################################
+#     # Load and prepare sequence data #
+#     ##################################
+#     # protein MSA from an a3m file
+#     a3mA = rf2aa.data_loader.get_msa(params["TF_DIR"]+f'/a3m/{gene_id[:2]}/{gene_id}_domain.a3m', HASH)
+
+#     # oligomerize protein
+#     if nmer > 1:
+#         msaA, insA = rf2aa.data_loader.merge_a3m_homo(a3mA['msa'].long(), a3mA['ins'].long(), nmer)
+#         a3mA['msa'] = msaA
+#         a3mA['ins'] = insA
+    
+#     # DNA from a single sequence
+#     fseq = dnaseq
+#     DNAPAIRS = {'A':'T','T':'A','C':'G','G':'C'}
+#     rseq = ''.join([DNAPAIRS[x] for x in fseq][::-1])
+
+#     # NOTE: padding?
+
+#     # convert sequence to numbers and merge
+#     alphabet = np.array(list("00000000000000000000-0ACGTD00000"), dtype='|S1').view(np.uint8)
+#     msaB = np.array([list(fseq)], dtype='|S1').view(np.uint8)
+#     msaC = np.array([list(rseq)], dtype='|S1').view(np.uint8)
+#     for i in range(alphabet.shape[0]):
+#         msaB[msaB == alphabet[i]] = i
+#         msaC[msaC == alphabet[i]] = i
+#     insB = np.zeros((1,Ls[-2]))
+#     insC = np.zeros((1,Ls[-1]))
+#     a3mB = {'msa': torch.from_numpy(msaB), 'ins': torch.from_numpy(insB), 'label': HASH}
+#     a3mC = {'msa': torch.from_numpy(msaC), 'ins': torch.from_numpy(insC), 'label': HASH}
+
+#     a3mB = rf2aa.data_loader.merge_a3m_hetero(a3mB, a3mC, [Ls[-2], Ls[-1]])
+#     a3m  = rf2aa.data_loader.merge_a3m_hetero(a3mA, a3mB, [sum(Ls[:nmer]),sum(Ls[nmer:])])
+
+#     # get MSA features
+#     msa = a3m['msa'].long()
+#     ins = a3m['ins'].long()
+#     if len(msa) > params['BLOCKCUT']:
+#         msa, ins = rf2aa.data_loader.MSABlockDeletion(msa, ins)
+#     seq, msa_seed_orig, msa_seed, msa_extra, mask_msa = rf2aa.data_loader.MSAFeaturize(msa, ins, params, L_s=Ls, fixbb=fixbb)
+
+#     ###################################
+#     # Load and prepare structure data #
+#     ###################################
+#     # load predicted structure as "truth"
+#     xyz, mask, _, _ = rf2aa.parsers.parse_pdb_distil(
+#             params["TF_DIR"]+f'/distill/{gene_id[:2]}/{gene_id}_{dnaseq}_00_init_min_bbcst_0001.pdb',
+#             seq=True,
+#             lddtmask=True
+#             )
+    
+#     if oligo == 'dimer':
+#         if np.random.rand() > 0.5:
+#             xyz = np.concatenate((xyz[:Ls[0]], xyz[Ls[0] * 2:]))
+#             mask = np.concatenate((mask[:Ls[0]], mask[Ls[0] * 2:]))
+#         else:
+#             xyz = xyz[Ls[0]:]
+#             mask = mask[Ls[0]:]
+
+#     xyz = torch.from_numpy(xyz)
+#     mask = torch.from_numpy(mask)
+
+#     # read template info (no template)
+#     # NOTE: use templates?
+#     ntempl = 0
+#     tpltA = {'ids':[]} # a fake tpltA
+#     xyz_t, f1d_t, mask_t = rf2aa.data_loader.TemplFeaturize(tpltA, sum(Ls), params, offset=0, npick=ntempl, pick_top=True, random_noise=random_noise)
+#     NAstart = sum(Ls[:nmer])
+#     xyz_t[:,NAstart:] = INIT_NA_CRDS.reshape(1,1,NTOTAL,3).repeat(1,sum(Ls[-2:]),1,1) + torch.rand(1,sum(Ls[-2:]),1,3)*random_noise
+
+#     # other features
+#     idx = idx_from_Ls(Ls)
+#     same_chain = same_chain_2d_from_Ls(Ls)
+#     bond_feats = bond_feats_from_Ls(Ls).long()
+#     ch_label = torch.cat([torch.full((L_,), i) for i,L_ in enumerate(Ls)]).long()
+
+
+#     ###############
+#     # Do cropping #
+#     ###############
+    
+#     # if sum(Ls) > params['CROP']:
+#     if True: # always crop!
+#         # na_contacts, prot_contacts = contacting_dna_protein_residues(xyz.squeeze(), Ls)
+#         na_contacts, prot_contacts = contacting_dna_protein_residues(xyz.squeeze(), Ls, closest_k=2)
+#         sel = na_motif_preserving_tight_crop(seq.squeeze(), xyz.squeeze(), na_contacts, prot_contacts, Ls, params['CROP'])
+#         seq = seq[:,sel]
+#         msa_seed_orig = msa_seed_orig[:,:,sel]
+#         msa_seed = msa_seed[:,:,sel]
+#         msa_extra = msa_extra[:,:,sel]
+#         mask_msa = mask_msa[:,:,sel]
+#         xyz = xyz[sel]
+#         mask = mask[sel]
+#         xyz_t = xyz_t[:,sel]
+#         f1d_t = f1d_t[:,sel]
+#         mask_t = mask_t[:,sel]
+#         #
+#         idx = idx[sel]
+#         same_chain = same_chain[sel][:,sel]
+#         bond_feats = bond_feats[sel][:,sel]
+#         ch_label = ch_label[sel]
+
+#     chirals = torch.Tensor()
+#     dist_matrix = rf2aa.data_loader.get_bond_distances(bond_feats)
+#     xyz_prev = xyz_t[0].clone()
+#     mask_prev = mask_t[0].clone()
+
+#     return seq.long(), msa_seed_orig.long(), msa_seed.float(), msa_extra.float(), mask_msa,\
+#            xyz.float(), mask, idx.long(), \
+#            xyz_t.float(), f1d_t.float(), mask_t, \
+#            xyz_prev.float(), mask_prev, \
+#            same_chain, False, False, \
+#            torch.zeros(seq.shape), bond_feats, dist_matrix, chirals, \
+#            ch_label, 'C1', "dna_distil", item
+
 
 
 @dataclass
@@ -1913,14 +2031,14 @@ def default_dataset_configs(loader_param, debug=False):
     # def pdb_aa_loader_fixbb(item, *args, **kwargs):
     #     return sm_compl_loader_fixbb(item + [()], *args, **kwargs)
 
-    # pdb_aa_config = WeightedDataset(train_ID_dict["pdb"], train_dict["pdb"], {
-    #     'seq2str':      rf2aa.data_loader.loader_pdb,
-    #     'str2seq':      rf2aa.data_loader.loader_pdb, 
-    #     'str2seq_full': rf2aa.data_loader.loader_pdb, 
-    #     'hal':          rf2aa.data_loader.loader_pdb, 
-    #     'hal_ar':       rf2aa.data_loader.loader_pdb,
-    #     'diff':         rf2aa.data_loader.loader_pdb},
-    #     weights_dict["pdb"])
+    pdb_aa_config = WeightedDataset(train_ID_dict["pdb"], train_dict["pdb"], {
+        'seq2str':      rf2aa.data_loader.loader_pdb,
+        'str2seq':      rf2aa.data_loader.loader_pdb, 
+        'str2seq_full': rf2aa.data_loader.loader_pdb, 
+        'hal':          rf2aa.data_loader.loader_pdb, 
+        'hal_ar':       rf2aa.data_loader.loader_pdb,
+        'diff':         rf2aa.data_loader.loader_pdb},
+        weights_dict["pdb"])
 
 
     compl_config = WeightedDataset(train_ID_dict["compl"], train_dict["compl"], {
@@ -1941,27 +2059,46 @@ def default_dataset_configs(loader_param, debug=False):
         'diff':         loader_na_complex_diff},
         weights_dict["na_compl"]
     )
+    
+    # distill_config = WeightedDataset(train_ID_dict["dna_distil"], train_dict["dna_distil"], {
+    #     'seq2str':      rf2aa.data_loader.loader_na_complex,
+    #     'str2seq':      rf2aa.data_loader.loader_na_complex, 
+    #     'str2seq_full': rf2aa.data_loader.loader_na_complex, 
+    #     'hal':          rf2aa.data_loader.loader_na_complex, 
+    #     'hal_ar':       rf2aa.data_loader.loader_na_complex,
+    #     'diff':         loader_dna_distil},
+    #     weights_dict["dna_distil"]
+    # )
 
-    distill_config = WeightedDataset(train_ID_dict["dna_distil"], train_dict["dna_distil"], {
+    # tf_distill_config = WeightedDataset(train_ID_dict["distil_tf"], train_dict["distil_tf"], {
+    #     'seq2str':      rf2aa.data_loader.loader_na_complex,
+    #     'str2seq':      rf2aa.data_loader.loader_na_complex, 
+    #     'str2seq_full': rf2aa.data_loader.loader_na_complex, 
+    #     'hal':          rf2aa.data_loader.loader_na_complex, 
+    #     'hal_ar':       rf2aa.data_loader.loader_na_complex,
+    #     'diff':         loader_dna_distil},
+    #     weights_dict["distil_tf"]
+    # )
+    tf_distill_config = WeightedDataset(train_ID_dict["distil_tf"], train_dict["distil_tf"], {
         'seq2str':      rf2aa.data_loader.loader_na_complex,
         'str2seq':      rf2aa.data_loader.loader_na_complex, 
         'str2seq_full': rf2aa.data_loader.loader_na_complex, 
         'hal':          rf2aa.data_loader.loader_na_complex, 
         'hal_ar':       rf2aa.data_loader.loader_na_complex,
-        'diff':         loader_dna_distil},
-        weights_dict["dna_distil"]
+        'diff':         loader_distil_tf},
+        weights_dict["distil_tf"]
     )
     
     
     # neg_config = WeightedDataset(neg_IDs, neg_dict, loader_complex, neg_weights)
-    # fb_config = WeightedDataset(train_ID_dict["fb"], train_dict["fb"], {
-    #                     'seq2str':      rf2aa.data_loader.loader_fb,
-    #                     'str2seq':      rf2aa.data_loader.loader_fb, 
-    #                     'str2seq_full': rf2aa.data_loader.loader_fb, 
-    #                     'hal':          rf2aa.data_loader.loader_fb, 
-    #                     'hal_ar':       rf2aa.data_loader.loader_fb,
-    #                     'diff':         rf2aa.data_loader.loader_fb},
-    #                     weights_dict["fb"])
+    fb_config = WeightedDataset(train_ID_dict["fb"], train_dict["fb"], {
+                        'seq2str':      rf2aa.data_loader.loader_fb,
+                        'str2seq':      rf2aa.data_loader.loader_fb, 
+                        'str2seq_full': rf2aa.data_loader.loader_fb, 
+                        'hal':          rf2aa.data_loader.loader_fb, 
+                        'hal_ar':       rf2aa.data_loader.loader_fb,
+                        'diff':         rf2aa.data_loader.loader_fb},
+                        weights_dict["fb"])
     # cn_config = WeightedDataset(cn_IDs, cn_dict, {
     #                     'seq2str':      None,
     #                     'str2seq':      loader_cn_fixbb,
@@ -1970,23 +2107,63 @@ def default_dataset_configs(loader_param, debug=False):
     #                     'hal_ar':       loader_cn_fixbb,
     #                     'diff':         loader_cn_fixbb},
     #                     cn_weights)
-    # sm_compl_loader_fixbb = partial(rf2aa.data_loader.loader_sm_compl_assembly, \
-    #                             chid2hash=chid2hash,chid2taxid=chid2taxid)
-    # sm_compl_config = WeightedDataset(
-    #             train_ID_dict["sm_compl"], train_dict["sm_compl"], sm_compl_loader_fixbb, weights_dict["sm_compl"])
+    
+    sm_compl_loader_fixbb = partial(rf2aa.data_loader.loader_sm_compl_assembly, \
+                                chid2hash=chid2hash,chid2taxid=chid2taxid)
+    sm_compl_config = WeightedDataset(
+                train_ID_dict["sm_compl"], train_dict["sm_compl"], sm_compl_loader_fixbb, weights_dict["sm_compl"])
 
     return OrderedDict({
         'pdb': pdb_config,
         'complex': compl_config,
         # 'negative': neg_config,
-        # 'fb': fb_config,
+        'fb': fb_config,
         # 'cn': cn_config,
         # AA configs
-        # 'pdb_aa': pdb_aa_config,
-        # 'sm_complex': sm_compl_config,
+        'pdb_aa': pdb_aa_config,
+        'sm_complex': sm_compl_config,
         'na_compl': nacompl_config,
-        'dna_distil': distill_config
+        'tf_distil': tf_distill_config
         }), homo
+
+fallback_spoof = {
+    'chosen_dataset': 'sm_complex',
+    'mask_gen_seed': 38968613,
+    'sel_item': {   'ASSEMBLY': 1,
+                    'CHAINID': '3gnc_C',
+                    'CLUSTER': 19246,
+                    'COVALENT': [],
+                    'DEPOSITION': '2009-03-16',
+                    'HASH': '022964',
+                    'LEN_EXIST': 383,
+                    'LIGAND': [('I', '396', 'QQQ')],
+                    'LIGATOMS': 16,
+                    'LIGATOMS_RESOLVED': 16,
+                    'LIGXF': [('I', 8)],
+                    'PARTNERS': [   (   'C',
+                                        2,
+                                        190,
+                                        2.7337806224823,
+                                        'polypeptide(L)'),
+                                    (   [('J', '397', 'EPE')],
+                                        [('J', 9)],
+                                        0,
+                                        7.141089916229248,
+                                        'nonpoly'),
+                                    (   'A',
+                                        0,
+                                        0,
+                                        7.238761901855469,
+                                        'polypeptide(L)'),
+                                    (   'D',
+                                        3,
+                                        0,
+                                        16.770910263061523,
+                                        'polypeptide(L)')],
+                    'RESOLUTION': 2.15,
+                    'SEQUENCE': 'GPGSMAAATFHWDDPLLLDQQLADDERMVRDAAHAYAQGKLAPRVTEAFRHETTDAAIFREMGEIGLLGPTIPEQYGGPGLDYVSYGLIAREVERVDSGYRSMMSVQSSLVMVPIFEFGSDAQKEKYLPKLATGEWIGCFGLTEPNHGSDPGSMVTRARKVPGGYSLSGSKMWITNSPIADVFVVWAKLDEDGRDEIRGFILEKGCKGLSAPAIHGKVGLRASITGEIVLDEAFVPEENILPHVKGLRGPFTCLNSARYGIAWGALGAAESCWHIARQYVLDRKQFGRPLAANQLIQKKLADMQTEITLGLQGVLRLGRMKDEGTAAVEITSIMKRNSCGKALDIARLARDMLGGNGISDEFGVARHLVNLEVVNTYEGTHDIHALILGRAQTGIQAFF'},
+    'task': 'diff'
+}
 
 class DistilledDataset(data.Dataset):
     def __init__(self,
@@ -2028,9 +2205,23 @@ class DistilledDataset(data.Dataset):
         conf = OmegaConf.create(conf)
         self.conf = conf
         self.model_adaptor = aa_model.Model(conf)
-        self.backbone_hotspot_indices_dict = pickle.load(open('/home/ptkim/projects/aa_nucleic_diffusion/precomputed_hotspots/combined_backbone_hotspot_indices.pkl', 'rb'))
-        self.base_hotspot_indices_dict = pickle.load(open('/home/ptkim/projects/aa_nucleic_diffusion/precomputed_hotspots/combined_base_specific_hotspot_indices.pkl', 'rb'))
-        self.base_hotspot_indices_distil_dict = pickle.load(open('/home/ptkim/projects/aa_nucleic_diffusion/precomputed_hotspots_distil/combined_base_specific_hotspot_indices.pkl', 'rb'))
+        self.backbone_hotspot_indices_dict = pickle.load(open('/home/afavor/git/RFD_AF/3template_na/data/precomputed_hotspots/combined_backbone_hotspot_indices.pkl', 'rb'))
+        self.base_hotspot_indices_dict = pickle.load(open('/home/afavor/git/RFD_AF/3template_na/data/precomputed_hotspots/combined_base_specific_hotspot_indices.pkl', 'rb'))
+        self.base_hotspot_indices_distil_dict = pickle.load(open('/home/afavor/git/RFD_AF/3template_na/data/precomputed_hotspots/combined_base_specific_hotspot_indices.pkl', 'rb'))
+        self.last_idx = None
+        def fallback_out():
+            spoof = fallback_spoof
+            mask_gen_seed = spoof['mask_gen_seed']
+            sel_item = spoof['sel_item']
+            chosen_dataset = spoof['chosen_dataset']
+            dataset_config = self.dataset_configs[chosen_dataset]
+            out = dataset_config.task_loaders(
+                        sel_item,
+                        {**rf2aa.data_loader.default_dataloader_params, **self.params, "P_ATOMIZE_MODRES": -1}, num_protein_chains=1, num_ligand_chains=1, 
+                        fixbb=True,
+                    )
+            return out
+        self.fallback_out = fallback_out
 
     def __len__(self):
         return sum(len(d.ids) for d in self.dataset_configs.values())
@@ -2054,7 +2245,7 @@ class DistilledDataset(data.Dataset):
         return d
 
     def __getitem__(self, index):
-        # mask_gen_seed = np.random.randint(0, 99999999)
+        mask_gen_seed = np.random.randint(0, 99999999)
         p_unclamp = np.random.rand()
         task_idx = np.random.choice(np.arange(len(self.task_names)), 1, p=self.p_task)[0]
         task = self.task_names[task_idx]
@@ -2062,6 +2253,7 @@ class DistilledDataset(data.Dataset):
         chosen_dataset, index = self.dataset_index_from_index(index)
         dataset_config = self.dataset_configs[chosen_dataset]
         ID = dataset_config.ids[index]
+
         if chosen_dataset == "sm_complex":
             sel_item = rf2aa.data_loader.sample_item_sm_compl(dataset_config.dic, ID)
         else:
@@ -2081,13 +2273,13 @@ class DistilledDataset(data.Dataset):
             chosen_dataset = spoof['chosen_dataset']
             dataset_config = self.dataset_configs[chosen_dataset]
             self.spoofed=True
-        # run_inference.seed_all(mask_gen_seed) # Reseed the RNGs for test stability.
+        run_inference.seed_all(mask_gen_seed) # Reseed the RNGs for test stability.
 
         item_context = pprint.pformat({
             'chosen_dataset': chosen_dataset,
             'sel_item': sel_item,
-            'task': task})
-            # 'mask_gen_seed': mask_gen_seed}, indent=4)
+            'task': task,
+            'mask_gen_seed': mask_gen_seed}, indent=4)
         
         with error.context(item_context):
             if chosen_dataset == 'cn':
@@ -2129,9 +2321,14 @@ class DistilledDataset(data.Dataset):
                 chosen_loader = dataset_config.task_loaders[task]
                 out = chosen_loader(sel_item, {**rf2aa.data_loader.default_dataloader_params, **self.params}, fixbb=fixbb)
 
-            elif chosen_dataset == 'dna_distil':
+            # elif chosen_dataset == 'dna_distil':
+            #     chosen_loader = dataset_config.task_loaders[task]
+            #     out = chosen_loader(sel_item, {**rf2aa.data_loader.default_dataloader_params, **self.params}, fixbb=fixbb)
+            elif chosen_dataset == 'tf_distil':
                 chosen_loader = dataset_config.task_loaders[task]
                 out = chosen_loader(sel_item, {**rf2aa.data_loader.default_dataloader_params, **self.params}, fixbb=fixbb)
+
+
             else:
                 raise Exception(f'chosen_dataset {chosen_dataset} not implemented')
             
@@ -2144,12 +2341,17 @@ class DistilledDataset(data.Dataset):
 
             # Mask the independent inputs.
             # run_inference.seed_all(mask_gen_seed) # Reseed the RNGs for test stability.
-            masks_1d = mask_generator.generate_masks(L=indep.length(), task=task, loader_params=self.params, chosen_dataset=chosen_dataset, full_chain=None, xyz=indep.xyz, atom_mask=atom_mask[:, :rf2aa.chemical.NHEAVYPROT], seq=indep.seq)
+
+            # masks_1d = mask_generator.generate_masks(L=indep.length(), task=task, loader_params=self.params, chosen_dataset=chosen_dataset, full_chain=None, xyz=indep.xyz, atom_mask=atom_mask[:, :rf2aa.chemical.NHEAVYPROT], seq=indep.seq)
+            # masks_1d = mask_generator.generate_masks(indep, task, self.params, chosen_dataset, None, atom_mask=atom_mask[:, :rf2aa.chemical.NHEAVYPROT])
+            masks_1d = mask_generator.generate_masks(indep, task, self.params, chosen_dataset, full_chain=None, atom_mask=atom_mask[:, :rf2aa.chemical.NHEAVYPROT])
 
             is_res_seq_shown = masks_1d['input_seq_mask']
             is_res_str_shown = masks_1d['input_str_mask']
             is_atom_str_shown = masks_1d['is_atom_motif']
+
             atomizer = None
+
             if is_atom_str_shown is not None:
                 is_atom_str_shown = {res_i.item():v for res_i, v in is_atom_str_shown.items()}
                 is_atomized = torch.zeros(indep.length()).bool()
@@ -2175,16 +2377,79 @@ class DistilledDataset(data.Dataset):
                     indep, is_diffused, gp_to_ptn_idx0 = gp.make_guideposts(indep, mask_gp)
                     is_masked_seq = is_diffused.clone()
 
+
+            indep, is_diffused, is_masked_seq, atomizer, _ = aa_model.transform_indep(indep, is_res_str_shown, is_atom_str_shown, self.params['USE_GUIDE_POSTS'])
+
+            run_inference.seed_all(mask_gen_seed) # Reseed the RNGs for test stability.
+
+
+            # fig, ax = plt.subplots(1,3, figsize=(12,5))
+            # Ltmp = is_res_str_shown.shape[0]
+            # ax[0].imshow(is_res_str_shown.cpu().numpy()[None].repeat(Ltmp, axis=0))
+            # ax[0].set_title('input_str_mask/is_res_str_shown')
+
+            # ax[1].imshow(is_diffused.cpu().numpy()[None].repeat(Ltmp, axis=0))
+            # ax[1].set_title('is_diffused')
+
+            # ax[2].imshow(masks_1d['t2d_is_revealed'].cpu().numpy())
+            # ax[2].set_title('t2d_is_revealed')
+
+            # plt.show()
+            # plt.savefig('1d_2d_masks_before_diffusion.png')
+            # sys.exit('debugging masks before diffusion')
+
+            
             # run_inference.seed_all(mask_gen_seed) # Reseed the RNGs for test stability.
-            aa_model.centre(indep, is_diffused)
+            # aa_model.centre(indep, is_diffused)
+            if not self.conf.preprocess.motif_only_2d:
+                aa_model.centre(indep, is_diffused) # center the motif at origin 
+            else:
+                # center entire protein at origin
+                aa_model.centre(indep, torch.ones_like(is_diffused).bool())
+
+
             t = random.randint(1, self.diffuser.T)
+
+            # if displaying motif only in 2d, allow diffusion everywhere
+            if self.conf.preprocess.motif_only_2d:
+                old_is_diffused = is_diffused.clone()
+                is_protein_motif = ~old_is_diffused * ~indep.is_sm
+
+                new_is_diffused = torch.zeros_like(is_diffused).bool() 
+                new_is_diffused[~indep.is_sm] = True # diffusion over all protein, no SM diffusion 
+                is_diffused = new_is_diffused
+            else:
+                is_protein_motif = None # prepro handles none case as normal task    
+            
             indep_diffused_tp1_t, t_list = aa_model.diffuse(self.conf, self.diffuser, indep, is_diffused, t)
 
             # Compute all strictly dependent model inputs from the independent inputs.
             rfi_tp1_t = []
             for indep_diffused, t in zip(indep_diffused_tp1_t, t_list):
+
+                if self.preprocess_param['randomize_frames']:
+                    assert not self.preprocess_param['eye_frames']
+                    indep_diffused.xyz = aa_model.randomly_rotate_frames(indep_diffused.xyz)
+                
+                if self.preprocess_param['eye_frames']:
+                    assert not self.preprocess_param['randomize_frames']
+                    indep_diffused.xyz = aa_model.eye_frames2(indep_diffused.xyz)
+                
+
+                # masks the sequence of indep 
+                if self.preprocess_param['p_show_motif_seq'] > 0.0:
+                    # sometimes mask the sequence
+                    P = self.preprocess_param['p_show_motif_seq']
+                    orig_dtype = is_masked_seq.dtype
+                    is_masked_seq = mask_sequence_chunks(is_masked_seq.numpy().astype(bool), P)
+                    is_masked_seq = torch.from_numpy(is_masked_seq)
+                    is_masked_seq = is_masked_seq.to(dtype=orig_dtype)
+
                 aa_model.mask_indep(indep_diffused, is_masked_seq)
-                rfi = self.model_adaptor.prepro(indep_diffused, t, is_diffused)
+
+                # prepare RF inputs 
+                t2d_is_revealed = masks_1d['t2d_is_revealed'] # DJ - new for 3rd template
+                rfi = self.model_adaptor.prepro(indep_diffused, t, is_diffused, is_protein_motif, t2d_is_revealed)
                 rfi_tp1_t.append(rfi)
 
                 # Sanity checks
@@ -2207,15 +2472,20 @@ class DistilledDataset(data.Dataset):
                 if chosen_dataset == 'na_compl':
                     hotspot_id = make_hotspot_id(out[-1])
                     hotspot = make_hotspot_vector(indep, self.base_hotspot_indices_dict, hotspot_id)
-                elif chosen_dataset == 'dna_distil':
+                # elif chosen_dataset == 'dna_distil':
+                #     hotspot_id = make_hotspot_id_distil(out[-1])
+                #     hotspot = make_hotspot_vector(indep, self.base_hotspot_indices_distil_dict, hotspot_id)
+                elif chosen_dataset == 'tf_distil':
                     hotspot_id = make_hotspot_id_distil(out[-1])
                     hotspot = make_hotspot_vector(indep, self.base_hotspot_indices_distil_dict, hotspot_id)
                 else:
                     hotspot = default_hotspot_vector(indep.length())
-                
+
                 rfi_tp1_t[0].t1d = torch.cat((rfi_tp1_t[0].t1d, hotspot), dim=-1)
                 rfi_tp1_t[1].t1d = torch.cat((rfi_tp1_t[1].t1d, hotspot), dim=-1)
 
+
+            run_inference.seed_all(mask_gen_seed) # Reseed the RNGs for test stability.
             return indep, rfi_tp1_t, chosen_dataset, sel_item, t, is_diffused, task, atomizer, masks_1d, item_context
 
 

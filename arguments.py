@@ -111,6 +111,10 @@ def get_args(in_args=None):
             help = 'Select dataset(s) to use. No default so make up your mind. Options are ["cn","pdb","fb","complex"]. Specify in a list: e.g. -dataset cn,pdb,fb')
     data_group.add_argument('-dataset_prob',type=str, default=None,
             help = 'Select proportion of examples from each dataset. Default behaviour is uniform. Specify like 0.2,0.4,0.4. Must sum to 1')
+    data_group.add_argument('-p_uncond',type=float, default=0.2,
+            help = 'What proportion of examples do you want to be unconditional (i.e. no motif)? Default is 20%')
+    data_group.add_argument('-p_free', type=float, default=0.3,
+            help = 'What proportion of NA examples do you want to diffuse freely? default is 30%')
     data_group.add_argument('-mask_min_proportion',type=float,default=0.2,
             help = 'When doing motif scaffolding in training, what is the minimum proportion of the protein you want to mask? Default is 0.2.')
     data_group.add_argument('-mask_max_proportion',type=float,default=1.0,

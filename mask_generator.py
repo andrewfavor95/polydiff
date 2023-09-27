@@ -1182,6 +1182,77 @@ def generate_masks(indep, task, loader_params, chosen_dataset, full_chain=None, 
         loss_str_mask = torch.ones(L).bool() #apply a loss on the whole structure        
         loss_str_mask_2d[~loss_str_mask,:] = False
         loss_str_mask_2d[:,~loss_str_mask] = False
+        
+    elif task == 'diff' and chosen_dataset == 'na_compl':
+        """
+        The plan:
+            provide sequence and structure of binding residues
+            provide structure and masked sequence motif residues
+        Make an initial diffusion mask over the protein (True where given, false where diffused)
+
+        legal diffusion positions (True where diffusable, False where not diffusable)
+
+        diffusion mask is ~(~simple diff mask AND legal diffusion position)
+
+        Make a sequence_mask that converts sequence to mask token at specific residues. 
+
+        """
+        seq = seq.squeeze()
+        xyz = xyz.squeeze()
+        ic(seq.shape)
+        ic(xyz.shape)
+        is_nucleic_acid = get_nucleic_acid_residues(seq)
+        L = len(is_nucleic_acid) - is_nucleic_acid.sum() # length of protein sequence is L
+
+        if random.uniform(0,1) < loader_params['P_UNCOND']:
+            diffusion_mask = torch.zeros(L).bool()
+        
+        else:
+            mask_fn = get_diff_mask_fn(loader_params['DIFF_MASK_PROBS'])
+            diffusion_mask = mask_fn(L, loader_params)
+
+            ## loss masks 
+            # loss_seq_mask[diffusion_mask] = False
+
+        # find binding contacts
+        if random.uniform(0,1) > loader_params['P_FREE']:
+            contact_residue_indices = get_na_contacts(seq, xyz, loader_params, is_nucleic_acid)
+
+            if len(contact_residue_indices) == 0:
+                legal_diffusion_positions = torch.ones(L).bool()
+                provide_sequence = diffusion_mask
+            else:
+            # find binding motifs
+                motif_blocks_residue_indices = get_motif_block(contact_residue_indices, L, loader_params)
+
+                legal_diffusion_positions = torch.ones(L).bool()
+                legal_diffusion_positions[motif_blocks_residue_indices] = False # can't diffuse the motif blocks
+
+                # making the sequence mask. We want to put a mask token at all the residues in the binding motif but not the contact itself. 
+                provide_sequence = diffusion_mask
+                provide_sequence[motif_blocks_residue_indices] = False # don't provide sequence in the motif
+                provide_sequence[contact_residue_indices] = True # but provide the sequence in the actual binding locations
+
+
+            diffusion_mask = ~torch.logical_and(~diffusion_mask,legal_diffusion_positions)
+        else:
+            provide_sequence = diffusion_mask
+
+        # need to now extend both to cover the NAs as well
+        len_NA = sum(is_nucleic_acid)
+        NA_diffusion_mask = torch.ones(len_NA).bool() # don't diffuse any NA positions
+        NA_provide_sequence = torch.ones(len_NA).bool() # provide all the sequence
+
+        diffusion_mask = torch.cat((diffusion_mask, NA_diffusion_mask))
+        provide_sequence = torch.cat((provide_sequence, NA_provide_sequence))
+        
+        is_atomize_example = False
+        input_seq_mask = provide_sequence
+        input_str_mask = diffusion_mask
+        loss_seq_mask[diffusion_mask] = False
+        input_t1d_str_conf_mask = torch.ones(len(input_seq_mask))
+        input_t1d_seq_conf_mask = torch.ones(len(input_seq_mask))
+
  
     else:
         sys.exit(f'Masks cannot be generated for the {task} task!')
