@@ -3,7 +3,7 @@ import torch
 import assertpy
 from collections import defaultdict
 import torch.nn.functional as F
-# import ipdb
+import ipdb
 import dataclasses
 from icecream import ic
 from assertpy import assert_that
@@ -284,6 +284,7 @@ def make_indep(pdb, ligand=None):
     indep = Indep(
         seq,
         xyz,
+        xyz.clone(), # DJ -- three template, dummy xyz for now 
         idx_pdb,
         # SM specific
         bond_feats,
@@ -293,6 +294,22 @@ def make_indep(pdb, ligand=None):
         is_sm,
         terminus_type)
     return indep
+
+
+    # seq:  torch.Tensor # [L]
+    # xyz:  torch.Tensor # [L, 36?, 3]
+    # xyz2: torch.Tensor # DJ - the original xyz
+    # idx:  torch.Tensor 
+
+    # # SM specific
+    # bond_feats: torch.Tensor
+    # chirals: torch.Tensor
+    # atom_frames: torch.Tensor
+    # same_chain: torch.Tensor
+    # is_sm: torch.Tensor
+    # terminus_type: torch.Tensor
+
+
 
 def add_fake_frame_legs(xyz, is_atom):
     # HACK.  ComputeAllAtom in the network requires N and C coords even for atomized residues,
@@ -590,6 +607,7 @@ class Model:
 
             # set of diffused crds w/ motif sliced in
             xyz_xt_w_motif = xyz.clone() 
+
             xyz_xt_w_motif[0,is_protein_motif,:NHEAVYPROT] = indep.xyz2[is_protein_motif]
             
             # t2d containing desired motif 
@@ -746,6 +764,8 @@ def adaptor_fix_bb_indep(out):
         mask_prev, same_chain, unclamp, negative, atom_frames, bond_feats, dist_matrix, chirals, ch_label, symm_group,
          dataset_name, item) = out
     assert symm_group=="C1", f"example with {symm_group} found, symmetric training not set up for aa-diffusion"
+    
+
     #remove permutation symmetry dimension if present
     if len(true_crds.shape) == 4 and len(atom_mask.shape) == 3:
         true_crds = true_crds[0]
@@ -778,6 +798,7 @@ def adaptor_fix_bb_indep(out):
         same_chain,
         rf2aa.tensor_util.assert_squeeze(is_sm),
         terminus_type)
+    
     return indep, atom_mask, dataset_name
 
 def pop_unoccupied(indep, atom_mask):
@@ -800,6 +821,7 @@ def pop_mask(indep, pop):
 
     indep.seq           = indep.seq[pop]
     indep.xyz           = indep.xyz[pop]
+    indep.xyz2          = indep.xyz2[pop]
     indep.idx           = indep.idx[pop]
     indep.bond_feats    = indep.bond_feats[pop2d].reshape(N,N)
     indep.same_chain    = indep.same_chain[pop2d].reshape(N,N)

@@ -47,6 +47,8 @@ import aa_model
 import atomize
 import error
 
+import matplotlib.pyplot as plt
+
 from hotspots import make_hotspot_id, make_hotspot_vector, default_hotspot_vector, make_hotspot_id_distil
 
 USE_DEFAULT = '__USE_DEFAULT__'
@@ -81,10 +83,10 @@ def set_data_loader_params(args):
         "VAL_NEG"    : "%s/val_lists/xaa.neg"%compl_dir,
         "DATAPKL"    : args.data_pkl, # cache for faster loading
         "DATAPKL_AA"    : args.data_pkl_aa, # cache for faster loading
-        # "SM_LIST"          : "%s/list_v02_smcompl_20221123.csv"%sm_compl_dir, 
-        # "RNA_LIST"         : "%s/list.rnaonly.csv"%na_dir,
-        # "NA_COMPL_LIST"    : "%s/list.nucleic.NODIMERS.csv"%sm_compl_dir,
-        # "VAL_RNA"    : "%s/rna_valid.csv"%na_dir,
+        "SM_LIST"          : "%s/list_v02_smcompl_20221123.csv"%sm_compl_dir, 
+        "RNA_LIST"         : "%s/list.rnaonly.csv"%na_dir,
+        "NA_COMPL_LIST"    : "%s/list.nucleic.NODIMERS.csv"%sm_compl_dir,
+        "VAL_RNA"    : "%s/rna_valid.csv"%na_dir,
         # "VAL_COMPL"        : "%s/val_lists/xaa"%compl_dir,
         # "VAL_SM_LIGCLUS"   : "%s/list_v02_smcompl_ligclusvalid_20221117.csv"%sm_compl_dir, 
         # "VAL_SM_STRICT"    : "%s/list_v02_smcompl_validstrict_20221102.csv"%sm_compl_dir, 
@@ -1737,7 +1739,7 @@ def loader_na_complex_diff(item, params, native_NA_frac=0.25, negative=False, pi
            same_chain, False, negative, torch.zeros(seq.shape), bond_feats, dist_matrix, chirals, ch_label, 'C1', "na_compl", item
 
 
-def loader_distil_tf(item, params, random_noise=5.0, pick_top=True, native_NA_frac=0.05, negative=False):
+def loader_distil_tf_diff(item, params, random_noise=5.0, pick_top=True, native_NA_frac=0.05, negative=False, fixbb=False):
     # collect info
     gene_id = item['gene_id']
     Ls = item['LEN']
@@ -1786,17 +1788,21 @@ def loader_distil_tf(item, params, random_noise=5.0, pick_top=True, native_NA_fr
     ins = a3m['ins'].long()
     if len(msa) > params['BLOCKCUT']:
         msa, ins = rf2aa.data_loader.MSABlockDeletion(msa, ins)
-    seq, msa_seed_orig, msa_seed, msa_extra, mask_msa = rf2aa.data_loader.MSAFeaturize(msa, ins, params, L_s=Ls)
+    seq, msa_seed_orig, msa_seed, msa_extra, mask_msa = rf2aa.data_loader.MSAFeaturize(msa, ins, params, L_s=Ls, fixbb=fixbb)
 
     ###################################
     # Load and prepare structure data #
     ###################################
     # load predicted structure as "truth"
-    xyz, mask, _, pdbseq = parse_pdb(
+    xyz, mask, _, pdbseq = rf2aa.parsers.parse_pdb(
             params["TF_DIR"]+f'/distill/{gene_id[:2]}/{gene_id}_{dnaseq}.pdb',
             seq=True,
             lddtmask=True
             )
+    # xyz, mask, _, pdbseq = parse_pdb(
+    #         params["TF_DIR"]+f'/distill/{gene_id[:2]}/{gene_id}_{dnaseq}.pdb',
+    #         seq=True
+    #         )
 
     xyz = torch.from_numpy(xyz)
     mask = torch.from_numpy(mask)
@@ -1806,7 +1812,9 @@ def loader_distil_tf(item, params, random_noise=5.0, pick_top=True, native_NA_fr
     # NOTE: use templates?
     ntempl = 0
     tpltA = {'ids':[]} # a fake tpltA
-    xyz_t, f1d_t, mask_t, _ = rf2aa.data_loader.TemplFeaturize(tpltA, sum(Ls), params, offset=0, npick=ntempl, pick_top=True, random_noise=random_noise)
+    # xyz_t, f1d_t, mask_t, _ = rf2aa.data_loader.TemplFeaturize(tpltA, sum(Ls), params, offset=0, npick=ntempl, pick_top=True, random_noise=random_noise)
+    xyz_t, f1d_t, mask_t = rf2aa.data_loader.TemplFeaturize(tpltA, sum(Ls), params, offset=0, npick=ntempl, pick_top=pick_top, random_noise=random_noise) 
+    # xyz_t, f1d_t, mask_t, _ = TemplFeaturize(tpltA, sum(Ls), params, offset=0, npick=ntempl, pick_top=True, random_noise=random_noise)
     NAstart = sum(Ls[:nmer])
     xyz_t[:,NAstart:] = INIT_NA_CRDS.reshape(1,1,NTOTAL,3).repeat(1,sum(Ls[-2:]),1,1) + torch.rand(1,sum(Ls[-2:]),1,3)*random_noise
 
@@ -2085,7 +2093,7 @@ def default_dataset_configs(loader_param, debug=False):
         'str2seq_full': rf2aa.data_loader.loader_na_complex, 
         'hal':          rf2aa.data_loader.loader_na_complex, 
         'hal_ar':       rf2aa.data_loader.loader_na_complex,
-        'diff':         loader_distil_tf},
+        'diff':         loader_distil_tf_diff},
         weights_dict["distil_tf"]
     )
     
@@ -2339,6 +2347,7 @@ class DistilledDataset(data.Dataset):
             indep, atom_mask, dataset_name = aa_model.adaptor_fix_bb_indep(out)
             atom_mask = aa_model.pop_unoccupied(indep, atom_mask)
 
+
             # Mask the independent inputs.
             # run_inference.seed_all(mask_gen_seed) # Reseed the RNGs for test stability.
 
@@ -2378,9 +2387,12 @@ class DistilledDataset(data.Dataset):
                     is_masked_seq = is_diffused.clone()
 
 
+
+
             indep, is_diffused, is_masked_seq, atomizer, _ = aa_model.transform_indep(indep, is_res_str_shown, is_atom_str_shown, self.params['USE_GUIDE_POSTS'])
 
             run_inference.seed_all(mask_gen_seed) # Reseed the RNGs for test stability.
+
 
 
             # fig, ax = plt.subplots(1,3, figsize=(12,5))
@@ -2394,9 +2406,37 @@ class DistilledDataset(data.Dataset):
             # ax[2].imshow(masks_1d['t2d_is_revealed'].cpu().numpy())
             # ax[2].set_title('t2d_is_revealed')
 
+            # png_saving_dir = '/home/afavor/git/RFD_AF/3template_na/pngs_training/'
+            # # png_filename = f'/home/afavor/git/RFD_AF/3template_na/pngs_training/{chosen_dataset}/1d_2d_masks_before_diffusion__{sel_item['CHAINID']}.png'
+            # if chosen_dataset=='pdb_aa':
+                
+            #     training_pdb_path = f'/projects/ml/TrRosetta/PDB-2021AUG02/pdb/pdb/{sel_item["CHAINID"][1:3]}/{sel_item["CHAINID"]}'
+            #     filename_pdb_path_comp = training_pdb_path.replace('/','__')
+            #     png_filepath = f'{png_saving_dir}{chosen_dataset}/1d_2d_masks_before_diffusion_{filename_pdb_path_comp}.png'
+            #     # png_filepath = f'{png_saving_dir}{chosen_dataset}/1d_2d_masks_before_diffusion__{sel_item["CHAINID"]}.png'
+            #     # ipdb.set_trace()
+            # elif chosen_dataset=='tf_distil':
+            #     ipdb.set_trace()
+            #     training_pdb_path = f'/projects/ml/prot_dna/distil/{sel_item["gene_id"][:2]}/{sel_item["gene_id"]}_{sel_item["DNA sequence"]}'
+            #     # training_pdb_path = f'/projects/ml/nucleic/distil/{sel_item["gene_id"][:2]}/{sel_item["gene_id"]}_{sel_item["DNA sequence"]}'
+            #     filename_pdb_path_comp = training_pdb_path.replace('/','__')
+            #     png_filepath = f'{png_saving_dir}{chosen_dataset}/1d_2d_masks_before_diffusion{filename_pdb_path_comp}.png'
+            #     # ipdb.set_trace()
+            # elif chosen_dataset=='na_compl':
+            #     ipdb.set_trace()
+            #     training_pdb_path = f'/projects/ml/prot_dna/distil/{sel_item["gene_id"][:2]}/{sel_item["gene_id"]}_{sel_item["DNA sequence"]}'
+            #     filename_pdb_path_comp = training_pdb_path.replace('/','__')
+            #     png_filepath = f'{png_saving_dir}{chosen_dataset}/1d_2d_masks_before_diffusion_{filename_pdb_path_comp}.png'
+
+            # elif chosen_dataset=='sm_complex':
+            #     ipdb.set_trace()
+
             # plt.show()
-            # plt.savefig('1d_2d_masks_before_diffusion.png')
-            # sys.exit('debugging masks before diffusion')
+            # plt.savefig(png_filepath)
+            # plt.close(fig)
+            # # plt.savefig('1d_2d_masks_before_diffusion.png')
+            # # sys.exit('debugging masks before diffusion')
+            # # ipdb.set_trace()
 
             
             # run_inference.seed_all(mask_gen_seed) # Reseed the RNGs for test stability.
@@ -2421,6 +2461,7 @@ class DistilledDataset(data.Dataset):
             else:
                 is_protein_motif = None # prepro handles none case as normal task    
             
+
             indep_diffused_tp1_t, t_list = aa_model.diffuse(self.conf, self.diffuser, indep, is_diffused, t)
 
             # Compute all strictly dependent model inputs from the independent inputs.
@@ -2449,7 +2490,11 @@ class DistilledDataset(data.Dataset):
 
                 # prepare RF inputs 
                 t2d_is_revealed = masks_1d['t2d_is_revealed'] # DJ - new for 3rd template
+                # try:
                 rfi = self.model_adaptor.prepro(indep_diffused, t, is_diffused, is_protein_motif, t2d_is_revealed)
+                # except:
+                    # ipdb.set_trace()
+
                 rfi_tp1_t.append(rfi)
 
                 # Sanity checks
