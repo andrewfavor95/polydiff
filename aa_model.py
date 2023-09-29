@@ -52,6 +52,9 @@ class Indep:
     seq:  torch.Tensor # [L]
     xyz:  torch.Tensor # [L, 36?, 3]
     xyz2: torch.Tensor # DJ - the original xyz
+    natstack: torch.Tensor 
+    maskstack: torch.Tensor
+    Ls: list
     idx:  torch.Tensor 
 
     # SM specific
@@ -409,6 +412,8 @@ class Model:
             t2d (1, L, L, 45)
                 - last plane is block adjacency
         """
+
+
         xyz_t = indep.xyz
         seq_one_hot = torch.nn.functional.one_hot(
                 indep.seq, num_classes=self.NTOKENS).float()
@@ -424,6 +429,8 @@ class Model:
         ### msa_masked ###
         ##################
         msa_masked = torch.zeros((1,1,L,2*NAATOKENS+NINDEL*2+NTERMINUS))
+
+        
 
         msa_masked[:,:,:,:NAATOKENS] = seq_one_hot[None, None]
         msa_masked[:,:,:,NAATOKENS:2*NAATOKENS] = seq_one_hot[None, None]
@@ -587,6 +594,14 @@ class Model:
 
         # T2D for 3template protocol
         if (self.conf.preprocess.motif_only_2d):
+            # ic(t2d_is_revealed.numel())
+            # ic(t2d_is_revealed.sum())
+            
+            # ic(is_protein_motif.shape)
+            # ic(is_protein_motif.sum())
+
+            # ic(xyz.shape)
+            # ic(indep.xyz2.shape)
 
             # set of diffused crds w/ motif sliced in
             xyz_xt_w_motif = xyz.clone() 
@@ -608,7 +623,6 @@ class Model:
             cattable_t2d_is_revealed = cattable_t2d_is_revealed[None,...,None] # (3,L,L) -> (1,3,L,L,1)
 
             t2d = torch.cat((t2d, cattable_t2d_is_revealed), dim=-1)    # (1,3,L,L,69)
-            # sys.exit('debugging')
 
         # t2d for the motif 
 
@@ -655,7 +669,6 @@ class Model:
             cattable_is_protein_motif = torch.tile(is_protein_motif[None,None,:,None], (1,3,1,1)).to(device=t1d.device, dtype=t1d.dtype)
             cattable_is_protein_motif[:,:-1,...] = -1  # first two templates get -1 for the motif feature 
             t1d = torch.cat((t1d, cattable_is_protein_motif), dim=-1) 
-
 
 
 
@@ -741,12 +754,16 @@ def adaptor_fix_bb_indep(out):
     adapts the outputs of RF2-allatom phase 3 dataloaders into fixed bb outputs
     takes in a tuple with 22 items representing the RF2-allatom data outputs and returns an Indep dataclass.
     """
-    assert len(out) == 24, f"found {len(out)} elements in RF2-allatom output"
+    assert len(out) == 25, f"found {len(out)} elements in RF2-allatom output"
     (seq, msa, msa_masked, msa_full, mask_msa, true_crds, atom_mask, idx_pdb, xyz_t, t1d, mask_t, xyz_prev,
         mask_prev, same_chain, unclamp, negative, atom_frames, bond_feats, dist_matrix, chirals, ch_label, symm_group,
-         dataset_name, item) = out
+         dataset_name, item, Ls) = out
     assert symm_group=="C1", f"example with {symm_group} found, symmetric training not set up for aa-diffusion"
+    
+
     #remove permutation symmetry dimension if present
+    natstack = true_crds.clone()
+    maskstack = atom_mask.clone()
     if len(true_crds.shape) == 4 and len(atom_mask.shape) == 3:
         true_crds = true_crds[0]
         atom_mask = atom_mask[0]
@@ -769,6 +786,9 @@ def adaptor_fix_bb_indep(out):
         rf2aa.tensor_util.assert_squeeze(seq), # [L]
         true_crds[:,:14], # [L, 14, 3]
         true_crds[:,:14], # DJ- new xyz2 to keep track of orig AND diffused xyz
+        natstack, 
+        maskstack,
+        Ls,
         idx_pdb,
 
         # SM specific
@@ -778,6 +798,7 @@ def adaptor_fix_bb_indep(out):
         same_chain,
         rf2aa.tensor_util.assert_squeeze(is_sm),
         terminus_type)
+    
     return indep, atom_mask, dataset_name
 
 def pop_unoccupied(indep, atom_mask):
@@ -801,6 +822,8 @@ def pop_mask(indep, pop):
     indep.seq           = indep.seq[pop]
     indep.xyz           = indep.xyz[pop]
     indep.xyz2          = indep.xyz2[pop]
+    indep.natstack      = indep.natstack[:,pop]
+    indep.maskstack     = indep.maskstack[:,pop]
     indep.idx           = indep.idx[pop]
     indep.bond_feats    = indep.bond_feats[pop2d].reshape(N,N)
     indep.same_chain    = indep.same_chain[pop2d].reshape(N,N)

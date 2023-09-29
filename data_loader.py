@@ -134,7 +134,8 @@ def set_data_loader_params(args):
         "SPOOF_ITEM":args.spoof_item,
         "MOL_DIR":rf2aa.data_loader.default_dataloader_params['MOL_DIR'],
         "DISCONTIGUOUS_CROP": True,
-        "USE_GUIDE_POSTS": args.use_guide_posts
+        "USE_GUIDE_POSTS": args.use_guide_posts,
+        "SM_ONLY": args.sm_only,
     }
     for param in PARAMS:
         if hasattr(args, param.lower()):
@@ -1454,7 +1455,7 @@ def default_dataset_configs(loader_param, debug=False):
     #                     'diff':         loader_cn_fixbb},
     #                     cn_weights)
     sm_compl_loader_fixbb = partial(rf2aa.data_loader.loader_sm_compl_assembly, \
-                                chid2hash=chid2hash,chid2taxid=chid2taxid)
+                                chid2hash=chid2hash, chid2taxid=chid2taxid)
     sm_compl_config = WeightedDataset(
                 train_ID_dict["sm_compl"], train_dict["sm_compl"], sm_compl_loader_fixbb, weights_dict["sm_compl"])
 
@@ -1657,10 +1658,12 @@ class DistilledDataset(data.Dataset):
                 else:
                     out = chosen_loader(sel_item, self.params, unclamp=False,fixbb=fixbb)
             elif chosen_dataset == 'sm_complex':
+                load_kwargs = {**rf2aa.data_loader.default_dataloader_params, **self.params, "P_ATOMIZE_MODRES": -1}
+
                 try:
                     out = dataset_config.task_loaders(
                         sel_item,
-                        {**rf2aa.data_loader.default_dataloader_params, **self.params, "P_ATOMIZE_MODRES": -1}, num_protein_chains=1, num_ligand_chains=1, 
+                        load_kwargs, num_protein_chains=1, num_ligand_chains=1, 
                         fixbb=fixbb,
                     )
 
@@ -1725,12 +1728,13 @@ class DistilledDataset(data.Dataset):
             # if displaying motif only in 2d, allow diffusion everywhere
             if self.conf.preprocess.motif_only_2d:
                 old_is_diffused = is_diffused.clone()
-                is_protein_motif = ~old_is_diffused * ~indep.is_sm
+                # is_protein_motif = ~old_is_diffused * ~indep.is_sm
+                is_motif = masks_1d['input_str_mask'].bool() # 1=motif, 0=non-motif
 
                 new_is_diffused = torch.ones_like(is_diffused).bool() # diffuse over all tokens
                 is_diffused = new_is_diffused
             else:
-                is_protein_motif = None # prepro handles none case as normal task    
+                is_motif = None # prepro handles none case as normal task    
             
             
             indep_diffused_tp1_t, t_list = aa_model.diffuse(self.conf, self.diffuser, indep, is_diffused, t)
@@ -1763,7 +1767,7 @@ class DistilledDataset(data.Dataset):
 
                 # prepare RF inputs 
                 t2d_is_revealed = masks_1d['t2d_is_revealed'] # DJ - new for 3rd template
-                rfi = self.model_adaptor.prepro(indep_diffused, t, is_diffused, is_protein_motif, t2d_is_revealed)
+                rfi = self.model_adaptor.prepro(indep_diffused, t, is_diffused, is_motif, t2d_is_revealed)
                 rfi_tp1_t.append(rfi)
 
 
@@ -1781,7 +1785,8 @@ class DistilledDataset(data.Dataset):
                         if 'xyz' not in k:
                             assert not torch.isnan(v).any(), f'nan in {k}'
                         else: 
-                            assert not torch.isnan(v.squeeze()[:,1:2,:]).any(), f'nan in {k}'
+                            # no NaNs in Ca 
+                            assert not torch.isnan(v.squeeze(0)[:,1:2,:]).any(), f'nan in {k}'
             
             return indep, rfi_tp1_t, chosen_dataset, sel_item, t, is_diffused, task, atomizer, masks_1d, item_context
 

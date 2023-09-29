@@ -727,8 +727,15 @@ def _get_sm_contact_3template(xyz,
     """
     Produces mask2d and is_motif for small molecule, possibly with contacting protein chunks
     """
+    print('Entered _get_sm_contact_3template')
     assert len(xyz.shape) == 3
-    ca      = xyz[~is_sm, 1,:]
+    ca = xyz[~is_sm, 1,:]
+    
+    if ca.shape[0] == 0:
+        sm_only = True 
+    else:
+        sm_only = False
+
     sm_xyz  = xyz[is_sm, 1,:]
 
     dmap = torch.cdist(ca, sm_xyz)
@@ -739,7 +746,7 @@ def _get_sm_contact_3template(xyz,
     
     n_chunk_revealed = random.randint(0,4)
 
-    if n_chunk_revealed == 0:
+    if (n_chunk_revealed == 0) or (sm_only):
         is_motif = is_sm.clone()
         is_motif_2d = is_motif[:, None] * is_motif[None, :]
         return is_motif_2d, is_motif
@@ -751,8 +758,11 @@ def _get_sm_contact_3template(xyz,
         for i in range(n_chunk_revealed):
             print('on chunk ',i) 
             chunk_size = torch.randint(chunk_size_min, chunk_size_max, size=(1,)).item()
+            
+            if len(where_is_contacting.shape) == 0:
+                # ensures where_is_contacting is a 1d tensor
+                where_is_contacting = where_is_contacting.unsqueeze(0)
 
-            #chosen_idx = random.choice(where_is_contacting.tolist())
             p = torch.ones_like(where_is_contacting)/len(where_is_contacting)
             chosen_idx = p.multinomial(num_samples=1, replacement=False)
             chosen_idx = chosen_idx.item()
@@ -770,9 +780,6 @@ def _get_sm_contact_3template(xyz,
             protein_is_contacting[start:end] = False # remove this option from where_is_contacting 
             
             where_is_contacting = protein_is_contacting.nonzero().squeeze()
-            if len(where_is_contacting.shape) == 0:
-                # ensures where_is_contacting is a 1d tensor
-                where_is_contacting = where_is_contacting.unsqueeze(0)
             
             if protein_is_contacting.sum() == 0:
                 break # can't make any more chunks
@@ -802,7 +809,7 @@ def get_sm_contact_mask(indep,
     """
     Gets a small molecule contact mask. Either SM alone, SM+1protein chunk, or SM+2protein chunks
     """
-    indep.write_pdb('check_indep_sm.pdb')
+    # indep.write_pdb('check_indep_sm.pdb')
     mask2d, is_motif = _get_sm_contact_3template(indep.xyz, indep.is_sm, low_prop, high_prop)
 
     return (mask2d, is_motif), None
@@ -1345,8 +1352,10 @@ def generate_masks(indep, task, loader_params, chosen_dataset, full_chain=None, 
  
     else:
         sys.exit(f'Masks cannot be generated for the {task} task!')
-    if task != 'seq2str':
+    
+    if (task != 'seq2str') and (not loader_params['SM_ONLY']):
        assert torch.sum(~input_seq_mask) > 0, f'Task = {task}, dataset = {chosen_dataset}, full chain = {full_chain}'
+    
     mask_dict = {'input_seq_mask':input_seq_mask,
                 'input_str_mask':input_str_mask,
                 'input_floating_mask':input_floating_mask,

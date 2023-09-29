@@ -17,7 +17,9 @@ from contextlib import ExitStack
 import time 
 import torch
 import torch.nn as nn
+import pdb
 from torch.utils import data
+import math 
 
 #rf2_allatom = __import__('RF2-allatom')
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'RF2-allatom'))
@@ -28,7 +30,9 @@ import rf2aa.loss
 import rf2aa.tensor_util
 from rf2aa.tensor_util import assert_equal
 from rf2aa.util_module import XYZConverter
+from rf2aa.util import get_frames
 from rf2aa.RoseTTAFoldModel import RoseTTAFoldModule
+from rf2aa.loss import compute_general_FAPE, mask_unresolved_frames
 import loss_aa
 import run_inference
 import aa_model
@@ -357,7 +361,13 @@ class Trainer():
                   lj_lin=0.75, use_H=False, w_disp=0.0, w_motif_disp=0.0, 
                   w_ax_ang=0.0, w_frame_dist=0.0, eps=1e-6, w_motif_fape=0.0,
                   w_nonmotif_fape=0.0, norm_fape=10.0, clamp_fape=10.0,
-                  backprop_non_displacement_on_given=False, masks_1d={}):
+                  backprop_non_displacement_on_given=False, masks_1d={},
+                  atom_frames=None, w_ligand_intra_fape=1.0, w_prot_lig_inter_fape=1.0):
+        
+        # assuming all bad crds have been popped
+        assert not torch.isnan(pred_in).any()
+        assert not torch.isnan(true).any()
+        gpu = pred_in.device
 
 
         #NB t is 1-indexed
@@ -370,32 +380,39 @@ class Trainer():
         seq = label_aa_s[:,0].clone()
         assert (B==1) # fd - code assumes a batch size of 1
 
+        is_atom         = rf2aa.util.is_atom(seq).squeeze().to(device=pred_in.device)
+        is_motif        = masks_1d['input_str_mask'].to(device=is_atom.device) # (L,), True if it's a motif TOKEN (protein or sm)
+        is_sm_motif     = is_motif & is_atom    # (L,), True if it's a sm motif
+        is_prot_motif   = is_motif & ~is_atom   # (L,), True if it's a protein motif
+
         loss_s = list()
         tot_loss = 0.0
         
         # get tscales
-        c6d_tscale = self.loss_schedules.get('c6d',[1]*(t))[t_idx]
-        aa_tscale = self.loss_schedules.get('aa_cce',[1]*(t))[t_idx]
-        disp_tscale = self.loss_schedules.get('displacement',[1]*(t))[t_idx]
+        c6d_tscale      = self.loss_schedules.get('c6d',[1]*(t))[t_idx]
+        aa_tscale       = self.loss_schedules.get('aa_cce',[1]*(t))[t_idx]
+        disp_tscale     = self.loss_schedules.get('displacement',[1]*(t))[t_idx]
         lddt_loss_tscale = self.loss_schedules.get('lddt_loss',[1]*(t))[t_idx]
-        bang_tscale = self.loss_schedules.get('bang',[1]*(t))[t_idx]
-        blen_tscale = self.loss_schedules.get('blen',[1]*(t))[t_idx]
-        exp_tscale = self.loss_schedules.get('exp',[1]*(t))[t_idx]
-        lj_tscale = self.loss_schedules.get('lj',[1]*(t))[t_idx]
-        hb_tscale = self.loss_schedules.get('lj',[1]*(t))[t_idx]
-        str_tscale = self.loss_schedules.get('w_str',[1]*(t))[t_idx]
-        w_all_tscale = self.loss_schedules.get('w_all',[1]*(t))[t_idx]
+        bang_tscale     = self.loss_schedules.get('bang',[1]*(t))[t_idx]
+        blen_tscale     = self.loss_schedules.get('blen',[1]*(t))[t_idx]
+        exp_tscale      = self.loss_schedules.get('exp',[1]*(t))[t_idx]
+        lj_tscale       = self.loss_schedules.get('lj',[1]*(t))[t_idx]
+        hb_tscale       = self.loss_schedules.get('lj',[1]*(t))[t_idx]
+        str_tscale      = self.loss_schedules.get('w_str',[1]*(t))[t_idx]
+        w_all_tscale    = self.loss_schedules.get('w_all',[1]*(t))[t_idx]
 
         # tot_loss += (1.0-w_all)*w_str*tot_str
         loss_weights = {
-            'displacement'      : w_disp*disp_tscale,
-            'motif_displacement': w_motif_disp*disp_tscale,
-            'aa_cce'            : w_aa*aa_tscale,
-            'frame_sqL2'        : w_frame_dist*disp_tscale,
-            'axis_angle'        : w_ax_ang*disp_tscale,
-            'tot_str'           : (1.0 - w_all*w_all_tscale)*w_str,
-            'motif_fape'        : w_motif_fape*disp_tscale,
-            'nonmotif_fape'     : w_nonmotif_fape*disp_tscale,
+            'displacement'              : w_disp*disp_tscale,
+            'motif_displacement'        : w_motif_disp*disp_tscale,
+            'aa_cce'                    : w_aa*aa_tscale,
+            'frame_sqL2'                : w_frame_dist*disp_tscale,
+            'axis_angle'                : w_ax_ang*disp_tscale,
+            'tot_str'                   : (1.0 - w_all*w_all_tscale)*w_str,
+            'motif_fape'                : w_motif_fape*disp_tscale,
+            'nonmotif_fape'             : w_nonmotif_fape*disp_tscale,
+            'ligand_intra_fape'         : w_ligand_intra_fape*disp_tscale,
+            'prot_lig_inter_fape'       : w_prot_lig_inter_fape*disp_tscale,
         }
 
         for i in range(4):
@@ -425,13 +442,36 @@ class Trainer():
             pred = torch.clone(pred_in)
             pred[:,:,diffusion_mask] = pred_in[:,:,diffusion_mask].detach()
 
+
+        # set up frames
+        # (B,L,natom,3)
+        
+        frames, frame_mask = get_frames(pred_in[-1,:,...], mask_crds, seq, self.fi_dev, atom_frames)
+
+        # sys.exit()
+        # update frames and frames_mask to only include BB frames (have to update both for compatibility with compute_general_FAPE)
+        frames_BB = frames.clone()
+        frames_BB[..., 1:, :, :] = 0        # all frames except BB frames are set to zero
+        frame_mask_BB = frame_mask.clone()
+        frame_mask_BB[...,1:] =False
+        
         # c6d loss
         for i in range(4):
             # schedule factor for c6d 
             # syntax is if it's not in the scheduling dict, loss has full weight (i.e., 1x)
 
             loss = self.loss_fn(logit_s[i], label_s[...,i]) # (B, L, L)
-            loss = (mask_2d*loss).sum() / (mask_2d.sum() + eps)
+
+            if i == 0: 
+                mask_2d_ = mask_2d
+            else:
+                # apply anglegram loss only when both residues have valid BB frames (i.e. not metal ions, and not examples with unresolved atoms in frames)
+                _, bb_frame_good = mask_unresolved_frames(frames_BB, frame_mask_BB, mask_crds) # (1, L, nframes)
+                bb_frame_good = bb_frame_good[...,0] # (1,L)
+                loss_mask_2d = bb_frame_good & bb_frame_good[...,None]
+                mask_2d_ = mask_2d & loss_mask_2d
+
+            loss = (mask_2d_*loss).sum() / (mask_2d_.sum() + eps)
             loss_s.append(loss[None].detach())
 
             loss_dict[f'c6d_{i}'] = loss.clone()
@@ -486,6 +526,7 @@ class Trainer():
         # get true frames 
         R_true,_ = rigid_from_3_points(N_true, Ca_true, C_true)
 
+
         # calculate frame distance loss 
         loss_frame_dist = loss_aa.frame_distance_loss(R_pred, R_true.squeeze(), is_sm) # NOTE: loss calc assumes batch size 1 due to squeeze 
         loss_dict['frame_sqL2'] = loss_frame_dist.clone()
@@ -500,62 +541,170 @@ class Trainer():
         # append to dictionary  
         loss_dict['axis_angle'] = ax_ang_loss
 
-        
-        # Calculate displacement on xt-1 backcalculated from px0 and x0.
-        # Currently not backpropable
-        
-        # xt1_squared_disp, xt1_disp = track_xt1_displacement(true, pred, xyz_in,
-        #         t, diffusion_mask, self.schedule, self.alphabar_schedule)
-
-        # loss_dict['xt1_displacement'] = xt1_disp
-        # loss_dict['xt1_squared_displacement'] = xt1_squared_disp
+        #######################
+        ##### FAPE losses #####
+        #######################
 
         # Structural loss
         tot_str, str_loss = calc_str_loss(pred, true, mask_2d, same_chain, negative=negative,
                                               A=10.0, d_clamp=None if unclamp else 10.0, gamma=1.0)
+    
         
-        
-        
-        # FAPE on motif residues -- has smaller normalizer and smaller clamp distance
+        # FAPE on protein motif (non SM) residues -- has smaller normalizer and smaller clamp distance
         t2d_is_revealed = masks_1d['t2d_is_revealed']
-        tot_motif_fape, _ = calc_str_loss(pred, true, t2d_is_revealed.to(device=pred.device), same_chain, negative=negative,
-                                              A=norm_fape/2, d_clamp=None if unclamp else clamp_fape/2, gamma=1.0)
+        t2d_is_revealed_protein_only = t2d_is_revealed.clone()
+        # mask out all (i,j) pairs where i or j is a small molecule
+        t2d_is_revealed_protein_only[is_sm,:] = False 
+        t2d_is_revealed_protein_only[:,is_sm] = False
+        
+        if is_prot_motif.sum() > 0:
+            had_prot_motif = True
+            tot_motif_fape, _ = calc_str_loss(pred, true, t2d_is_revealed_protein_only.to(device=pred.device), same_chain, negative=negative,
+                                                A=norm_fape/2, d_clamp=None if unclamp else clamp_fape/2, gamma=1.0)
+        else: 
+            had_prot_motif = False
+            tot_motif_fape = float('nan')
         
         # FAPE on non-motif residues
         tot_nonmotif_fape, _ = calc_str_loss(pred, true, ~t2d_is_revealed.to(device=pred.device), same_chain, negative=negative,
                                              A=norm_fape, d_clamp=None if unclamp else clamp_fape, gamma=1.0)
+        
+        ### Ligand Intra FAPE ###
+        dclamp_sm = 4.0
+        Z_sm = 4.0
+        dclamp = clamp_fape
+        Z = norm_fape 
+        res_mask = ~((mask_crds[:,:,:3].sum(dim=-1) < 3.0) * ~(rf2aa.util.is_atom(seq)))
+    
+        # create 2d masks for intrachain and interchain fape calculations
+        nframes = frame_mask.shape[-1]
+        frame_atom_mask_2d_allatom = torch.einsum('bfn,bra->bfnra', frame_mask_BB, mask_crds).bool() # B, L, nframes, L, natoms
+        frame_atom_mask_2d = frame_atom_mask_2d_allatom[:, :, :, :, :3]
+        frame_atom_mask_2d_intra_allatom = frame_atom_mask_2d_allatom * same_chain[:, :,None, :, None].bool().expand(-1,-1,nframes,-1, rf2aa.chemical.NTOTAL)
+        frame_atom_mask_2d_intra = frame_atom_mask_2d_intra_allatom[:, :, :, :, :3]
+        different_chain = ~same_chain.bool()
+        frame_atom_mask_2d_inter = frame_atom_mask_2d*different_chain[:, :,None, :, None].expand(-1,-1,nframes,-1, 3)
+
+        # FAPE within ligand
+        sm_res_mask = (rf2aa.util.is_atom(seq)*res_mask).squeeze()
+        
+        # DJ - fix masks so invalid sm atoms are not scored 
+        frame_atom_mask_2d_intra[...,sm_res_mask, 0] = False
+        frame_atom_mask_2d_intra[...,sm_res_mask, 2] = False
+        mask_crds[...,sm_res_mask, 0] = False
+        mask_crds[...,sm_res_mask, 2] = False
+
+        
+
+        if rf2aa.util.is_atom(seq).sum() > 0: 
+            had_sm = True
+            l_fape_sm_intra, _, _ = compute_general_FAPE(
+                    pred[:,sm_res_mask[None],:,:3],
+                    true[:,sm_res_mask,:3,:3],
+                    atom_mask           = mask_crds[:,sm_res_mask, :3],
+                    frames              = frames_BB[:,sm_res_mask],
+                    frame_mask          = frame_mask_BB[:,sm_res_mask],
+                    frame_atom_mask_2d  = frame_atom_mask_2d_intra[:, sm_res_mask][:, :, :, sm_res_mask],
+                    dclamp=dclamp_sm,
+                    Z=Z_sm
+                )
+            # l_fape_sm_intra is (N,) shape, need to apply weighted sum
+            l_fape_sm_intra = weighted_decay_sum(l_fape_sm_intra, gamma=0.99) # in ./loss.py 
+        
+        else: 
+            had_sm = False 
+            l_fape_sm_intra = float('nan') # will skip adding later 
+
+        #########################################################
+        # FAPE protein --> ligand and ligand --> protein
+
+        if (had_sm and had_prot_motif): 
+
+            # inter_p_sm_atom_mask = torch.ones_like(sm_res_mask).bool()
+            # inter_p_sm_frame_mask = torch.ones_like(sm_res_mask).bool()
+            sm_prot_inter_frame_atom_is_scored = torch.zeros((L,nframes,L,rf2aa.chemical.NTOTAL), device=pred.device).bool()
+            
+            # Cursed scatter of True's into 2D mask
+            # sm_prot_inter_frame_atom_is_scored[is_sm_motif, 0, is_prot_motif, :3] = True
+            score_2d = sm_prot_inter_frame_atom_is_scored
+            a,b,c,d = score_2d.shape
+            # SM frames against protin BB atoms 
+            for i in range(a):                          
+                if is_sm_motif[i]:                  
+                    for k in range(c):
+                        if is_prot_motif[k]: 
+                            # set i,0,k,:3 -->True 
+                            score_2d[i,0,k,:3] = True   
+            
+            # Prot frames against SM atoms (only available atom is first index)
+            #sm_prot_inter_frame_atom_is_scored[is_prot_motif, 0, is_sm_motif, 1:2] = True
+            for i in range(a): 
+                if is_prot_motif[i]:
+                    for k in range(c):
+                        if is_sm_motif[k]:
+                            # set i,0,k,1:2 --> True 
+                            score_2d[i,0,k,1:2] = True 
+
+
+            l_fape_prot_sm_inter, _, _ = compute_general_FAPE(
+                pred[...,:3,:].squeeze(),
+                true[...,:3,:],
+                atom_mask           = mask_crds[...,:3],
+                frames              = frames_BB,
+                frame_mask          = frame_mask_BB,
+                frame_atom_mask_2d  = sm_prot_inter_frame_atom_is_scored[None,...,:3],
+                dclamp              = dclamp, 
+                Z                   = Z)
+            
+            l_fape_prot_sm_inter= weighted_decay_sum(l_fape_prot_sm_inter, gamma=0.99) # in ./loss.py
+
+        else: 
+            l_fape_prot_sm_inter = float('nan')
+
+
+        # Add FAPE losses to loss dict 
+        loss_s.append(str_loss)
+
+        loss_dict['tot_str']             = tot_str
+        loss_dict['motif_fape']          = tot_motif_fape
+        loss_dict['nonmotif_fape']       = tot_nonmotif_fape
+        loss_dict['ligand_intra_fape']   = l_fape_sm_intra
+        loss_dict['prot_lig_inter_fape'] = l_fape_prot_sm_inter
+
+        ########################
+        # Done with FAPE calcs #
+        ########################
+
 
         # Report RMSD on motif chunks 
         is_protein_motif = masks_1d['input_str_mask']
+        is_protein_motif[is_atom] = False # protein only motif
+        is_not_protein_motif = ~is_protein_motif
+        is_not_protein_motif[is_atom] = False # protein only non-motif 
+
         motif_rmsd      = calc_discontiguous_motif_rmsd(pred.detach(), true.detach(), is_protein_motif)
         non_motif_rmsd  = calc_discontiguous_motif_rmsd(pred.detach(), true.detach(), ~is_protein_motif)
+        ligand_rmsd     = calc_discontiguous_motif_rmsd(pred.detach(), true.detach(), is_atom.to(is_protein_motif.device))
+        
+        # check if there was just a single ligand atom
+        if rf2aa.util.is_atom(seq).sum() <= 1:
+            ligand_rmsd = float('nan')
+
         loss_dict['motif_rmsd']         = motif_rmsd
         loss_dict['non_motif_rmsd']     = non_motif_rmsd
+        loss_dict['ligand_rmsd']        = ligand_rmsd
         loss_weights['motif_rmsd']      = 0.0
         loss_weights['non_motif_rmsd']  = 0.0
+        loss_weights['ligand_rmsd']     = 0.0
         
         
-        # dj - str loss timestep scheduling: 
-        # scale w_all to keep the contributions of BB/ALLatom fape summing to 1.0
-        loss_s.append(str_loss)
-        
-        loss_dict['tot_str'] = tot_str
-        loss_dict['motif_fape'] = tot_motif_fape
-        loss_dict['nonmotif_fape'] = tot_nonmotif_fape
-
-        for k, loss in loss_dict.items():
-
-            if 'motif_rmsd' not in k:
-                weight = loss_weights[k]
-                tot_loss += loss*weight
-            else: 
-                if is_protein_motif.any():
-                    weight = loss_weights[k]
-                    tot_loss += loss*weight
-                else:
-                    # no motif, rmsd will be nan --> don't add to loss
-                    pass
-
+        tot_loss = rf2aa.util.resolve_loss_summation(tot_loss, 
+                                                     loss_dict, 
+                                                     loss_weights, 
+                                                     had_sm, 
+                                                     had_prot_motif)
+                    
+            
 
         # tot_loss += 0.0 * (pred_tors.mean() + pred_lddt.mean())
 
@@ -1077,6 +1226,11 @@ class Trainer():
         for loader_out in train_loader:
             indep, rfi_tp1_t, chosen_dataset, item, little_t, is_diffused, chosen_task, atomizer, masks_1d, item_context = loader_out
             context_msg = f'rank: {rank}: {item_context}'
+            
+            if indep.seq.shape[0] <= 3:
+                # skip SM examples w/ too few atoms
+                continue 
+
             with error.context(context_msg):
                 rfi_tp1, rfi_t = rfi_tp1_t
 
@@ -1168,14 +1322,41 @@ class Trainer():
                         indep.same_chain = indep.same_chain.to(gpu)
                         indep.idx = indep.idx.to(gpu)
                         true_crds = torch.zeros((1,L,36,3)).to(gpu)
+                        indep.natstack = indep.natstack.to(gpu)
+                        indep.maskstack = indep.maskstack.to(gpu)
 
                         true_crds[0,:,:14,:] = indep.xyz[:,:14,:]
                         mask_crds = ~torch.isnan(true_crds).any(dim=-1)
-                        true_crds, mask_crds = resolve_equiv_natives(pred_crds[-1], true_crds, mask_crds)
-                        mask_crds[:,~is_diffused,:] = False
-                        mask_BB = ~indep.is_sm[None]
-                        mask_2d = mask_BB[:,None,:] * mask_BB[:,:,None] # ignore pairs having missing residues
-                        assert torch.sum(mask_2d) > 0, "mask_2d is blank"
+
+                        if all([len(a) > 0 for a in indep.Ls]): 
+                            # we have prot and sm
+                            true_crds, mask_crds = resolve_equiv_natives_asmb(pred_crds[-1], 
+                                                                              indep.natstack[None], 
+                                                                              indep.maskstack[None], 
+                                                                              indep.Ls)
+                        
+                        else: 
+                            # only prot or only sm 
+                            true_crds, mask_crds = resolve_equiv_natives(pred_crds[-1], 
+                                                                         indep.natstack[None], 
+                                                                         indep.maskstack[None])
+
+                        
+
+                        # mask_crds[:,~is_diffused,:] = False
+                        assert not (~is_diffused).any(), 'There is a non-diffused token but assumption is motif_only_2d'
+
+                        ### Dj - commented next lines out, they are not used in calc loss + assertion fails w/ sm only
+                        # mask_BB = ~indep.is_sm[None]
+                        # mask_2d = mask_BB[:,None,:] * mask_BB[:,:,None] # ignore pairs having missing residues
+                        # assert torch.sum(mask_2d) > 0, "mask_2d is blank"
+                        # mask_BB = None 
+                        # mask_2d = None
+                        mask_disto_1d = torch.ones_like(indep.seq).bool()[None]
+                        mask_disto_2d = mask_disto_1d[:,None,:] * mask_disto_1d[:,:,None]
+                        mask_BB = mask_disto_1d
+                        mask_2d = mask_disto_2d
+
                         true_crds_frame = rf2aa.util.xyz_to_frame_xyz(true_crds, indep.seq[None], indep.atom_frames[None])
                         c6d = rf2aa.kinematics.xyz_to_c6d(true_crds_frame)
                         negative = torch.tensor([False])
@@ -1197,11 +1378,12 @@ class Trainer():
                             idx_sm = torch.nonzero(indep.is_sm)
 
                         seq_diffusion_mask[:] = True
-                        mask_crds[:] = False
+                        # mask_crds[:] = False
                         true_crds[:,:,14:] = 0
                         xyz_t[:] = 0
                         seq_t[:] = 0
 
+                        # get atomized frames for general FAPE computation in calc_loss
                         loss, loss_dict, loss_weights = self.calc_loss(
                                 logit_s, 
                                 c6d,
@@ -1229,6 +1411,7 @@ class Trainer():
                                 negative=negative, 
                                 t=int(little_t), 
                                 masks_1d=masks_1d,
+                                atom_frames=rfi_t.atom_frames,
                                 **self.loss_param)
 
 
