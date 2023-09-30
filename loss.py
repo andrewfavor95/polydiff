@@ -37,7 +37,11 @@ def frame_distance_loss(R_pred, R_true, eps=1e-8, gamma=0.99):
     """
     Calculates squared L2 loss on frames
     """
+    
     I,B,L = R_pred.shape[:3]
+    if L == 0:
+        print('WARNING: frame_distance_loss called with L=0. Returning 0.0 loss.')
+        return torch.tensor(0.0).to(R_pred.device)
     err = frame_distance_err(R_pred, R_true, eps)
 
     # decay on loss over iterations
@@ -348,6 +352,17 @@ def calc_str_loss(pred, true, mask_2d, same_chain, negative=False, d_clamp=10.0,
 
     tot_loss = (w_loss * loss).sum()
     return tot_loss, loss.detach() 
+
+def weighted_decay_sum(losses, gamma=0.99):
+    assert len(losses.shape) == 1
+    I = losses.shape[0]
+
+    w_loss = torch.pow(torch.full((I,), gamma, device=losses.device), torch.arange(I, device=losses.device))
+    w_loss = torch.flip(w_loss, (0,))
+    w_loss = w_loss / w_loss.sum()
+
+    tot_loss = (w_loss * losses).sum()
+    return tot_loss
 
 #resolve rotationally equivalent sidechains
 def resolve_symmetry(xs, Rsnat_all, xsnat, Rsnat_all_alt, xsnat_alt, atm_mask):

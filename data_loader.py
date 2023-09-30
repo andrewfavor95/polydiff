@@ -30,6 +30,10 @@ import guide_posts as gp
 from rf2aa.chemical import INIT_CRDS, INIT_NA_CRDS, NAATOKENS, MASKINDEX, UNKINDEX, \
     NTOTAL, NBTYPES, CHAIN_GAP, num2aa, METAL_RES_NAMES, aa2num, atomnum2atomtype
 import ipdb
+import dataclasses
+
+import matplotlib.pyplot as plt 
+
 # for diffusion training
 import mask_generator
 from icecream import ic
@@ -144,7 +148,8 @@ def set_data_loader_params(args):
         "USE_GUIDE_POSTS": args.use_guide_posts,
         'BINDING_DISTANCE_CUTOFF':None,
         "BACKBONE_HOTSPOTS": False,
-        "BASE_SPECIFIC_HOTSPOTS": False
+        "BASE_SPECIFIC_HOTSPOTS": False,
+        "SM_ONLY": args.sm_only,
     }
     for param in PARAMS:
         if hasattr(args, param.lower()):
@@ -2117,7 +2122,7 @@ def default_dataset_configs(loader_param, debug=False):
     #                     cn_weights)
     
     sm_compl_loader_fixbb = partial(rf2aa.data_loader.loader_sm_compl_assembly, \
-                                chid2hash=chid2hash,chid2taxid=chid2taxid)
+                                chid2hash=chid2hash, chid2taxid=chid2taxid)
     sm_compl_config = WeightedDataset(
                 train_ID_dict["sm_compl"], train_dict["sm_compl"], sm_compl_loader_fixbb, weights_dict["sm_compl"])
 
@@ -2320,22 +2325,26 @@ class DistilledDataset(data.Dataset):
                 else:
                     out = chosen_loader(sel_item, self.params, unclamp=False,fixbb=fixbb)
             elif chosen_dataset == 'sm_complex':
-                out = dataset_config.task_loaders(
-                    sel_item,
-                    {**rf2aa.data_loader.default_dataloader_params, **self.params, "P_ATOMIZE_MODRES": -1}, num_protein_chains=1, num_ligand_chains=1, 
-                    fixbb=fixbb,
-                )
+                load_kwargs = {**rf2aa.data_loader.default_dataloader_params, **self.params, "P_ATOMIZE_MODRES": -1}
+
+                try:
+                    out = dataset_config.task_loaders(
+                        sel_item,
+                        load_kwargs, num_protein_chains=1, num_ligand_chains=1, 
+                        fixbb=fixbb,
+                    )
+
+                except Exception as e:
+                    print(f'WARNING: hit exception {str(e)} on item {item_context}')
+                    out = self.fallback_out()
+
             elif chosen_dataset == 'na_compl':
                 chosen_loader = dataset_config.task_loaders[task]
                 out = chosen_loader(sel_item, {**rf2aa.data_loader.default_dataloader_params, **self.params}, fixbb=fixbb)
 
-            # elif chosen_dataset == 'dna_distil':
-            #     chosen_loader = dataset_config.task_loaders[task]
-            #     out = chosen_loader(sel_item, {**rf2aa.data_loader.default_dataloader_params, **self.params}, fixbb=fixbb)
             elif chosen_dataset == 'tf_distil':
                 chosen_loader = dataset_config.task_loaders[task]
                 out = chosen_loader(sel_item, {**rf2aa.data_loader.default_dataloader_params, **self.params}, fixbb=fixbb)
-
 
             else:
                 raise Exception(f'chosen_dataset {chosen_dataset} not implemented')
@@ -2389,10 +2398,12 @@ class DistilledDataset(data.Dataset):
 
 
 
-            indep, is_diffused, is_masked_seq, atomizer, _ = aa_model.transform_indep(indep, is_res_str_shown, is_atom_str_shown, self.params['USE_GUIDE_POSTS'])
+            indep, is_diffused, is_masked_seq, atomizer, _ = aa_model.transform_indep(indep, 
+                                                                                      is_res_str_shown, 
+                                                                                      is_atom_str_shown, 
+                                                                                      self.params['USE_GUIDE_POSTS'])
 
             run_inference.seed_all(mask_gen_seed) # Reseed the RNGs for test stability.
-
 
 
             # fig, ax = plt.subplots(1,3, figsize=(12,5))
@@ -2453,13 +2464,13 @@ class DistilledDataset(data.Dataset):
             # if displaying motif only in 2d, allow diffusion everywhere
             if self.conf.preprocess.motif_only_2d:
                 old_is_diffused = is_diffused.clone()
-                is_protein_motif = ~old_is_diffused * ~indep.is_sm
+                # is_protein_motif = ~old_is_diffused * ~indep.is_sm
+                is_motif = masks_1d['input_str_mask'].bool() # 1=motif, 0=non-motif
 
-                new_is_diffused = torch.zeros_like(is_diffused).bool() 
-                new_is_diffused[~indep.is_sm] = True # diffusion over all protein, no SM diffusion 
+                new_is_diffused = torch.ones_like(is_diffused).bool() # diffuse over all tokens
                 is_diffused = new_is_diffused
             else:
-                is_protein_motif = None # prepro handles none case as normal task    
+                is_motif = None # prepro handles none case as normal task    
             
 
             indep_diffused_tp1_t, t_list = aa_model.diffuse(self.conf, self.diffuser, indep, is_diffused, t)
@@ -2486,15 +2497,14 @@ class DistilledDataset(data.Dataset):
                     is_masked_seq = torch.from_numpy(is_masked_seq)
                     is_masked_seq = is_masked_seq.to(dtype=orig_dtype)
 
+                    # ensure no sm atoms are masked in sequence 
+                    is_masked_seq[indep.is_sm] = False
+
                 aa_model.mask_indep(indep_diffused, is_masked_seq)
 
                 # prepare RF inputs 
                 t2d_is_revealed = masks_1d['t2d_is_revealed'] # DJ - new for 3rd template
-                # try:
-                rfi = self.model_adaptor.prepro(indep_diffused, t, is_diffused, is_protein_motif, t2d_is_revealed)
-                # except:
-                    # ipdb.set_trace()
-
+                rfi = self.model_adaptor.prepro(indep_diffused, t, is_diffused, is_motif, t2d_is_revealed)
                 rfi_tp1_t.append(rfi)
 
                 # Sanity checks
@@ -2531,6 +2541,18 @@ class DistilledDataset(data.Dataset):
 
 
             run_inference.seed_all(mask_gen_seed) # Reseed the RNGs for test stability.
+            
+            # assert not nans in rfis 
+            for i,rfi_dict in enumerate(rfi_tp1_t):
+                rfi_dict = dataclasses.asdict(rfi_dict)
+                for k,v in rfi_dict.items():
+                    if torch.is_tensor(v):
+                        if 'xyz' not in k:
+                            assert not torch.isnan(v).any(), f'nan in {k}'
+                        else: 
+                            # no NaNs in Ca 
+                            assert not torch.isnan(v.squeeze(0)[:,1:2,:]).any(), f'nan in {k}'
+            
             return indep, rfi_tp1_t, chosen_dataset, sel_item, t, is_diffused, task, atomizer, masks_1d, item_context
 
 

@@ -15,7 +15,7 @@ from util import rigid_from_3_points, get_torsions
 from util import torsion_indices as TOR_INDICES 
 from util import torsion_can_flip as TOR_CAN_FLIP
 from util import reference_angles as REF_ANGLES
-
+import sys 
 from util_module import ComputeAllAtomCoords
 
 from diff_util import th_min_angle, th_interpolate_angles, get_aa_schedule 
@@ -683,8 +683,11 @@ class SLERP():
         
         # scipy rotation object for true coordinates
         R_true, Ca = rigid_from_3_points(N,Ca,C)
-        R_true = scipy_R.from_matrix(R_true.squeeze())
-        
+        if R_true.shape[1] > 1:
+            R_true = scipy_R.from_matrix(R_true.squeeze())
+        else:
+            R_true = scipy_R.from_matrix(R_true[0])
+
         # bad - could certainly vectorize somehow 
         all_interps = []
         for i in range(len(xyz)):
@@ -717,14 +720,18 @@ class SLERP():
             all_interps.append(interp_rot)
         
         all_interps = np.concatenate(all_interps, axis=0)
+
         
         # Now apply all the interpolated rotation matrices to the original rotation matrices and get the frames at each timestep
         slerped_frames = np.einsum('lrij,ljk->lrik', all_interps, R_true.as_matrix())
         
+
+        # sys.exit(0)
         # apply the slerped frames to the coordinates
-        slerped_crds   = np.einsum('lrij,laj->lrai', all_interps, xyz[:,:3,:] - Ca.squeeze()[:,None,...].numpy()) + Ca.squeeze()[:,None,None,...].numpy()
+        slerped_crds   = np.einsum('lrij,laj->lrai', all_interps, xyz[:,:3,:] - Ca.squeeze(0)[:,None,...].numpy()) + Ca.squeeze(0)[:,None,None,...].numpy()
 
         # (T,L,3,3) set of backbone coordinates and frames 
+        
         return slerped_crds, slerped_frames
 
 
