@@ -4,7 +4,7 @@
 # comment out some stuff
 ### change 5-digit MASTER_PORT as you wish, slurm will raise Error if duplicated with others
 ### change WORLD_SIZE as gpus/node * num_nodes
-export MASTER_PORT=12651
+export MASTER_PORT=19245
 
 ### get the first node name as master address - customized for vgg slurm
 ### e.g. master(gnodee[2-5],gnoded1) == gnodee2
@@ -17,7 +17,7 @@ export MASTER_ADDR=$(scontrol show hostnames "$SLURM_JOB_NODELIST" | head -n 1)
 crop=512
 max_len=512
 max_complex_chain=250
-wandb_pref='afav_first_run'
+wandb_pref='3template_na_20230928_test02'
 so3_type='slerp'
 euclidean_schedule='linear'
 b0=0.01 # 1e-2
@@ -49,7 +49,7 @@ NORM_FAPE=10
 CUT_FAPE=10
 
 
-/software/containers/SE3nv.sif -u train_multi_deep.py -p_drop 0.15 \
+srun /software/containers/SE3nv.sif -u train_multi_deep.py -p_drop 0.15 \
     -accum 2 \
     -crop $crop \
     -w_disp $W_DISP \
@@ -90,7 +90,7 @@ CUT_FAPE=10
     -prob_self_cond $prob_self_cond \
     -str_self_cond \
     -dataset pdb_aa,na_compl,tf_distil,sm_complex \
-    -dataset_prob 045,0.3,0.3,0.0 \
+    -dataset_prob 0.4,0.3,0.3,0.0 \
     -sidechain_input False \
     -motif_sidechain_input True \
     -ckpt_load_path $ckpt_load_path \
@@ -117,7 +117,6 @@ CUT_FAPE=10
     -d_templ_2d 69 \
     -eye_frames \
     -p_show_motif_seq 0.5 \
-    -debug \
-    -no_wandb 
+    -wandb True
 
 

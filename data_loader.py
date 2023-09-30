@@ -47,7 +47,7 @@ import aa_model
 import atomize
 import error
 
-import matplotlib.pyplot as plt
+# import matplotlib.pyplot as plt
 
 from hotspots import make_hotspot_id, make_hotspot_vector, default_hotspot_vector, make_hotspot_id_distil
 
