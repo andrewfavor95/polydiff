@@ -17,7 +17,7 @@ from contextlib import ExitStack
 import time 
 import torch
 import torch.nn as nn
-import pdb
+import ipdb
 from torch.utils import data
 import math 
 
@@ -1327,7 +1327,6 @@ class Trainer():
 
                         true_crds[0,:,:14,:] = indep.xyz[:,:14,:]
                         mask_crds = ~torch.isnan(true_crds).any(dim=-1)
-
                         if all([len(a) > 0 for a in indep.Ls]): 
                             # we have prot and sm
                             true_crds, mask_crds = resolve_equiv_natives_asmb(pred_crds[-1], 

@@ -284,6 +284,7 @@ def make_indep(pdb, ligand=None):
     ###TODO: currently network needs values at 0,2 indices of tensor, need to remove this reliance
     xyz[is_sm, 0] = 0
     xyz[is_sm, 2] = 0
+    
     indep = Indep(
         seq,
         xyz,
@@ -836,7 +837,7 @@ def pop_mask(indep, pop):
 
     N     = pop.sum()
     pop2d = pop[None,:] * pop[:,None]
-
+    
     indep.seq           = indep.seq[pop]
     indep.xyz           = indep.xyz[pop]
     indep.xyz2          = indep.xyz2[pop]

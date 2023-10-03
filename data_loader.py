@@ -32,7 +32,7 @@ from rf2aa.chemical import INIT_CRDS, INIT_NA_CRDS, NAATOKENS, MASKINDEX, UNKIND
 import ipdb
 import dataclasses
 
-import matplotlib.pyplot as plt 
+# import matplotlib.pyplot as plt 
 
 # for diffusion training
 import mask_generator
@@ -1708,13 +1708,14 @@ def loader_na_complex_diff(item, params, native_NA_frac=0.25, negative=False, pi
     # import pickle
     # pickle.dump([seq, xyz, mask, Ls, params, negative], open('/home/ptkim/temp/0_pre_crop.pkl', 'wb'))
 
-    # if sum(Ls) > params['CROP']:
-    if True: # always crop!
+    if sum(Ls) > params['CROP']:
+    # if True: # always crop!
         # na_contacts, prot_contacts = contacting_dna_protein_residues(xyz.squeeze(), Ls)
-        na_contacts, prot_contacts = contacting_dna_protein_residues(xyz.squeeze(), Ls, closest_k=2)
-        sel = na_motif_preserving_tight_crop(seq.squeeze(), xyz.squeeze(), na_contacts, prot_contacts, Ls, params['CROP'])
-        # cropref = np.random.randint(xyz.shape[0])
-        # sel = get_na_crop(seq[0], xyz[cropref], mask[cropref], torch.arange(sum(Ls)), Ls, params, negative)
+        # na_contacts, prot_contacts = contacting_dna_protein_residues(xyz.squeeze(), Ls, closest_k=2)
+        # sel = na_motif_preserving_tight_crop(seq.squeeze(), xyz.squeeze(), na_contacts, prot_contacts, Ls, params['CROP'])
+        # sel = rf2aa.data_loader.get_na_crop(seq[0], xyz[0], mask[0], torch.arange(sum(Ls)), Ls, params, negative)
+        cropref = np.random.randint(xyz.shape[0])
+        sel = rf2aa.data_loader.get_na_crop(seq[0], xyz[cropref], mask[cropref], torch.arange(sum(Ls)), Ls, params, negative)
 
         seq = seq[:,sel]
         msa_seed_orig = msa_seed_orig[:,:,sel]
@@ -1741,7 +1742,8 @@ def loader_na_complex_diff(item, params, native_NA_frac=0.25, negative=False, pi
            xyz.float(), mask, idx.long(), \
            xyz_t.float(), f1d_t.float(), mask_t, \
            xyz_prev.float(), mask_prev, \
-           same_chain, False, negative, torch.zeros(seq.shape), bond_feats, dist_matrix, chirals, ch_label, 'C1', "na_compl", item
+           same_chain, False, negative, torch.zeros(seq.shape), bond_feats, dist_matrix, chirals, ch_label, 'C1', "na_compl", item, [Ls,[]]
+           # same_chain, False, negative, torch.zeros(seq.shape), bond_feats, dist_matrix, chirals, ch_label, 'C1', "na_compl", item, [[Ls],[]]
 
 
 def loader_distil_tf_diff(item, params, random_noise=5.0, pick_top=True, native_NA_frac=0.05, negative=False, fixbb=False):
@@ -1804,14 +1806,10 @@ def loader_distil_tf_diff(item, params, random_noise=5.0, pick_top=True, native_
             seq=True,
             lddtmask=True
             )
-    # xyz, mask, _, pdbseq = parse_pdb(
-    #         params["TF_DIR"]+f'/distill/{gene_id[:2]}/{gene_id}_{dnaseq}.pdb',
-    #         seq=True
-    #         )
-
-    xyz = torch.from_numpy(xyz)
-    mask = torch.from_numpy(mask)
-    pdbseq = torch.from_numpy(pdbseq)
+    
+    xyz = torch.from_numpy(xyz).unsqueeze(0)
+    mask = torch.from_numpy(mask).unsqueeze(0)
+    pdbseq = torch.from_numpy(pdbseq).unsqueeze(0)
 
     # read template info (no template)
     # NOTE: use templates?
@@ -1828,21 +1826,23 @@ def loader_distil_tf_diff(item, params, random_noise=5.0, pick_top=True, native_
     same_chain = same_chain_2d_from_Ls(Ls)
     bond_feats = bond_feats_from_Ls(Ls).long()
     ch_label = torch.cat([torch.full((L_,), i) for i,L_ in enumerate(Ls)]).long()
-
+    
     ###############
     # Do cropping #
     ###############
-    
     if sum(Ls) > params['CROP']:
-        sel = get_na_crop(seq[0], xyz, mask, torch.arange(sum(Ls)), Ls, params, negative=False)
-
+    # if True: # always crop!
+        cropref = np.random.randint(xyz.shape[0])
+        sel = get_na_crop(seq[0], xyz[cropref], mask[cropref], torch.arange(sum(Ls)), Ls, params, negative)
+        # sel = rf2aa.data_loader.get_na_crop(seq[0], xyz[0], mask[0], torch.arange(sum(Ls)), Ls, params, negative=False, incl_protein=True)
+        
         seq = seq[:,sel]
         msa_seed_orig = msa_seed_orig[:,:,sel]
         msa_seed = msa_seed[:,:,sel]
         msa_extra = msa_extra[:,:,sel]
         mask_msa = mask_msa[:,:,sel]
-        xyz = xyz[sel]
-        mask = mask[sel]
+        xyz = xyz[:,sel]
+        mask = mask[:,sel]
         xyz_t = xyz_t[:,sel]
         f1d_t = f1d_t[:,sel]
         mask_t = mask_t[:,sel]
@@ -1855,144 +1855,14 @@ def loader_distil_tf_diff(item, params, random_noise=5.0, pick_top=True, native_
     chirals = torch.Tensor()
     dist_matrix = rf2aa.data_loader.get_bond_distances(bond_feats)
     xyz_prev, mask_prev = rf2aa.data_loader.generate_xyz_prev(xyz_t, mask_t, params)
-
     return seq.long(), msa_seed_orig.long(), msa_seed.float(), msa_extra.float(), mask_msa,\
            xyz.float(), mask, idx.long(), \
            xyz_t.float(), f1d_t.float(), mask_t, \
            xyz_prev.float(), mask_prev, \
            same_chain, False, False, \
            torch.zeros(seq.shape), bond_feats, dist_matrix, chirals, \
-           ch_label, 'C1', "distil_tf", item
-
-
-# def loader_dna_distil(item, params, random_noise=5.0, fixbb=False):
-#     # collect info
-#     gene_id = item['gene_id']
-#     Ls = item['LEN']
-#     oligo = item['oligo']
-#     dnaseq = item['DNA sequence']
-#     HASH = item['HASH']
-    
-#     if len(Ls) > 3:
-#         Ls = Ls[0:1] + Ls[2:]
-
-#     nmer = 1 # 2 if oligo == 'dimer' else 1
-
-#     ##################################
-#     # Load and prepare sequence data #
-#     ##################################
-#     # protein MSA from an a3m file
-#     a3mA = rf2aa.data_loader.get_msa(params["TF_DIR"]+f'/a3m/{gene_id[:2]}/{gene_id}_domain.a3m', HASH)
-
-#     # oligomerize protein
-#     if nmer > 1:
-#         msaA, insA = rf2aa.data_loader.merge_a3m_homo(a3mA['msa'].long(), a3mA['ins'].long(), nmer)
-#         a3mA['msa'] = msaA
-#         a3mA['ins'] = insA
-    
-#     # DNA from a single sequence
-#     fseq = dnaseq
-#     DNAPAIRS = {'A':'T','T':'A','C':'G','G':'C'}
-#     rseq = ''.join([DNAPAIRS[x] for x in fseq][::-1])
-
-#     # NOTE: padding?
-
-#     # convert sequence to numbers and merge
-#     alphabet = np.array(list("00000000000000000000-0ACGTD00000"), dtype='|S1').view(np.uint8)
-#     msaB = np.array([list(fseq)], dtype='|S1').view(np.uint8)
-#     msaC = np.array([list(rseq)], dtype='|S1').view(np.uint8)
-#     for i in range(alphabet.shape[0]):
-#         msaB[msaB == alphabet[i]] = i
-#         msaC[msaC == alphabet[i]] = i
-#     insB = np.zeros((1,Ls[-2]))
-#     insC = np.zeros((1,Ls[-1]))
-#     a3mB = {'msa': torch.from_numpy(msaB), 'ins': torch.from_numpy(insB), 'label': HASH}
-#     a3mC = {'msa': torch.from_numpy(msaC), 'ins': torch.from_numpy(insC), 'label': HASH}
-
-#     a3mB = rf2aa.data_loader.merge_a3m_hetero(a3mB, a3mC, [Ls[-2], Ls[-1]])
-#     a3m  = rf2aa.data_loader.merge_a3m_hetero(a3mA, a3mB, [sum(Ls[:nmer]),sum(Ls[nmer:])])
-
-#     # get MSA features
-#     msa = a3m['msa'].long()
-#     ins = a3m['ins'].long()
-#     if len(msa) > params['BLOCKCUT']:
-#         msa, ins = rf2aa.data_loader.MSABlockDeletion(msa, ins)
-#     seq, msa_seed_orig, msa_seed, msa_extra, mask_msa = rf2aa.data_loader.MSAFeaturize(msa, ins, params, L_s=Ls, fixbb=fixbb)
-
-#     ###################################
-#     # Load and prepare structure data #
-#     ###################################
-#     # load predicted structure as "truth"
-#     xyz, mask, _, _ = rf2aa.parsers.parse_pdb_distil(
-#             params["TF_DIR"]+f'/distill/{gene_id[:2]}/{gene_id}_{dnaseq}_00_init_min_bbcst_0001.pdb',
-#             seq=True,
-#             lddtmask=True
-#             )
-    
-#     if oligo == 'dimer':
-#         if np.random.rand() > 0.5:
-#             xyz = np.concatenate((xyz[:Ls[0]], xyz[Ls[0] * 2:]))
-#             mask = np.concatenate((mask[:Ls[0]], mask[Ls[0] * 2:]))
-#         else:
-#             xyz = xyz[Ls[0]:]
-#             mask = mask[Ls[0]:]
-
-#     xyz = torch.from_numpy(xyz)
-#     mask = torch.from_numpy(mask)
-
-#     # read template info (no template)
-#     # NOTE: use templates?
-#     ntempl = 0
-#     tpltA = {'ids':[]} # a fake tpltA
-#     xyz_t, f1d_t, mask_t = rf2aa.data_loader.TemplFeaturize(tpltA, sum(Ls), params, offset=0, npick=ntempl, pick_top=True, random_noise=random_noise)
-#     NAstart = sum(Ls[:nmer])
-#     xyz_t[:,NAstart:] = INIT_NA_CRDS.reshape(1,1,NTOTAL,3).repeat(1,sum(Ls[-2:]),1,1) + torch.rand(1,sum(Ls[-2:]),1,3)*random_noise
-
-#     # other features
-#     idx = idx_from_Ls(Ls)
-#     same_chain = same_chain_2d_from_Ls(Ls)
-#     bond_feats = bond_feats_from_Ls(Ls).long()
-#     ch_label = torch.cat([torch.full((L_,), i) for i,L_ in enumerate(Ls)]).long()
-
-
-#     ###############
-#     # Do cropping #
-#     ###############
-    
-#     # if sum(Ls) > params['CROP']:
-#     if True: # always crop!
-#         # na_contacts, prot_contacts = contacting_dna_protein_residues(xyz.squeeze(), Ls)
-#         na_contacts, prot_contacts = contacting_dna_protein_residues(xyz.squeeze(), Ls, closest_k=2)
-#         sel = na_motif_preserving_tight_crop(seq.squeeze(), xyz.squeeze(), na_contacts, prot_contacts, Ls, params['CROP'])
-#         seq = seq[:,sel]
-#         msa_seed_orig = msa_seed_orig[:,:,sel]
-#         msa_seed = msa_seed[:,:,sel]
-#         msa_extra = msa_extra[:,:,sel]
-#         mask_msa = mask_msa[:,:,sel]
-#         xyz = xyz[sel]
-#         mask = mask[sel]
-#         xyz_t = xyz_t[:,sel]
-#         f1d_t = f1d_t[:,sel]
-#         mask_t = mask_t[:,sel]
-#         #
-#         idx = idx[sel]
-#         same_chain = same_chain[sel][:,sel]
-#         bond_feats = bond_feats[sel][:,sel]
-#         ch_label = ch_label[sel]
-
-#     chirals = torch.Tensor()
-#     dist_matrix = rf2aa.data_loader.get_bond_distances(bond_feats)
-#     xyz_prev = xyz_t[0].clone()
-#     mask_prev = mask_t[0].clone()
-
-#     return seq.long(), msa_seed_orig.long(), msa_seed.float(), msa_extra.float(), mask_msa,\
-#            xyz.float(), mask, idx.long(), \
-#            xyz_t.float(), f1d_t.float(), mask_t, \
-#            xyz_prev.float(), mask_prev, \
-#            same_chain, False, False, \
-#            torch.zeros(seq.shape), bond_feats, dist_matrix, chirals, \
-#            ch_label, 'C1', "dna_distil", item
-
+           ch_label, 'C1', "distil_tf", item, [Ls,[]]
+           # ch_label, 'C1', "distil_tf", item, [[Ls],[]]
 
 
 @dataclass
