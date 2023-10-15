@@ -133,7 +133,18 @@ def get_args(in_args=None):
     data_group.add_argument("-discontiguous_crop", default="True", choices=("True","False"))
     data_group.add_argument('-use_guide_posts', action="store_true", default=False,
             help='Training argument. Treats the generated motif as guide posts instead.')
-
+    data_group.add_argument('-na_fixed_intra', default="False", choices=("True","False"),
+            help='do we want the internal structure information of all nucleics fixed?')
+    data_group.add_argument('-na_fixed_inter', default="False", choices=("True","False"),
+            help='do we want the relative orientation of all nucleics fixed?')
+    # data_group.add_argument('-contact_cut', type=int, default=8,
+    #         help='Distance between protein and non-protein (sm, na) atoms to classify them as in contact')
+    # data_group.add_argument('-chunk_size_min', type=int, default=1,
+    #         help='minimum number of amino acids in a motif chunk')
+    # data_group.add_argument('-chunk_size_max', type=int, default=7,
+    #         help='maximum number of amino acids in a motif chunk')
+    # data_group.add_argument('-max_num_chunks', type=int, default=4,
+    #         help='maximum number of sampled motif chunks to use during training')
     # Diffusion args 
     diff_group = parser.add_argument_group("diffusion parameters")
     def parse_mask_str(s):
@@ -378,6 +389,9 @@ def get_args(in_args=None):
     args.motif_sidechain_input = args.motif_sidechain_input == 'True'
     args.sequence_decode = args.sequence_decode == 'True'
     args.discontiguous_crop = args.discontiguous_crop == 'True'
+    args.na_fixed_intra = args.na_fixed_intra == 'True'
+    args.na_fixed_inter = args.na_fixed_inter == 'True'
+
     ic(args.sequence_decode)
     # parse the task lists
     task_names = args.task_names.split(',')

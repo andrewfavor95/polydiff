@@ -32,7 +32,7 @@ from rf2aa.chemical import INIT_CRDS, INIT_NA_CRDS, NAATOKENS, MASKINDEX, UNKIND
 import ipdb
 import dataclasses
 
-# import matplotlib.pyplot as plt 
+import matplotlib.pyplot as plt 
 
 # for diffusion training
 import mask_generator
@@ -150,6 +150,12 @@ def set_data_loader_params(args):
         "BACKBONE_HOTSPOTS": False,
         "BASE_SPECIFIC_HOTSPOTS": False,
         "SM_ONLY": args.sm_only,
+        # "CONTACT_CUT": args.contact_cut,
+        # "CHUNK_SIZE_MIN": args.chunk_size_min,
+        # "CHUNK_SIZE_MAX": args.chunk_size_max,
+        # "MAX_NUM_CHUNKS": args.max_num_chunks,
+        "NA_FIXED_INTRA": args.na_fixed_intra,
+        "NA_FIXED_INTER": args.na_fixed_inter,
     }
     for param in PARAMS:
         if hasattr(args, param.lower()):
@@ -2229,10 +2235,7 @@ class DistilledDataset(data.Dataset):
 
             # Mask the independent inputs.
             # run_inference.seed_all(mask_gen_seed) # Reseed the RNGs for test stability.
-
-            # masks_1d = mask_generator.generate_masks(L=indep.length(), task=task, loader_params=self.params, chosen_dataset=chosen_dataset, full_chain=None, xyz=indep.xyz, atom_mask=atom_mask[:, :rf2aa.chemical.NHEAVYPROT], seq=indep.seq)
-            # masks_1d = mask_generator.generate_masks(indep, task, self.params, chosen_dataset, None, atom_mask=atom_mask[:, :rf2aa.chemical.NHEAVYPROT])
-            masks_1d = mask_generator.generate_masks(indep, task, self.params, chosen_dataset, full_chain=None, atom_mask=atom_mask[:, :rf2aa.chemical.NHEAVYPROT])
+            masks_1d = mask_generator.generate_masks(indep, task, self.params, chosen_dataset, full_chain=None, xyz=indep.xyz, atom_mask=atom_mask[:, :rf2aa.chemical.NHEAVYPROT], seq=indep.seq)
 
             is_res_seq_shown = masks_1d['input_seq_mask']
             is_res_str_shown = masks_1d['input_str_mask']
@@ -2276,6 +2279,16 @@ class DistilledDataset(data.Dataset):
             run_inference.seed_all(mask_gen_seed) # Reseed the RNGs for test stability.
 
 
+            # # INSPECT MASKS
+            # png_saving_dir = '/home/afavor/git/RFD_AF/3template_na/pngs_training/'
+
+            # random_output_id = f'{random.randint(1, 9)}{random.randint(1, 9)}{random.randint(1, 9)}{random.randint(1, 9)}'
+            # test_inspect_namebase = f'check_indep_{random_output_id}_{chosen_dataset}'
+            # # indep.write_pdb(f'{png_saving_dir}{chosen_dataset}/output_indep_{test_inspect_namebase}.pdb')
+            # # png_filepath = f'{png_saving_dir}{chosen_dataset}/1d_2d_masks_{test_inspect_namebase}.png'
+            # indep.write_pdb(f'{png_saving_dir}/output_indep_{test_inspect_namebase}.pdb')
+            # png_filepath = f'{png_saving_dir}/1d_2d_masks_{test_inspect_namebase}.png'
+
             # fig, ax = plt.subplots(1,3, figsize=(12,5))
             # Ltmp = is_res_str_shown.shape[0]
             # ax[0].imshow(is_res_str_shown.cpu().numpy()[None].repeat(Ltmp, axis=0))
@@ -2287,36 +2300,41 @@ class DistilledDataset(data.Dataset):
             # ax[2].imshow(masks_1d['t2d_is_revealed'].cpu().numpy())
             # ax[2].set_title('t2d_is_revealed')
 
-            # png_saving_dir = '/home/afavor/git/RFD_AF/3template_na/pngs_training/'
-            # # png_filename = f'/home/afavor/git/RFD_AF/3template_na/pngs_training/{chosen_dataset}/1d_2d_masks_before_diffusion__{sel_item['CHAINID']}.png'
-            # if chosen_dataset=='pdb_aa':
-                
-            #     training_pdb_path = f'/projects/ml/TrRosetta/PDB-2021AUG02/pdb/pdb/{sel_item["CHAINID"][1:3]}/{sel_item["CHAINID"]}'
-            #     filename_pdb_path_comp = training_pdb_path.replace('/','__')
-            #     png_filepath = f'{png_saving_dir}{chosen_dataset}/1d_2d_masks_before_diffusion_{filename_pdb_path_comp}.png'
-            #     # png_filepath = f'{png_saving_dir}{chosen_dataset}/1d_2d_masks_before_diffusion__{sel_item["CHAINID"]}.png'
-            #     # ipdb.set_trace()
-            # elif chosen_dataset=='tf_distil':
-            #     ipdb.set_trace()
-            #     training_pdb_path = f'/projects/ml/prot_dna/distil/{sel_item["gene_id"][:2]}/{sel_item["gene_id"]}_{sel_item["DNA sequence"]}'
-            #     # training_pdb_path = f'/projects/ml/nucleic/distil/{sel_item["gene_id"][:2]}/{sel_item["gene_id"]}_{sel_item["DNA sequence"]}'
-            #     filename_pdb_path_comp = training_pdb_path.replace('/','__')
-            #     png_filepath = f'{png_saving_dir}{chosen_dataset}/1d_2d_masks_before_diffusion{filename_pdb_path_comp}.png'
-            #     # ipdb.set_trace()
-            # elif chosen_dataset=='na_compl':
-            #     ipdb.set_trace()
-            #     training_pdb_path = f'/projects/ml/prot_dna/distil/{sel_item["gene_id"][:2]}/{sel_item["gene_id"]}_{sel_item["DNA sequence"]}'
-            #     filename_pdb_path_comp = training_pdb_path.replace('/','__')
-            #     png_filepath = f'{png_saving_dir}{chosen_dataset}/1d_2d_masks_before_diffusion_{filename_pdb_path_comp}.png'
-
-            # elif chosen_dataset=='sm_complex':
-            #     ipdb.set_trace()
 
             # plt.show()
             # plt.savefig(png_filepath)
             # plt.close(fig)
-            # # plt.savefig('1d_2d_masks_before_diffusion.png')
-            # # sys.exit('debugging masks before diffusion')
+            # # ipdb.set_trace()
+            
+            # # # png_filename = f'/home/afavor/git/RFD_AF/3template_na/pngs_training/{chosen_dataset}/1d_2d_masks_before_diffusion__{sel_item['CHAINID']}.png'
+            # # if chosen_dataset=='pdb_aa':
+                
+            # #     training_pdb_path = f'/projects/ml/TrRosetta/PDB-2021AUG02/pdb/pdb/{sel_item["CHAINID"][1:3]}/{sel_item["CHAINID"]}'
+            # #     filename_pdb_path_comp = training_pdb_path.replace('/','__')
+            # #     png_filepath = f'{png_saving_dir}{chosen_dataset}/1d_2d_masks_before_diffusion_{filename_pdb_path_comp}.png'
+            # #     # png_filepath = f'{png_saving_dir}{chosen_dataset}/1d_2d_masks_before_diffusion__{sel_item["CHAINID"]}.png'
+            # #     # ipdb.set_trace()
+            # # elif chosen_dataset=='tf_distil':
+            # #     ipdb.set_trace()
+            # #     training_pdb_path = f'/projects/ml/prot_dna/distil/{sel_item["gene_id"][:2]}/{sel_item["gene_id"]}_{sel_item["DNA sequence"]}'
+            # #     # training_pdb_path = f'/projects/ml/nucleic/distil/{sel_item["gene_id"][:2]}/{sel_item["gene_id"]}_{sel_item["DNA sequence"]}'
+            # #     filename_pdb_path_comp = training_pdb_path.replace('/','__')
+            # #     png_filepath = f'{png_saving_dir}{chosen_dataset}/1d_2d_masks_before_diffusion{filename_pdb_path_comp}.png'
+            # #     # ipdb.set_trace()
+            # # elif chosen_dataset=='na_compl':
+            # #     ipdb.set_trace()
+            # #     training_pdb_path = f'/projects/ml/prot_dna/distil/{sel_item["gene_id"][:2]}/{sel_item["gene_id"]}_{sel_item["DNA sequence"]}'
+            # #     filename_pdb_path_comp = training_pdb_path.replace('/','__')
+            # #     png_filepath = f'{png_saving_dir}{chosen_dataset}/1d_2d_masks_before_diffusion_{filename_pdb_path_comp}.png'
+
+            # # elif chosen_dataset=='sm_complex':
+            # #     ipdb.set_trace()
+
+            # # plt.show()
+            # # plt.savefig(png_filepath)
+            # # plt.close(fig)
+            # # # plt.savefig('1d_2d_masks_before_diffusion.png')
+            # # # sys.exit('debugging masks before diffusion')
             # # ipdb.set_trace()
 
             
@@ -2382,7 +2400,6 @@ class DistilledDataset(data.Dataset):
                     assert torch.mean(rfi.xyz[:,~is_diffused,1] - indep.xyz[None,~is_diffused,1]) < 0.001
 
             # run_inference.seed_all(mask_gen_seed) # Reseed the RNGs for test stability.
-
             if self.params['BACKBONE_HOTSPOTS']: # Figure out later how I will condition on hotspots (probably yet another command line argument)
                 if chosen_dataset == 'na_compl':
                     hotspot_id = make_hotspot_id(out[-1])

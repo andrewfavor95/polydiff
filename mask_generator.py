@@ -11,7 +11,7 @@ import networkx as nx
 from functools import wraps
 import itertools
 import assertpy
-
+import ipdb
 
 #####################################
 # Misc functions for mask generation
@@ -208,11 +208,126 @@ def _get_diffusion_mask_chunked(xyz, prop_low, prop_high, max_motif_chunks=6):
 
     return mask.bool(), is_motif.bool()
 
+def _get_diffusion_mask_chunked_na(xyz, is_na, prop_low, prop_high, 
+                                    max_motif_chunks=6,
+                                    na_fixed_intra=False,
+                                    na_fixed_inter=False,
+                                ):
+    """
+    More complicated masking strategy to create discontiguous chunks
+    """
+
+    def get_na_start_stop_inds(is_na):
+        shifted_tensor = torch.roll(is_na, shifts=1, dims=0)
+        diff_tensor = is_na != shifted_tensor
+        change_indices = torch.where(diff_tensor)[0]
+        start_stop_indices = [(start.item(), stop.item()) for start, stop in zip(change_indices[:-1], change_indices[1:])]
+        if is_na[0]:
+            start_stop_indices = [(0, change_indices[0].item())] + start_stop_indices
+        if is_na[-1]:
+            start_stop_indices.append((change_indices[-1].item(), len(is_na)))
+
+        values_list = []
+        for start, stop in start_stop_indices:
+            value = is_na[start].item()
+            values_list.append(value)
+
+        return start_stop_indices, values_list
+
+    # Subselect region of xyz to chunk:
+    if na_fixed_intra:
+        na_chunk_inds, chunk_is_na = get_na_start_stop_inds(is_na)
+        chunks, chunk_is_motif, motif_ids, ij, ij_can_see = get_chunked_mask(xyz[~is_na], 
+                                                                            prop_low, 
+                                                                            prop_high, 
+                                                                            max_motif_chunks)
+
+        L = xyz[~is_na].shape[0]
+
+    else:
+        # xyz_to_chunk = xyz.clone()
+        chunks, chunk_is_motif, motif_ids, ij, ij_can_see = get_chunked_mask(xyz,
+                                                                            prop_low, 
+                                                                            prop_high, 
+                                                                            max_motif_chunks)
+        L = xyz.shape[0]
+
+
+    chunk_starts = np.cumsum([0] + chunks[:-1])
+    chunk_ends   = np.cumsum(chunks)
+
+
+
+    # make 1D array designating which chunks are motif
+    # L = xyz.shape[0]
+    mask = torch.zeros(L, L)
+    is_motif = torch.zeros(L)
+    for i in range(len(chunks)):
+        is_motif[chunk_starts[i]:chunk_ends[i]] = chunk_is_motif[i]
+
+
+    # 2D array designating which chunks can see each other
+    for i in range(len(chunks)):
+        for j in range(len(chunks)):
+
+            i_is_motif = chunk_is_motif[i]
+            j_is_motif = chunk_is_motif[j]
+            if (i_is_motif and j_is_motif): # both are motif, so possibly reveal info 
+                
+                ID_i = motif_ids[i]
+                ID_j = motif_ids[j]
+                assert ID_i != -1 and ID_j != -1, 'both motif but one has no ID'
+                
+                # always reveal self vs self 
+                if i == j:
+                    mask[chunk_starts[i]:chunk_ends[i], chunk_starts[j]:chunk_ends[j]] = 1
+                
+                else:
+                    # find out of this (i,j) are allowed to see each other
+                    ix = tuple(sorted([ID_i, ID_j]))
+                    can_see = ij_can_see[ij.index(ix)]
+                    if can_see:
+                        mask[chunk_starts[i]:chunk_ends[i], chunk_starts[j]:chunk_ends[j]] = 1
+
+    if na_fixed_intra:
+        full_L = xyz.shape[0]
+        full_mask = torch.zeros(full_L, full_L)
+        full_is_motif = torch.zeros(full_L)
+
+        non_aa_indices = torch.nonzero(~is_na).squeeze()
+        full_mask[non_aa_indices[:, None], non_aa_indices] = mask
+        full_is_motif[non_aa_indices] = is_motif
+
+        for i in range(len(chunk_is_na)):
+            for j in range(len(chunk_is_na)):
+                i_is_na = chunk_is_na[i]
+                j_is_na = chunk_is_na[j]
+
+                if i_is_na or j_is_na:
+                    if i == j : # just fill the internal chunks with NA motif mask
+                        full_mask[na_chunk_inds[i][0]:na_chunk_inds[i][1],na_chunk_inds[j][0]:na_chunk_inds[j][1]] = 1
+
+                    elif na_fixed_inter: # fill off-diagonals with NA motif mask
+                        full_mask[na_chunk_inds[i][0]:na_chunk_inds[i][1],na_chunk_inds[j][0]:na_chunk_inds[j][1]] = 1
+                    
+        return full_mask.bool(), full_is_motif.bool()
+
+    else:
+        return mask.bool(), is_motif.bool()
+
 
 def get_diffusion_mask_chunked(indep, atom_mask, low_prop, high_prop, broken_prop, max_motif_chunks=6):
     # wrapper to accomodate indep/atom mask input 
     assert indep.is_sm.sum() == 0, 'small molecules not supported currently for this masking'
-    mask2d, is_motif = _get_diffusion_mask_chunked(indep.xyz, low_prop, high_prop, max_motif_chunks)
+
+    if indep.is_na.any(): # IF we have nucleic acids, we can choose to process differently
+        mask2d, is_motif = _get_diffusion_mask_chunked_na(indep.xyz, indep.is_na, low_prop, high_prop, 
+                                                            max_motif_chunks=max_motif_chunks,
+                                                            na_fixed_intra=indep.na_fixed_intra,
+                                                            na_fixed_inter=indep.na_fixed_inter)
+
+    else:
+        mask2d, is_motif = _get_diffusion_mask_chunked(indep.xyz, low_prop, high_prop, max_motif_chunks)
     
     # spoofing a return of two items: "diffusion_mask, is_atom_motif"
     return (mask2d, is_motif), None
@@ -558,6 +673,56 @@ def _get_triple_contact_3template(xyz,
 
     return mask_2d, is_motif
 
+def _get_triple_contact_3template_na(xyz, 
+                                    is_na,
+                                    low_prop, 
+                                    high_prop, 
+                                    xyz_less_than=6, 
+                                    seq_dist_greater_than=10, 
+                                    len_low=1, 
+                                    len_high=7,
+                                    na_fixed_intra=False,
+                                    na_fixed_inter=False,
+                                  ):
+
+    contacts = get_contacts(xyz, xyz_less_than, seq_dist_greater_than)
+    if not contacts.any():
+        return _get_diffusion_mask_chunked_na(xyz, is_na, low_prop, high_prop, 
+                                            max_motif_chunks=6,
+                                            na_fixed_intra=False,
+                                            na_fixed_inter=False,
+                                        )
+
+    # find the third contact
+    indices = find_third_contact(contacts)
+    if indices is None:
+        return _get_diffusion_mask_chunked_na(xyz, is_na, low_prop, high_prop, 
+                                                max_motif_chunks=6,
+                                                na_fixed_intra=False,
+                                                na_fixed_inter=False,
+                                        )
+    
+    L = xyz.shape[0]
+    # 1d tensor describing which residues are motif
+    is_motif = sample_around_contact(L, indices, len_low, len_high)
+    # now get the 2d tensor describing which residues can see each other
+    # For these, all motif chunks can see each other
+    mask_2d = is_motif[:, None] * is_motif[None, :]
+
+
+    # Now, modify to force nucleic info to be passed through, 
+    # depending on input params:
+    na_mask_inter = torch.logical_xor(is_na[:,None], is_na[None,:])
+    na_mask_intra = torch.logical_and(is_na[:,None], is_na[None,:])
+    if na_fixed_intra:
+        mask_2d = torch.logical_or(mask_2d, na_mask_intra)
+        is_motif = torch.logical_or(is_motif, is_na)
+
+    if na_fixed_inter:
+        mask_2d = torch.logical_or(mask_2d, na_mask_inter)
+
+    return mask_2d, is_motif
+
 
 def _get_multi_triple_contact_3template(xyz,
                                          low_prop,
@@ -615,7 +780,14 @@ def get_triple_contact_3template(indep,
     Triple contact fxn that is compatable w/ 3template mode
     """
     assert indep.is_sm.sum() == 0, 'small molecules not yet supported'
-    mask2d, is_motif = _get_triple_contact_3template(indep.xyz, low_prop, high_prop)
+
+    if indep.is_na.any(): # IF we have nucleic acids, we can choose to process differently
+        mask2d, is_motif = _get_triple_contact_3template_na(indep.xyz, indep.is_na, low_prop, high_prop, 
+                                                    na_fixed_intra=indep.na_fixed_intra,
+                                                    na_fixed_inter=indep.na_fixed_inter)
+
+    else:
+        mask2d, is_motif = _get_triple_contact_3template(indep.xyz, low_prop, high_prop)
 
     # spoofing a return of two items: "diffusion_mask, is_atom_motif"
     return (mask2d, is_motif), None
@@ -790,6 +962,96 @@ def _get_sm_contact_3template(xyz,
         return is_motif_2d, is_motif
     
 
+def _get_na_contact_3template(xyz, 
+                              is_na, 
+                              low_prop, 
+                              high_prop, 
+                              contact_cut=8, # Should I increase size?
+                              chunk_size_min=1,
+                              chunk_size_max=7,
+                              max_num_chunks=4,
+                              na_fixed_intra=False, # is full na struct given with fixed internal structure?
+                              na_fixed_inter=False, # is full na struct given with fixed relative orientation?
+                              min_seq_dist=9,
+                              ): 
+    """
+    Produces mask2d and is_motif for nucleic acids, possibly with contacting protein chunks
+    """
+    print('Entered _get_na_contact_3template')
+    assert len(xyz.shape) == 3
+    
+    ca = xyz[~is_na, 1,:]
+    
+    if ca.shape[0] == 0:
+        na_only = True 
+    else:
+        na_only = False
+
+    na_xyz  = xyz[is_na, 1,:] # Select the P atoms (TODO: CHECK IF THIS IS THE BEST ATOM TO USE HERE)
+
+    dmap = torch.cdist(ca, na_xyz)
+    dmap = dmap < contact_cut   
+    protein_is_contacting = dmap.any(dim=1) # which protein CA's are contacting na P's
+    nucleic_is_contacting = dmap.any(dim=0) # which protein CA's are contacting na P's
+
+    if na_fixed_intra: # IF give fixed nucleic structure, then only look at protein contact regions
+        chains_are_contacting = protein_is_contacting.clone()
+    else: #otherside, we can chunk up at any part of the complex
+        chains_are_contacting = torch.concatenate((protein_is_contacting,nucleic_is_contacting))
+    
+    where_is_contacting = chains_are_contacting.nonzero().squeeze()
+
+    
+    n_chunk_revealed = random.randint(0,max_num_chunks)
+
+    
+
+    if (n_chunk_revealed == 0) or (na_only):
+        is_motif = is_na.clone()
+        is_motif_2d = is_motif[:, None] * is_motif[None, :]
+        return is_motif_2d, is_motif
+    
+    else: 
+        # Automatically set all nucleic resis to true if na_fixed_intra is given
+        # Otherwise initially have all regions hidden, then add chunks
+        is_motif = na_fixed_intra*is_na.clone()
+            
+        cur_min_seq_dist = min_seq_dist # could possibly increment this if needed 
+
+        for i in range(n_chunk_revealed):
+            print('on chunk ',i) 
+            chunk_size = torch.randint(chunk_size_min, chunk_size_max, size=(1,)).item()
+            
+            if len(where_is_contacting.shape) == 0:
+                # ensures where_is_contacting is a 1d tensor
+                where_is_contacting = where_is_contacting.unsqueeze(0)
+
+            p = torch.ones_like(where_is_contacting)/len(where_is_contacting)
+            chosen_idx = p.multinomial(num_samples=1, replacement=False)
+            chosen_idx = chosen_idx.item()
+            chosen_idx = where_is_contacting[chosen_idx]
+
+            # find min and max indices for revealed chunk
+            min_index = max(0, chosen_idx - chunk_size//2)
+            max_index = min(chains_are_contacting.numel(), 1+chosen_idx + chunk_size//2)
+            # reveal chunk 
+            is_motif[min_index:max_index] = True
+
+            # update where_is_contacting
+            start = max(0,min_index-cur_min_seq_dist)
+            end = min(chains_are_contacting.numel(), max_index+cur_min_seq_dist)
+            chains_are_contacting[start:end] = False # remove this option from where_is_contacting 
+            
+            where_is_contacting = chains_are_contacting.nonzero().squeeze()
+            
+            if chains_are_contacting.sum() == 0:
+                break # can't make any more chunks
+        
+        is_motif_2d = is_motif[:, None] * is_motif[None, :]
+
+        return is_motif_2d, is_motif
+    
+
 def get_unconditional_3template(indep, atom_mask, low_prop, high_prop, broken_prop):
     """
     Unconditional protein generation task. Nothing is motif. 
@@ -814,6 +1076,34 @@ def get_sm_contact_mask(indep,
 
     return (mask2d, is_motif), None
 
+def get_na_contact_mask(indep, 
+                        atom_mask, 
+                        low_prop, 
+                        high_prop, 
+                        broken_prop,
+                        contact_cut=8,
+                        chunk_size_min=1,
+                        chunk_size_max=7,
+                        max_num_chunks=4,
+                        na_fixed_intra=False,
+                        na_fixed_inter=False,
+                        ):
+    """
+    AF: create masks for protein na complexes
+    """
+    # indep.write_pdb('check_indep_na.pdb')
+
+    is_na = get_nucleic_acid_residues(indep.seq)
+    mask2d, is_motif = _get_na_contact_3template(indep.xyz, is_na, low_prop, high_prop,
+        contact_cut=contact_cut,
+        chunk_size_min=chunk_size_min,
+        chunk_size_max=chunk_size_max,
+        max_num_chunks=max_num_chunks,
+        na_fixed_intra=na_fixed_intra,
+        na_fixed_inter=na_fixed_inter
+        )
+    return (mask2d, is_motif), None
+
 
 def get_diffusion_mask(
         indep, atom_mask, low_prop, high_prop, broken_prop,
@@ -832,8 +1122,55 @@ def get_diffusion_mask(
     # sm_compatable masks only
     if indep.is_sm.any(): 
         get_mask = get_sm_contact_mask
+
+
+
+    ic(get_mask)
     
     return get_mask(indep, atom_mask, low_prop=low_prop, high_prop=high_prop, broken_prop=broken_prop)
+
+
+def get_diffusion_mask_na(
+        indep, atom_mask, low_prop, high_prop, broken_prop, diff_mask_probs,
+        contact_cut=8,
+        chunk_size_min=1,
+        chunk_size_max=7,
+        max_num_chunks=4,
+        na_fixed_intra=False,
+        na_fixed_inter=False,
+        ):
+
+
+    mask_probs = list(diff_mask_probs.items())
+    masks = [m for m, _ in mask_probs]
+    props = [p for _, p in mask_probs]
+    get_mask = np.random.choice(masks, p=props)
+
+
+    # Use fallback mask if no small molecule present.
+    # if not indep.is_sm.any():
+    #     get_mask = sm_mask_fallback.get(get_mask, get_mask)
+
+    if indep.is_sm.any() and get_nucleic_acid_residues(indep.seq).any():
+        sys.exit(f'small molecule and nucleic training not currently supported for {task} task!')
+
+    # nucleic masks only
+    if get_nucleic_acid_residues(indep.seq).any():
+        get_mask = get_na_contact_mask
+
+    return get_mask(indep, atom_mask, 
+                low_prop=low_prop, 
+                high_prop=high_prop, 
+                broken_prop=broken_prop,
+                contact_cut=contact_cut,
+                chunk_size_min=chunk_size_min,
+                chunk_size_max=chunk_size_max,
+                max_num_chunks=max_num_chunks,
+                na_fixed_intra=na_fixed_intra,
+                na_fixed_inter=na_fixed_inter,
+                )
+
+
 
 
 def generate_sm_mask(prot_masks, is_sm):
@@ -1054,11 +1391,162 @@ def get_nearby_contigs(indep, atom_mask, low_prop, high_prop, broken_prop):
 
     return mask, is_atom_motif
 
+def get_nucleic_acid_residues(seq):
+    # return torch.logical_and((seq >= 22),(seq <= 26))
+    return torch.logical_and((seq >= 22),(seq <= 31))
+
+
+def get_diffusion_mask_simple(L, loader_params, indep=None):
+    """
+    Function to make a diffusion mask.
+    Options:
+        full_prop - proportion of time whole protein is masked.
+        low_prop - lower bound on the proportion of the protein masked
+        high_prop - upper bound on the proportion of the protein masked
+        broken_prop - proportion of the time the mask is in the middle (broken motif), vs at the ends
+    Output:
+        1D diffusion mask. True is unmasked, False is masked/diffused
+    """
+    diffusion_mask = torch.ones(L).bool()
+
+    mask_length = int(
+        np.floor(
+        random.uniform(
+        loader_params['MASK_MIN_PROPORTION'], loader_params['MASK_MAX_PROPORTION']) * L))
+    # decide if mask goes in the middle or the ends
+    try:
+        if random.uniform(0,1) < loader_params['MASK_BROKEN_PROPORTION']:
+            high_start = L-mask_length-1
+            start = random.randint(0, high_start)
+            diffusion_mask[start:start+mask_length] = False
+        else:
+            # split mask in two
+            split = random.randint(1, mask_length-2)
+            diffusion_mask[:split] = False
+            diffusion_mask[-(mask_length-split):] = False
+    except:
+        return diffusion_mask
+    return diffusion_mask
+
+def get_atom_coordinates(NA_seq, NA_coords, residue_token_index, atom_token_indices):
+    indices = NA_seq == residue_token_index
+    coordinates = NA_coords[indices]
+    coordinates = coordinates[:, torch.tensor(atom_token_indices), :].reshape(-1, 3)
+    return coordinates
+
+# def get_na_contacts(seq, xyz, loader_params, is_nucleic_acid):
+#     """
+#     want to find all contacts to 
+#     C - C6, C5, N4 -> seqtoken 23, atom indices 18, 17, 16
+#     A - N7, N6 -> seqtoken 22, atom indices 18, 20
+#     G - N7, O6 -> seqtoken 24, atom_indices 18, 21
+#     T - C6, C7 -> seqtoken 25, atom_indices 19, 18
+    
+#     so we first isolate these atoms from xyz
+#     then we compute pairwise distances
+#     then we find indices where these pairwise distances is smaller then X
+#     and we return those indices
+#     """
+#     na_seq = seq[is_nucleic_acid]
+#     na_coords = xyz[is_nucleic_acid]
+#     DNAC_coords = get_atom_coordinates(na_seq, na_coords, 23, [16, 17, 18])
+#     DNAA_coords = get_atom_coordinates(na_seq, na_coords, 22, [18, 20])
+#     DNAG_coords = get_atom_coordinates(na_seq, na_coords, 24, [18, 21])
+#     DNAT_coords = get_atom_coordinates(na_seq, na_coords, 25, [18, 19])
+
+#     DNA_coords = torch.cat((DNAC_coords, DNAA_coords, DNAG_coords, DNAT_coords), dim=0)
+
+#     # prot_seq = indep.seq[~indep.is_nucleic_acid]
+#     prot_coords = xyz[~is_nucleic_acid]
+
+#     distances = torch.cdist(prot_coords, DNA_coords)
+#     contact_residues = torch.logical_and((distances < loader_params['BINDING_DISTANCE_CUTOFF']), (distances != 0)).any(dim=1).nonzero()
+#     prot_contact_residues = contact_residues[:, 0].unique()
+#     return prot_contact_residues
+
+def get_na_contacts(seq, xyz, loader_params, is_nucleic_acid):
+    """
+    want to find all contacts to 
+    C - C6, C5, N4 -> seqtoken 23, atom indices 18, 17, 16
+    A - N7, N6 -> seqtoken 22, atom indices 18, 20
+    G - N7, O6 -> seqtoken 24, atom_indices 18, 21
+    T - C6, C7 -> seqtoken 25, atom_indices 19, 18
+    
+    so we first isolate these atoms from xyz
+    then we compute pairwise distances
+    then we find indices where these pairwise distances is smaller then X
+    and we return those indices
+    """
+    na_seq = seq[is_nucleic_acid]
+    na_coords = xyz[is_nucleic_acid]
+    # DNAC_coords = get_atom_coordinates(na_seq, na_coords, 23, [16, 17, 18])
+    # DNAA_coords = get_atom_coordinates(na_seq, na_coords, 22, [18, 20])
+    # DNAG_coords = get_atom_coordinates(na_seq, na_coords, 24, [18, 21])
+    # DNAT_coords = get_atom_coordinates(na_seq, na_coords, 25, [18, 19])
+
+    # RNAC_coords = get_atom_coordinates(na_seq, na_coords, 28, [16, 17, 18])
+    # RNAA_coords = get_atom_coordinates(na_seq, na_coords, 27, [18, 20])
+    # RNAG_coords = get_atom_coordinates(na_seq, na_coords, 29, [18, 21])
+    # RNAU_coords = get_atom_coordinates(na_seq, na_coords, 30, [18, 19])
+
+
+
+    # DNA_coords = torch.cat(
+    #     (DNAC_coords, DNAA_coords, DNAG_coords, DNAT_coords, 
+    #         RNAC_coords, RNAA_coords, RNAG_coords, RNAU_coords,
+    #         ), dim=0)
+
+    # prot_seq = indep.seq[~indep.is_nucleic_acid]
+    prot_coords = xyz[~is_nucleic_acid]
+
+    # distances = torch.cdist(prot_coords, DNA_coords)
+    distances = torch.cdist(prot_coords, na_coords)
+    contact_residues = torch.logical_and((distances < loader_params['BINDING_DISTANCE_CUTOFF']), (distances != 0)).any(dim=1).nonzero()
+    prot_contact_residues = contact_residues[:, 0].unique()
+    return prot_contact_residues
+
+
+
+def get_motif_block(contact_residues, sequence_length, loader_params):
+    """
+    Get all the indices between contact_residues, + some random additions to the ends. 
+    """
+    blocks = []
+    last_block_start = contact_residues[0]
+    last_block_end = contact_residues[0]
+    for contact in contact_residues[1:]:
+        if contact - last_block_end < 5:
+            last_block_end = contact
+        else:
+            blocks.append([last_block_start, last_block_end])
+            last_block_start = contact
+            last_block_end = contact
+    blocks.append([last_block_start, last_block_end])
+
+
+    # randomly padding to the ends of the blocks
+    for i in range(len(blocks)):
+        additional_leftend = np.random.randint(0, 6)
+        additional_rightend = np.random.randint(0, 6)
+        blocks[i][0] = max(0, blocks[i][0] - additional_leftend)
+        blocks[i][1] = min(sequence_length - 1, blocks[i][1] + additional_rightend)
+
+    block_indices = torch.cat([torch.arange(block[0], block[1]+1) for block in blocks])
+
+    return block_indices
+
+def get_diff_mask_fn(diff_mask_probs):
+    mask_probs = list(diff_mask_probs.items())
+    masks = [m for m, _ in mask_probs]
+    props = [p for _, p in mask_probs]
+    mask_fn = np.random.choice(masks, p=props)
+    return mask_fn
+
 #####################################
 # Main mask generator function
 #####################################
 
-def generate_masks(indep, task, loader_params, chosen_dataset, full_chain=None, atom_mask=None): #full_chain is for complexes, to signify which chain is complete
+def generate_masks(indep, task, loader_params, chosen_dataset, full_chain=None, xyz=None, atom_mask=None, is_sm=None, seq=None): #full_chain is for complexes, to signify which chain is complete
     '''
     Slimmed down function that outputs 1D masks for inputs and loss calculations.
     Input masks are defined as True=(unmasked)/False=masked (except for input_t1dconf, which is a scalar value, and seq2str_mask which is the msa mask for the seq2str task)
@@ -1110,11 +1598,14 @@ def generate_masks(indep, task, loader_params, chosen_dataset, full_chain=None, 
         #loss_str_mask_2d = seq2_str_mask[None, :] * seq2str_str_mask[:, None]
 
     # dj - only perform diffusion hal on pdb and fb for now 
-    elif task == 'diff' and chosen_dataset not in ['complex','negative']:
+    elif task == 'diff' and chosen_dataset not in ['complex','negative','na_compl','tf_distil']:
+    # elif task == 'diff' and chosen_dataset not in ['complex','negative']:
         """
         Hal task but created for the diffusion-based training. 
         """ 
         mask_fns = list( loader_params['DIFF_MASK_PROBS'].keys() )
+        indep.is_na = get_nucleic_acid_residues(indep.seq) # Check for nucleic acid resis
+        # TEMPORARY LOCATION: ADD THIS AS OBJECT ATTRIBUTE IN AA MODEL LATER
         diffusion_mask, is_atom_motif = get_diffusion_mask(
             indep,
             atom_mask,
@@ -1145,7 +1636,47 @@ def generate_masks(indep, task, loader_params, chosen_dataset, full_chain=None, 
 
         ## loss masks 
         loss_seq_mask[diffusion_mask] = False  # Dont score where diffusion mask is True (i.e., where things are not diffused)
-    
+
+    # AF: making proper masking for nucleic datasets
+    elif task == 'diff' and chosen_dataset in ['na_compl','tf_distil']:
+
+        mask_fns = list( loader_params['DIFF_MASK_PROBS'].keys() )
+
+        indep.na_fixed_inter=loader_params["NA_FIXED_INTER"]
+        indep.na_fixed_intra=loader_params["NA_FIXED_INTRA"]
+        indep.is_na = get_nucleic_acid_residues(indep.seq)
+        diffusion_mask, is_atom_motif = get_diffusion_mask(
+                indep,
+                atom_mask,
+                low_prop=loader_params['MASK_MIN_PROPORTION'],
+                high_prop=loader_params['MASK_MAX_PROPORTION'],
+                broken_prop=loader_params['MASK_BROKEN_PROPORTION'],
+                diff_mask_probs=loader_params['DIFF_MASK_PROBS'],
+            )
+
+        # 3 template stuff
+        cond_A = ((get_diffusion_mask_chunked in mask_fns) or (get_triple_contact in mask_fns))
+        cond_B = (type(diffusion_mask) == tuple)
+        if  (cond_A and cond_B):
+            # this means a mask generator which is aware of 3template diffusion was used 
+            assert (len(diffusion_mask) == 2) and (type(diffusion_mask) == tuple)
+            (t2d_is_revealed, diffusion_mask) = diffusion_mask 
+
+        # ic(diffusion_mask)
+        # ic(is_atom_motif)
+        # sys.exit('Exiting early for debugging')
+
+        # ic(is_atom_motif, torch.nonzero(diffusion_mask), diffusion_mask.sum())
+        input_str_mask = diffusion_mask.clone()
+        input_seq_mask = diffusion_mask.clone()
+        # t1dconf scaling will be taken care of by diffuser, so just leave those at 1 here 
+        input_t1d_str_conf_mask = torch.ones(L)
+        input_t1d_seq_conf_mask = torch.ones(L)
+
+        ## loss masks 
+        loss_seq_mask[diffusion_mask] = False  # Dont score where diffusion mask is True (i.e., where things are not diffused)
+
+
     elif task == 'diff' and chosen_dataset == 'complex':
         '''
         Diffusion task for complexes. Default is to diffuse the whole of the complete chain.
@@ -1350,83 +1881,88 @@ def generate_masks(indep, task, loader_params, chosen_dataset, full_chain=None, 
         loss_str_mask_2d[~loss_str_mask,:] = False
         loss_str_mask_2d[:,~loss_str_mask] = False
         
-    elif task == 'diff' and chosen_dataset == 'na_compl':
-        """
-        The plan:
-            provide sequence and structure of binding residues
-            provide structure and masked sequence motif residues
-        Make an initial diffusion mask over the protein (True where given, false where diffused)
 
-        legal diffusion positions (True where diffusable, False where not diffusable)
+    # # elif task == 'diff' and chosen_dataset in ['complex','negative','na_compl','tf_distil']:
+    # elif task == 'diff' and chosen_dataset == 'na_compl':
+    #     """
+    #     The plan:
+    #         provide sequence and structure of binding residues
+    #         provide structure and masked sequence motif residues
+    #     Make an initial diffusion mask over the protein (True where given, false where diffused)
 
-        diffusion mask is ~(~simple diff mask AND legal diffusion position)
+    #     legal diffusion positions (True where diffusable, False where not diffusable)
 
-        Make a sequence_mask that converts sequence to mask token at specific residues. 
+    #     diffusion mask is ~(~simple diff mask AND legal diffusion position)
 
-        """
-        seq = seq.squeeze()
-        xyz = xyz.squeeze()
-        ic(seq.shape)
-        ic(xyz.shape)
-        is_nucleic_acid = get_nucleic_acid_residues(seq)
-        L = len(is_nucleic_acid) - is_nucleic_acid.sum() # length of protein sequence is L
+    #     Make a sequence_mask that converts sequence to mask token at specific residues. 
 
-        if random.uniform(0,1) < loader_params['P_UNCOND']:
-            diffusion_mask = torch.zeros(L).bool()
+    #     """
+    #     seq = seq.squeeze()
+    #     xyz = xyz.squeeze()
+    #     ic(seq.shape)
+    #     ic(xyz.shape)
+    #     is_nucleic_acid = get_nucleic_acid_residues(seq)
+    #     L = len(is_nucleic_acid) - is_nucleic_acid.sum() # length of protein sequence is L
+
+    #     if random.uniform(0,1) < loader_params['P_UNCOND']:
+    #         diffusion_mask = torch.zeros(L).bool()
         
-        else:
-            mask_fn = get_diff_mask_fn(loader_params['DIFF_MASK_PROBS'])
-            diffusion_mask = mask_fn(L, loader_params)
+    #     else:
+    #         mask_fn = get_diff_mask_fn(loader_params['DIFF_MASK_PROBS'])
+    #         diffusion_mask = mask_fn(L, loader_params)
 
-            ## loss masks 
-            # loss_seq_mask[diffusion_mask] = False
-
-        # find binding contacts
-        if random.uniform(0,1) > loader_params['P_FREE']:
-            contact_residue_indices = get_na_contacts(seq, xyz, loader_params, is_nucleic_acid)
-
-            if len(contact_residue_indices) == 0:
-                legal_diffusion_positions = torch.ones(L).bool()
-                provide_sequence = diffusion_mask
-            else:
-            # find binding motifs
-                motif_blocks_residue_indices = get_motif_block(contact_residue_indices, L, loader_params)
-
-                legal_diffusion_positions = torch.ones(L).bool()
-                legal_diffusion_positions[motif_blocks_residue_indices] = False # can't diffuse the motif blocks
-
-                # making the sequence mask. We want to put a mask token at all the residues in the binding motif but not the contact itself. 
-                provide_sequence = diffusion_mask
-                provide_sequence[motif_blocks_residue_indices] = False # don't provide sequence in the motif
-                provide_sequence[contact_residue_indices] = True # but provide the sequence in the actual binding locations
-
-
-            diffusion_mask = ~torch.logical_and(~diffusion_mask,legal_diffusion_positions)
-        else:
-            provide_sequence = diffusion_mask
-
-        # need to now extend both to cover the NAs as well
-        len_NA = sum(is_nucleic_acid)
-        NA_diffusion_mask = torch.ones(len_NA).bool() # don't diffuse any NA positions
-        NA_provide_sequence = torch.ones(len_NA).bool() # provide all the sequence
-
-        diffusion_mask = torch.cat((diffusion_mask, NA_diffusion_mask))
-        provide_sequence = torch.cat((provide_sequence, NA_provide_sequence))
+    #         ## loss masks 
+    #         # loss_seq_mask[diffusion_mask] = False
         
-        is_atomize_example = False
-        input_seq_mask = provide_sequence
-        input_str_mask = diffusion_mask
-        loss_seq_mask[diffusion_mask] = False
-        input_t1d_str_conf_mask = torch.ones(len(input_seq_mask))
-        input_t1d_seq_conf_mask = torch.ones(len(input_seq_mask))
+    #     # find binding contacts
+    #     if random.uniform(0,1) > loader_params['P_FREE']:
 
- 
+    #         contact_residue_indices = get_na_contacts(seq, xyz, loader_params, is_nucleic_acid)
+
+    #         if len(contact_residue_indices) == 0:
+    #             legal_diffusion_positions = torch.ones(L).bool()
+    #             provide_sequence = diffusion_mask
+    #         else:
+    #         # find binding motifs
+    #             motif_blocks_residue_indices = get_motif_block(contact_residue_indices, L, loader_params)
+
+    #             legal_diffusion_positions = torch.ones(L).bool()
+    #             legal_diffusion_positions[motif_blocks_residue_indices] = False # can't diffuse the motif blocks
+
+    #             # making the sequence mask. We want to put a mask token at all the residues in the binding motif but not the contact itself. 
+    #             provide_sequence = diffusion_mask
+    #             provide_sequence[motif_blocks_residue_indices] = False # don't provide sequence in the motif
+    #             provide_sequence[contact_residue_indices] = True # but provide the sequence in the actual binding locations
+
+
+    #         diffusion_mask = ~torch.logical_and(~diffusion_mask,legal_diffusion_positions)
+
+    #     else:
+    #         provide_sequence = diffusion_mask
+
+    #     # need to now extend both to cover the NAs as well
+    #     len_NA = sum(is_nucleic_acid)
+    #     NA_diffusion_mask = torch.ones(len_NA).bool() # don't diffuse any NA positions
+    #     NA_provide_sequence = torch.ones(len_NA).bool() # provide all the sequence
+
+    #     diffusion_mask = torch.cat((diffusion_mask, NA_diffusion_mask))
+    #     provide_sequence = torch.cat((provide_sequence, NA_provide_sequence))
+        
+    #     is_atomize_example = False
+    #     input_seq_mask = provide_sequence
+    #     input_str_mask = diffusion_mask
+    #     loss_seq_mask[diffusion_mask] = False
+    #     input_t1d_str_conf_mask = torch.ones(len(input_seq_mask))
+    #     input_t1d_seq_conf_mask = torch.ones(len(input_seq_mask))
+
+
+
     else:
         sys.exit(f'Masks cannot be generated for the {task} task!')
     
     if (task != 'seq2str') and (not loader_params['SM_ONLY']):
        assert torch.sum(~input_seq_mask) > 0, f'Task = {task}, dataset = {chosen_dataset}, full chain = {full_chain}'
-    
+
     mask_dict = {'input_seq_mask':input_seq_mask,
                 'input_str_mask':input_str_mask,
                 'input_floating_mask':input_floating_mask,
