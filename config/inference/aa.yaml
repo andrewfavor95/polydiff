@@ -3,6 +3,9 @@ defaults:
   - base
 
 inference:
-  ckpt_path: /home/rohith/rf2a-fd3/models/BFF_10_remapped.pt
+  ckpt_path: /home/afavor/git/RFD_AF/inputs/ferritin_6i9t.pdb
   align_motif: False
   str_self_cond: True
+
+diffuser:
+  T: 50

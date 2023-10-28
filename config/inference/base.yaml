@@ -2,6 +2,7 @@
 
 inference:
   input_pdb: test_data/1qys.pdb
+  rfmotif: False
   num_designs: 10
   design_startnum: 0
   #ckpt_path: /mnt/home/jwatson3/for/nate/diffusion_models/BFF_wcomplexes_3epochs_072522.pt
@@ -22,7 +23,7 @@ inference:
   output_prefix: samples/design
   scaffold_guided: False
   model_runner: NRBStyleSelfCond
-  cautious: True
+  cautious: False
   recycle_between: False
   align_motif: True
   autoregressive_confidence: True
@@ -35,20 +36,44 @@ inference:
   deterministic: False
   zero_weights: False
   ligand: null
-  ema: True
+  internal_sym: null
+  offset_scale: 1.0
+  start_from_input: False
+  subsymm_template: null 
+  subsymm_t1d_perfect: False
+  subsymm_template_xt_only: False
+  subsymm_template_all_possible: True 
+  input_xyz_t: False
+  rigid_symm_motif: False
+  initial_rigid_motif: False
+  p2p_crop: -1
+  rigid_repeat_motif: False
+  n_repeats: 3
+  origin_before_update: False
+  two_template: False 
+  three_template: False
+  enforce_repeat_fit: False 
+  rigid_fit_optim_steps: 12
+  json_args: null 
+  overrides: null 
+  ij_visible: null
+  motif_only_2d: False
+  supply_motif_seq: False
+  refine_recycles: -1
+  refine: False
+  chainbreak_chunks: True
+  atomized_output: False
   contig_as_guidepost: False
   remove_guideposts_from_output: True
-  state_dict_to_load: model_state_dict
-  infer_guidepost_positions: True
-  guidepost_xyz_as_design: True
-  guidepost_xyz_as_design_bb: [False]
+  # ema: True
 
 contigmap:
   contigs: ['20', 'A3-23', '30']
-  contig_atoms: null
   inpaint_str: null
   inpaint_seq: null
   length: null
+  polymer_chains: null
+
 
 model:
   n_extra_block: 4
@@ -58,6 +83,8 @@ model:
   d_msa_full: 64
   d_pair: 128
   d_templ: 64
+  d_templ_1d: null
+  d_templ_2d: null
   n_head_msa: 8
   n_head_pair: 4
   n_head_templ: 4
@@ -99,7 +126,12 @@ model:
   symmsub_k: null
   sym_method: mean
   copy_main_block_template: False
-  main_block: null
+  main_block: null 
+  symm_fit_start: -1
+  clash: 4.0
+  lock_symmsubs_at: -1
+  allow_particle_recenter: false 
+  # half_precision: False
 
 diffuser:
   T: 200
@@ -107,6 +139,7 @@ diffuser:
   b_T: 7e-2
   schedule_type: linear
   so3_type: igso3
+  eucl_type: standard
   aa_decode_steps: 40
   chi_type: wrapped_normal
   crd_scale: 0.0667
@@ -159,8 +192,9 @@ preprocess:
   str_self_cond: False
   seq_self_cond: False
   predict_previous: False
+  eye_frames: False 
   randomize_frames: False
-  motif_only_2d: False
+  num_atoms_na: 12
   
 logging:
   inputs: False

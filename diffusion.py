@@ -27,7 +27,7 @@ import time
 from icecream import ic  
 
 import rf2aa.chemical
-
+import ipdb
 torch.set_printoptions(sci_mode=False)
 
 def cosine_interp(T, eta_max, eta_min):
@@ -854,7 +854,8 @@ class Diffuser():
                  var_scale=1.0,
                  cache_dir='.',
                  partial_T=None,
-                 truncation_level=2000
+                 truncation_level=2000,
+                 eucl_type='standard',
                  ):
         """
         
@@ -873,6 +874,9 @@ class Diffuser():
         self.aa_decode_steps=aa_decode_steps
         self.cache_dir = cache_dir
 
+        self.so3_type = so3_type
+        self.eucl_type = eucl_type
+
         # get backbone frame diffuser 
         if so3_type == 'slerp':
             self.so3_diffuser =  SLERP(self.T)
@@ -887,24 +891,42 @@ class Diffuser():
                 cache_dir=self.cache_dir,
                 L=truncation_level, 
             )        
+        elif so3_type == 'random':
+            assert eucl_type == 'gaussian'
+            self.so3_diffuser = RandomFrames(self.T) 
         else:
             raise NotImplementedError()
 
         # get backbone translation diffuser
-        self.eucl_diffuser = EuclideanDiffuser(self.T, b_0, b_T, schedule_type=schedule_type, **schedule_kwargs)
+        assert eucl_type in ['standard', 'gaussian'], 'eucl_type must be standard or gaussian'
+        if eucl_type == 'standard':
+            self.eucl_diffuser = EuclideanDiffuser(self.T, b_0, b_T, schedule_type=schedule_type, **schedule_kwargs)
+        else:
+            assert so3_type == 'random', 'gaussian noise only implemented for random frames'
+            self.eucl_diffuser = GaussianNoise(self.T, **schedule_kwargs)
 
         # get chi angle diffuser 
         self.torsion_diffuser = INTERP(self.T)
 
         print('Successful diffuser __init__')
     
-    def diffuse_pose(self, xyz, seq, atom_mask, is_sm, diffuse_sidechains=False, include_motif_sidechains=True, diffusion_mask=None, t_list=None):
+    def diffuse_pose(self, xyz, seq, atom_mask, is_sm, 
+                    diffuse_sidechains=False, 
+                    include_motif_sidechains=True, 
+                    diffusion_mask=None, 
+                    t_list=None,
+                    center_crds=True, 
+                    symmRs=None,
+                    motif_only_2d=False,
+                    is_na=None, 
+                    num_frames_na=1, 
+                    ):
         """
         Given full atom xyz, sequence and atom mask, diffuse the protein 
         translations, rotations, and chi angles
 
         Parameters:
-            
+
             xyz (L,14/27,3) set of coordinates 
 
             seq (L,) integer sequence 
@@ -917,7 +939,6 @@ class Diffuser():
 
 
         """
-
         if diffusion_mask is None:
             diffusion_mask = torch.zeros(len(xyz.squeeze())).to(dtype=bool)
 
@@ -929,22 +950,50 @@ class Diffuser():
         nan_mask = ~torch.isnan(xyz.squeeze()[:,1:2]).any(dim=-1).any(dim=-1)
         assert torch.sum(~nan_mask) == 0
 
-        #Centre unmasked structure at origin, as in training (to prevent information leak)
-        if torch.sum(diffusion_mask) != 0:
-            self.motif_com=xyz[diffusion_mask,1,:].mean(dim=0) # This is needed for one of the potentials
-            xyz = xyz - self.motif_com
-        elif torch.sum(diffusion_mask) == 0:
-            xyz = xyz - xyz[:,1,:].mean(dim=0)
+        
+        if symmRs is None: # asymmetric case
 
+            if (torch.sum(diffusion_mask) != 0) and (not motif_only_2d):
+                self.motif_com=xyz[diffusion_mask,1,:].mean(dim=0) # This is needed for one of the potentials
+                if center_crds:
+                    xyz = xyz - self.motif_com
+                else:
+                    print('WARNING: NOT CENTERING STRUCTURE AT ORIGIN')
+            
+            elif (torch.sum(diffusion_mask) == 0):
+                if center_crds:
+                    xyz = xyz - xyz[:,1,:].mean(dim=0) # Does this even matter? 
+                                                       # crds aren't even diffused yet and should wind up at origin anyway
+                else:
+                    print('WARNING: NOT CENTERING STRUCTURE AT ORIGIN')
+
+        else: # symmetric case
+
+            # build entire particle and center at origin
+            s = symmRs.shape[0]
+            l = xyz.shape[0]
+
+            xyz_full = torch.einsum('sij,laj->slai',symmRs,xyz)
+            xyz_full = xyz_full.reshape(s*l,-1,3)
+            diff_mask_repeat = diffusion_mask.repeat(len(symmRs))
+
+            self.motif_com = xyz_full[diff_mask_repeat,1,:].mean(dim=0)
+            if center_crds:
+                xyz = xyz - self.motif_com
+            else:
+                print('WARNING: NOT CENTERING STRUCTURE AT ORIGIN')
+
+        # ic(o.xyz[0])
         #xyz = xyz - xyz[nan_mask][:,1,:].mean(dim=0) # DJ aug 23, 2022 - commenting out bc now better logic to assert no nans 
         xyz_true = torch.clone(xyz)
-
         xyz = xyz * self.crd_scale
 
         
         # 1 get translations 
         tick = time.time()
-        diffused_T, deltas = self.eucl_diffuser.diffuse_translations(xyz[:,:3,:].clone(), diffusion_mask=diffusion_mask)
+        kwargs = {'crd_scale':self.crd_scale} if self.eucl_type == 'gaussian' else {}
+        diffused_T, deltas = self.eucl_diffuser.diffuse_translations(xyz[:,:3,:].clone(), diffusion_mask=diffusion_mask, **kwargs)
+
         #print('Time to diffuse coordinates: ',time.time()-tick)
         diffused_T /= self.crd_scale
         deltas     /= self.crd_scale
@@ -965,7 +1014,14 @@ class Diffuser():
         cum_delta = deltas.cumsum(dim=1)
         # The coordinates of the translated AND rotated frames
         diffused_BB = (torch.from_numpy(diffused_frame_crds) + cum_delta[:,:,None,:]).transpose(0,1) # [n,L,3,3]
-        #diffused_BB  = torch.from_numpy(diffused_frame_crds).transpose(0,1)
+
+        if self.eucl_type == 'gaussian':
+            shape_before = diffused_BB.shape 
+            assert type(self.eucl_diffuser) == GaussianNoise
+
+            diffused_BB = torch.stack([diffused_BB[0]]*self.T, dim=0)
+            assert diffused_BB.shape == shape_before
+
 
         # Full atom diffusions at all timepoints 
         if diffuse_sidechains:

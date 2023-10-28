@@ -23,9 +23,15 @@ import logging
 import string 
 import hydra
 import rf2aa.chemical
-import rf2aa.tensor_util
+from rf2aa.kinematics import normQ, Qs2Rs
 import aa_model
+import parsers
+import matplotlib.pyplot as plt
+import ipdb
+from icecream import ic 
+ic(util.__file__)
 
+from . import symmetry 
 ###########################################################
 #### Functions which can be called outside of Denoiser ####
 ###########################################################
@@ -96,8 +102,9 @@ def get_next_frames(xt, px0, t, diffuser, so3_type, diffusion_mask, noise_scale=
     C_t  = xt[None, :, 2, :]
 
     R_t, Ca_t = rigid_from_3_points(N_t, Ca_t, C_t)
-    R_0 = scipy_R.from_matrix(rf2aa.tensor_util.assert_squeeze(R_0).numpy())
-    R_t = scipy_R.from_matrix(rf2aa.tensor_util.assert_squeeze(R_t).numpy())
+
+    R_0 = scipy_R.from_matrix(R_0.squeeze().numpy())
+    R_t = scipy_R.from_matrix(R_t.squeeze().numpy())
 
     # Sample next frame for each residue
     all_rot_transitions = []
@@ -120,10 +127,11 @@ def get_next_frames(xt, px0, t, diffuser, so3_type, diffusion_mask, noise_scale=
     all_rot_transitions = np.stack(all_rot_transitions, axis=0)
 
     # Apply the interpolated rotation matrices to the coordinates
-    next_crds   = np.einsum('lrij,laj->lrai', all_rot_transitions, xt[:,:3,:] - Ca_t.squeeze(0)[:,None,...].numpy()) + Ca_t.squeeze(0)[:,None,None,...].numpy()
+    next_crds   = np.einsum('lrij,laj->lrai', all_rot_transitions, xt[:,:3,:] - Ca_t.squeeze()[:,None,...].numpy()) + Ca_t.squeeze()[:,None,None,...].numpy()
 
     # (L,3,3) set of backbone coordinates with slight rotation 
     return next_crds.squeeze(1)
+
 
 def get_mu_xt_x0(xt, px0, t, beta_schedule, alphabar_schedule, eps=1e-6):
     """
@@ -137,12 +145,13 @@ def get_mu_xt_x0(xt, px0, t, beta_schedule, alphabar_schedule, eps=1e-6):
     xt_ca = xt[:,1,:]
     px0_ca = px0[:,1,:]
 
-    a = ((torch.sqrt(alphabar_schedule[t_idx-1] + eps)*beta_schedule[t_idx])/(1-alphabar_schedule[t_idx]))*px0_ca
-    b = ((torch.sqrt(1-beta_schedule[t_idx] + eps)*(1-alphabar_schedule[t_idx-1]))/(1-alphabar_schedule[t_idx]))*xt_ca
+    a = ((torch.sqrt(alphabar_schedule[t_idx-1] + eps)*beta_schedule[t_idx])/(1-alphabar_schedule[t_idx]))
+    b = ((torch.sqrt(1-beta_schedule[t_idx] + eps)*(1-alphabar_schedule[t_idx-1]))/(1-alphabar_schedule[t_idx]))
 
-    mu = a + b
+    mu = a*px0_ca + b*xt_ca
 
     return mu, sigma
+
 
 def get_next_ca(xt, px0, t, diffusion_mask, crd_scale, beta_schedule, alphabar_schedule, noise_scale=1.):
     """
@@ -717,7 +726,12 @@ class Denoise():
                       diffuse_sidechains,
                       fix_motif=True,
                       align_motif=True,
-                      include_motif_sidechains=True):
+                      include_motif_sidechains=True,
+                      rigid_symm_motif_kwargs={},
+                      rigid_repeat_motif_kwargs={},
+                      origin_before_update=False,
+                      rfmotif=None):
+                      # origin_before_update=False):
         """
         Wrapper function to take px0, xt and t, and to produce xt-1
         First, aligns px0 to xt
@@ -747,6 +761,10 @@ class Denoise():
 
             include_motif_sidechains (bool): Provide sidechains of the fixed motif to the model
         """
+        if origin_before_update:
+            COM_ALL = xt[:,1,:].mean(0)
+            xt = xt - COM_ALL
+            px0 = px0 - COM_ALL.to(px0.device)
 
         get_allatom = ComputeAllAtomCoords().to(device=xt.device)
         L,n_atom = xt.shape[:2]
@@ -779,13 +797,22 @@ class Denoise():
 
         # Apply gradient step from guiding potentials
         # This can be moved to below where the full atom representation is calculated to allow for potentials involving sidechains
-        
-        grad_ca = self.get_potential_gradients(seq_t.clone(), xt.clone(), diffusion_mask=diffusion_mask)
-    
+        grad_ca    = self.get_potential_gradients(seq_t.clone(), xt.clone(), diffusion_mask=diffusion_mask)
         ca_deltas += self.potential_manager.get_guide_scale(t) * grad_ca
         
         # add the delta to the new frames 
         frames_next = torch.from_numpy(frames_next) + ca_deltas[:,None,:]  # translate
+
+        # rigid-body fitting of motif for symmetry
+        if len(rigid_symm_motif_kwargs) > 0:
+            frames_next, next_rigid_tmplt = fit_rigid_motif_symm(frames_next, **rigid_symm_motif_kwargs)
+        
+        # rigid-body fitting of motif for repeats
+        elif len(rigid_repeat_motif_kwargs) > 0:
+            print('Getting next frames for repeat motif')
+            frames_next, next_rigid_tmplt = fit_rigid_motif_repeat(frames_next, **rigid_repeat_motif_kwargs)
+        else:
+            next_rigid_tmplt = None
 
         if diffuse_sidechains:
             if self.seq_diffuser:
@@ -824,7 +851,307 @@ class Denoise():
         if include_motif_sidechains:
             fullatom_next[:,diffusion_mask,:14] = xt[None,diffusion_mask]
 
-        return fullatom_next.squeeze()[:,:14,:], seq_next, torsions_next, px0
+        if origin_before_update:
+            fullatom_next = fullatom_next + COM_ALL
+            px0 = px0 + COM_ALL.to(px0.device)
+            # print('Successful px0 origin before update')
+
+        return fullatom_next.squeeze()[:,:14,:], seq_next, torsions_next, px0, next_rigid_tmplt
+    
+
+def fit_rigid_motif_symm(frames_next, motif_mask, xyz_template, symmRs, symmsub, TSCALE=1.0, **kwargs):
+        """
+        Takes in updated frames which may have perturbed the motif and fits a rigid body transformation 
+        of the motif to the updated coordinates. 
+        """
+        xyz_template_clone = xyz_template.clone()
+
+        # a coordinate-based error 
+        def dist_error_comp(R0,T0,frames_next_motif,xyz_template,TSCALE):
+            template_COM = xyz_template.mean(dim=0)
+            template_corr = torch.einsum('ij,rj->ri', R0, xyz_template-template_COM) + template_COM + TSCALE*T0[None,None,:]
+            loss  = torch.abs(frames_next_motif-template_corr).mean()
+
+            return loss
+
+        def Q2R(Q):
+            Qs = torch.cat((torch.ones((1),device=Q.device),Q),dim=-1)
+            Qs = normQ(Qs)
+            return Qs2Rs(Qs[None,:]).squeeze(0)
+
+        # grab only the motif within the updated frames
+        frames_next_motif = frames_next.clone()[:,1,:].to(device=xyz_template.device)
+        frames_next_motif = frames_next_motif[motif_mask,:]
+        
+        # grab only the motif within the template 
+        xyz_template_ca = xyz_template[:,1,:]
+        xyz_template_ca = xyz_template_ca[motif_mask,:]
+        xyz_template_asu = xyz_template[motif_mask,:]
+
+        if symmRs is not None:
+            # only grab ASU 
+            frames_next_motif = frames_next_motif[:(frames_next_motif.shape[0] // len(symmsub)),:]
+            xyz_template_ca   = xyz_template_ca[:(xyz_template_ca.shape[0] // len(symmsub)),:]
+            xyz_template_asu  = xyz_template_asu[:(xyz_template_asu.shape[0] // len(symmsub)),:]
+
+
+        with torch.enable_grad():
+            T0 = torch.zeros(3,device=xyz_template.device).requires_grad_(True)
+            Q0 = torch.zeros(3,device=xyz_template.device).requires_grad_(True)
+
+        lbfgs = torch.optim.LBFGS([T0,Q0],
+                    history_size=10,
+                    max_iter=4,
+                    line_search_fn="strong_wolfe")
+        
+        def closure():
+            lbfgs.zero_grad()
+            loss = dist_error_comp(Q2R(Q0), T0, frames_next_motif, xyz_template_ca, TSCALE)
+            loss.backward()
+            return loss
+        
+        # fit the (ASU) motif to the updated coordinates
+        for e in range(12):
+            loss = lbfgs.step(closure)
+
+        # apply the fitted transformation to the motif
+        template_COM         = xyz_template.mean(dim=0)
+        updated_template_asu = torch.einsum('ij,brj->bri', Q2R(Q0), xyz_template_asu-template_COM) + template_COM + TSCALE*T0[None,None,:]
+
+        # re-symmetrize the fitted motif according to current symmsubs
+        if symmRs is not None:
+            updated_template = torch.einsum('sij,raj->srai', symmRs[symmsub], updated_template_asu)
+            s,r,a,i = updated_template.shape
+            updated_template_symm = updated_template.reshape(s*r,a,3).to(dtype=frames_next.dtype, device=frames_next.device)
+            updated_template_symm = updated_template_symm.detach()
+        
+        # replace the (slightly perturbed) motif with the fitted rigid motif 
+        frames_next[motif_mask] = updated_template_symm[:,:3,:]
+        # create new xyz_template that contains the current fitted motif
+        xyz_template_clone[motif_mask] = updated_template_symm.to(dtype=xyz_template.dtype, device=xyz_template.device)
+
+        return frames_next, xyz_template_clone #updated_template[: updated_template.shape[0] // len(symmsub)]
+
+# def select_true_regions(tensor):
+#     true_regions = []
+#     start_idx = None
+
+#     for i, value in enumerate(tensor):
+#         if value:
+#             if start_idx is None:
+#                 start_idx = i
+#         else:
+#             if start_idx is not None:
+#                 true_regions.append((start_idx, i))
+#                 start_idx = None
+
+#     if start_idx is not None:
+#         true_regions.append((start_idx, len(tensor)))
+
+#     return true_regions
+
+def get_grouped_regions(tensor, repeat_length):
+    true_regions = []
+    start_idx = None
+    prev_group = None
+
+    for i, value in enumerate(tensor):
+        if value:
+            if start_idx is None:
+                start_idx = i
+        else:
+            if start_idx is not None:
+                end_idx = i
+                group = (start_idx // repeat_length, end_idx // repeat_length)
+                if group != prev_group:
+                    true_regions.append([])
+                true_regions[-1].append((start_idx, end_idx))
+                start_idx = None
+                prev_group = group
+
+    if start_idx is not None:
+        end_idx = len(tensor)
+        group = (start_idx // repeat_length, end_idx // repeat_length)
+        if group != prev_group:
+            true_regions.append([])
+        true_regions[-1].append((start_idx, end_idx))
+
+    return true_regions
+
+def select_true_regions(tensor, repeat_length):
+    """
+    returns list of masks 
+    """
+    assert len(tensor) % repeat_length == 0
+    nmasks = len(tensor) // repeat_length
+
+    masks = []
+    for i in range(nmasks):
+        mask = torch.clone(tensor)
+        # set any not in this chunk to False 
+        cur_start = i * repeat_length
+        cur_end = ((i+1) * repeat_length )
+        mask[:cur_start]   = False
+        mask[(cur_end):] = False
+        masks.append(mask)
+    
+    return masks
+
+
+# def select_true_regions2(tensor, repeat_length):
+#     true_regions = []
+#     start_idx = None
+#     prev_group = None
+
+#     for i, value in enumerate(tensor):
+#         if value:
+#             if start_idx is None:
+#                 start_idx = i
+#         else:
+#             if start_idx is not None:
+#                 end_idx = i
+#                 group = (start_idx // repeat_length, end_idx // repeat_length)
+#                 if group != prev_group:
+#                     true_regions.append([False] * len(tensor))
+#                 true_regions[-1][start_idx:end_idx] = [True] * (end_idx - start_idx)
+#                 start_idx = None
+#                 prev_group = group
+
+#     if start_idx is not None:
+#         end_idx = len(tensor)
+#         group = (start_idx // repeat_length, end_idx // repeat_length)
+#         if group != prev_group:
+#             true_regions.append([False] * len(tensor))
+#         true_regions[-1][start_idx:end_idx] = [True] * (end_idx - start_idx)
+
+#     return true_regions
+
+
+
+
+def fit_rigid_motif_repeat(frames_next, 
+                           is_motif, 
+                           xyz_template, 
+                           repeat_length,
+                           enforce_repeat_fit=False, 
+                           TSCALE=1.0,
+                           fit_optim_steps=12):
+    """
+    Fits motifs rigidly into updated frames
+
+    Parameters:
+    -----------
+
+    frames_next (torch.tensor): updated frames, slightly denoised 
+
+    is_motif (torch.tensor): boolena mask of which residues are motif 
+
+    xyz_template (torch.tensor): current 'templated' coordinates of the motif 
+
+    enforce_repeat (bool): whether to enforce repeat symmetry between pairs of repeats
+
+    TSCALE (float): scale of the translation vector fitted 
+    """
+    xyz_template_clone = xyz_template.clone()
+    
+
+    # Save pdb before fitting 
+    # util.writepdb(f'frames_before_fit.pdb', frames_next, torch.ones(len(is_motif)).long())
+    # util.writepdb(f'template_before_fit.pdb', xyz_template[:,:3], torch.ones(len(is_motif)).long())
+
+    # a coordinate-based error
+    def dist_error_comp(R0,T0,frames_next_motif,xyz_template,TSCALE):
+            template_COM = xyz_template.mean(dim=0)
+            template_corr = torch.einsum('ij,rj->ri', R0, xyz_template-template_COM) + template_COM + TSCALE*T0[None,None,:]
+            loss  = torch.abs(frames_next_motif-template_corr).mean()
+            return loss
+
+
+    def Q2R(Q):
+        Qs = torch.cat((torch.ones((1),device=Q.device),Q),dim=-1)
+        Qs = normQ(Qs)
+        return Qs2Rs(Qs[None,:]).squeeze(0)
+    
+
+    if not enforce_repeat_fit: # allow symmetry breaking between pairs of repeats 
+        # find out where in the motif mask the individual motifs are 
+        # i.e., find where the individual contiguous regions of True are
+        
+        motif_regions = get_grouped_regions(is_motif, repeat_length) # list of tuples (start_idx, end_idx)
+        motif_masks = select_true_regions(is_motif, repeat_length) # list of masks (True/False)
+        ic(motif_regions)
+
+
+        def closure():
+                lbfgs.zero_grad()
+                loss = dist_error_comp(Q2R(Q0), T0, motif_tgt, motif_tmplt, TSCALE)
+                loss.backward()
+                return loss
+
+        for cur_is_motif in motif_masks:
+
+            # motif_tmplt  = xyz_template[start:end,1,:] # CA of this motif 
+            # motif_tmplt_bb = xyz_template[start:end,:3,:] # N, CA, C of this motif
+            # motif_tgt = frames_next[start:end,1,:] # CA of the updated (imperfect) motif
+
+            # now use boolean mask 
+            motif_tmplt  = xyz_template_clone[cur_is_motif,1,:] # CA of this motif
+            motif_tmplt_bb = xyz_template_clone[cur_is_motif,:3,:] # N, CA, C of this motif
+            motif_tgt = frames_next[cur_is_motif,1,:] # CA of the updated (imperfect) motif
+
+            with torch.enable_grad():
+                T0 = torch.zeros(3,device=xyz_template.device).requires_grad_(True)
+                Q0 = torch.zeros(3,device=xyz_template.device).requires_grad_(True)
+            
+            lbfgs = torch.optim.LBFGS([T0,Q0],
+                    history_size=10,
+                    max_iter=4,
+                    line_search_fn="strong_wolfe")
+            
+
+            # fit the motif (ASU) to the updated coordinates
+            motif_tgt = motif_tgt.detach()
+            motif_tmplt = motif_tmplt.detach()
+
+            best_loss = 1e6 
+            same_loss_count = 0
+            # print('Fitting motif ', start, end)
+            for e in range(fit_optim_steps):
+                loss = lbfgs.step(closure)
+                # stop if loss is not improving
+                if loss < best_loss:
+                    best_loss = loss
+                    same_loss_count = 0
+                else:
+                    same_loss_count += 1
+                    if same_loss_count > 3:
+                        break 
+
+            # replace the slightly perturbed motif with the fitted rigid motif
+            com = motif_tmplt.mean(dim=0)
+            updated_motif = torch.einsum('ij,raj->rai', Q2R(Q0), motif_tmplt_bb-com) + com + TSCALE*T0[None,:]
+            updated_motif = updated_motif.detach()
+            
+            # print('Replacing motif in frames next')
+            # frames_next[start:end] = updated_motif
+            # xyz_template_clone[start:end,:3] = updated_motif.to(dtype=xyz_template.dtype, device=xyz_template.device)
+            # using boolean mask
+            frames_next[cur_is_motif] = updated_motif.to(dtype=frames_next.dtype, device=frames_next.device)
+            xyz_template_clone[cur_is_motif,:3] = updated_motif.to(dtype=xyz_template.dtype, device=xyz_template.device)
+
+
+            
+    
+    else:
+        raise NotImplementedError
+    
+    # Save pdb after fitting
+    # ic(frames_next.shape)
+    # ic(xyz_template_clone.shape)
+    # util.writepdb(f'frames_after_fit.pdb', frames_next, torch.ones(len(is_motif)).long())
+    # util.writepdb(f'template_after_fit.pdb', xyz_template_clone[:,:3], torch.ones(len(is_motif)).long())
+    # sys.exit('Debugging')        
+    return frames_next, xyz_template_clone
 
 
 def preprocess(seq, xyz_t, t, T, ppi_design, binderlen, target_res, device):
@@ -913,6 +1240,7 @@ def preprocess(seq, xyz_t, t, T, ppi_design, binderlen, target_res, device):
     alpha_t = alpha_t.to(device)
     return msa_masked, msa_full, seq[None], torch.squeeze(xyz_t, dim=0), idx, t1d, t2d, xyz_t, alpha_t
 
+
 def parse_pdb(filename, **kwargs):
     '''extract xyz coords for all heavy atoms'''
     lines = open(filename,'r').readlines()
@@ -920,9 +1248,46 @@ def parse_pdb(filename, **kwargs):
 
 def parse_pdb_lines(lines, parse_hetatom=False, ignore_het_h=True):
     # indices of residues observed in the structure
-    res = [(l[22:26],l[17:20]) for l in lines if l[:4]=="ATOM" and l[12:16].strip()=="CA"]
+    
+
+    res = []
+    pdb_idx = []
+    prev_idx_string = 'XXXX'
+    for l in lines:
+        if l[:4]=="ATOM":
+            atm_string = l[12:16]
+            res_string = l[17:20]
+            chn_string = l[21:22]
+            idx_string = l[22:26]
+
+            # Only add this stuff if we haven't added anything for this resi yet:
+            if not idx_string==prev_idx_string:
+
+                # Break this into tower of conditionals so we can exit once we get a valid atom:
+                # have to do it this way for a ranking in atom priority, sadly.
+                # update this prev_idx_string so we can compare to it in the next iter
+                if atm_string.strip()=="CA":
+                    res.append((idx_string, res_string))
+                    pdb_idx.append(( chn_string.strip(), int(idx_string.strip()) ))
+                    prev_idx_string = idx_string
+
+                elif atm_string.strip()=="P":
+                    res.append((idx_string, res_string))
+                    pdb_idx.append(( chn_string.strip(), int(idx_string.strip()) ))
+                    prev_idx_string = idx_string
+
+                elif atm_string.strip()=="O5'":
+                    res.append((idx_string, res_string))
+                    pdb_idx.append(( chn_string.strip(), int(idx_string.strip()) ))
+                    prev_idx_string = idx_string
+
+                elif atm_string.strip()=="C5'":
+                    print("Really not an ideal situation if we have to use C5 prime...")
+                    res.append((idx_string, res_string))
+                    pdb_idx.append(( chn_string.strip(), int(idx_string.strip()) ))
+                    prev_idx_string = idx_string
+
     seq = [util.aa2num[r[1]] if r[1] in util.aa2num.keys() else 20 for r in res]
-    pdb_idx = [( l[21:22].strip(), int(l[22:26].strip()) ) for l in lines if l[:4]=="ATOM" and l[12:16].strip()=="CA"]  # chain letter, res num
 
     # 4 BB + up to 10 SC atoms
     xyz = np.full((len(res), 14, 3), np.nan, dtype=np.float32)
@@ -980,6 +1345,140 @@ def parse_pdb_lines(lines, parse_hetatom=False, ignore_het_h=True):
         out['info_het'] = info_het
 
     return out
+
+
+# def parse_pdb_lines(lines, parse_hetatom=False, ignore_het_h=True):
+#     # indices of residues observed in the structure
+
+#     res = [(l[22:26],l[17:20]) for l in lines if l[:4]=="ATOM" and l[12:16].strip() in ["CA","P"]]
+#     seq = [util.aa2num[r[1]] if r[1] in util.aa2num.keys() else 20 for r in res]
+#     pdb_idx = [( l[21:22].strip(), int(l[22:26].strip()) ) for l in lines if l[:4]=="ATOM" and l[12:16].strip() in ["CA","P"]]  # chain letter, res num
+
+#     # 4 BB + up to 10 SC atoms
+#     xyz = np.full((len(res), 14, 3), np.nan, dtype=np.float32)
+#     for l in lines:
+#         if l[:4] != "ATOM":
+#             continue
+#         chain, resNo, atom, aa = l[21:22], int(l[22:26]), ' '+l[12:16].strip().ljust(3), l[17:20]
+#         idx = pdb_idx.index((chain,resNo))
+#         # for i_atm, tgtatm in enumerate(util.aa2long[util.aa2num[aa]]):
+#         for i_atm, tgtatm in enumerate(util.aa2long[util.aa2num[aa]][:14]): # Nate's proposed change
+#             if tgtatm is not None and tgtatm.strip() == atom.strip(): # ignore whitespace
+#                 xyz[idx,i_atm,:] = [float(l[30:38]), float(l[38:46]), float(l[46:54])]
+#                 break
+
+#     # save atom mask
+#     mask = np.logical_not(np.isnan(xyz[...,0]))
+#     xyz[np.isnan(xyz[...,0])] = 0.0
+
+#     # remove duplicated (chain, resi)
+#     new_idx = []
+#     i_unique = []
+#     for i,idx in enumerate(pdb_idx):
+#         if idx not in new_idx:
+#             new_idx.append(idx)
+#             i_unique.append(i)
+
+#     pdb_idx = new_idx
+#     xyz = xyz[i_unique]
+#     mask = mask[i_unique]
+
+#     seq = np.array(seq)[i_unique]
+
+#     out = {
+#         'xyz':xyz, # cartesian coordinates, [Lx14]
+#         'mask':mask, # mask showing which atoms are present in the PDB file, [Lx14]
+#         'idx':np.array([i[1] for i in pdb_idx]), # residue numbers in the PDB file, [L]
+#         'seq':np.array(seq), # amino acid sequence, [L]
+#         'pdb_idx': pdb_idx,  # list of (chain letter, residue number) in the pdb file, [L]
+#     }
+
+#     # heteroatoms (ligands, etc)
+#     if parse_hetatom:
+#         xyz_het, info_het = [], []
+#         for l in lines:
+#             if l[:6]=='HETATM' and not (ignore_het_h and l[77]=='H'):
+#                 info_het.append(dict(
+#                     idx=int(l[7:11]),
+#                     atom_id=l[12:16],
+#                     atom_type=l[77],
+#                     name=l[16:20]
+#                 ))
+#                 xyz_het.append([float(l[30:38]), float(l[38:46]), float(l[46:54])])
+
+#         out['xyz_het'] = np.array(xyz_het)
+#         out['info_het'] = info_het
+
+#     return out
+
+# def parse_pdb_lines(lines, parse_hetatom=False, ignore_het_h=True):
+#     # indices of residues observed in the structure
+#     # res = [(l[22:26],l[17:20]) for l in lines if l[:4]=="ATOM" and l[12:16].strip()=="CA"]
+#     # res = [(l[21:22].strip(), l[22:26],l[17:20],l[60:66].strip()) for l in lines if l[:4]=="ATOM" and l[12:16].strip() in ["CA","P"]] # (chain letter, res num, aa, bfactor / plddt)
+#     res = [(l[21:22].strip(), l[22:26],l[17:20],l[60:66].strip()) for l in lines if l[:4]=="ATOM" and l[12:16].strip() in ["CA","C5'"]] # (chain letter, res num, aa, bfactor / plddt)
+
+#     seq = [util.aa2num[r[1]] if r[1] in util.aa2num.keys() else 20 for r in res]
+#     # pdb_idx = [( l[21:22].strip(), int(l[22:26].strip()) ) for l in lines if l[:4]=="ATOM" and l[12:16].strip()=="CA"]  # chain letter, res num
+#     # pdb_idx = [( l[21:22].strip(), int(l[22:26].strip()) ) for l in lines if l[:4]=="ATOM" and l[12:16].strip() in ["CA","P"]]  # chain letter, res num
+#     pdb_idx = [( l[21:22].strip(), int(l[22:26].strip()) ) for l in lines if l[:4]=="ATOM" and l[12:16].strip() in ["CA","C5'"]]  # chain letter, res num
+
+#     # 4 BB + up to 10 SC atoms
+#     xyz = np.full((len(res), 14, 3), np.nan, dtype=np.float32)
+#     for l in lines:
+#         if l[:4] != "ATOM":
+#             continue
+#         chain, resNo, atom, aa = l[21:22], int(l[22:26]), ' '+l[12:16].strip().ljust(3), l[17:20]
+#         # try:
+#         idx = pdb_idx.index((chain,resNo))
+#         for i_atm, tgtatm in enumerate(util.aa2long[util.aa2num[aa]][:14]): # Nate's proposed change
+#         # for i_atm, tgtatm in enumerate(util.aa2long[util.aa2num[aa]]):
+#             if tgtatm is not None and tgtatm.strip() == atom.strip(): # ignore whitespace
+#                 xyz[idx,i_atm,:] = [float(l[30:38]), float(l[38:46]), float(l[46:54])]
+#                 break
+
+
+#     # save atom mask
+#     mask = np.logical_not(np.isnan(xyz[...,0]))
+#     xyz[np.isnan(xyz[...,0])] = 0.0
+
+#     # remove duplicated (chain, resi)
+#     new_idx = []
+#     i_unique = []
+#     for i,idx in enumerate(pdb_idx):
+#         if idx not in new_idx:
+#             new_idx.append(idx)
+#             i_unique.append(i)
+
+#     pdb_idx = new_idx
+#     xyz = xyz[i_unique]
+#     mask = mask[i_unique]
+
+#     seq = np.array(seq)[i_unique]
+
+#     out = {
+#         'xyz':xyz, # cartesian coordinates, [Lx14]
+#         'mask':mask, # mask showing which atoms are present in the PDB file, [Lx14]
+#         'idx':np.array([i[1] for i in pdb_idx]), # residue numbers in the PDB file, [L]
+#         'seq':np.array(seq), # amino acid sequence, [L]
+#         'pdb_idx': pdb_idx,  # list of (chain letter, residue number) in the pdb file, [L]
+#     }
+
+#     # heteroatoms (ligands, etc)
+#     if parse_hetatom:
+#         xyz_het, info_het = [], []
+#         for l in lines:
+#             if l[:6]=='HETATM' and not (ignore_het_h and l[77]=='H'):
+#                 info_het.append(dict(
+#                     idx=int(l[7:11]),
+#                     atom_id=l[12:16],
+#                     atom_type=l[77],
+#                     name=l[16:20]
+#                 ))
+#                 xyz_het.append([float(l[30:38]), float(l[38:46]), float(l[46:54])])
+
+#         out['xyz_het'] = np.array(xyz_het)
+#         out['info_het'] = info_het
+#     return out
 
 
 def parse_a3m(filename):
@@ -1050,9 +1549,25 @@ def parse_a3m(filename):
 
     return msa,ins
 
+def symm2nchain(S):
+    """Get number of chains in a symmetry group."""
+    if S == 'O':
+        return 24 
+    elif S == 'I':
+        return 60
+    elif S.startswith('D'):
+        return 2*int(S[1:])
+    elif S.startswith('T'):
+        return 12 
+    elif S.startswith('C'):
+        return int(S[1:])
 
+def process_target(pdb_path, parse_hetatom=False, center=True, inf_conf=None):
+    """
+    Generally parse target pdb file and return a dictionary of features.
 
-def process_target(pdb_path, parse_hetatom=False, center=True):
+    Handles case where we want to template symmetric proteins into supersymms (e.g., c4 into O, C3 into I)
+    """
 
     # Read target pdb and extract features.
     target_struct = parse_pdb(pdb_path, parse_hetatom=parse_hetatom)
@@ -1061,10 +1576,11 @@ def process_target(pdb_path, parse_hetatom=False, center=True):
     ca_center = target_struct['xyz'][:, :1, :].mean(axis=0, keepdims=True)
     if not center:
         ca_center = 0
-    xyz = torch.from_numpy(target_struct['xyz'] - ca_center)
-    seq_orig = torch.from_numpy(target_struct['seq'])
+
+    xyz       = torch.from_numpy(target_struct['xyz'] - ca_center)
+    seq_orig  = torch.from_numpy(target_struct['seq'])
     atom_mask = torch.from_numpy(target_struct['mask'])
-    seq_len = len(xyz)
+    seq_len   = len(xyz)
 
     # Make 27 atom representation
     xyz_27 = torch.full((seq_len, 27, 3), np.nan).float()
@@ -1081,6 +1597,100 @@ def process_target(pdb_path, parse_hetatom=False, center=True):
     if parse_hetatom:
         out['xyz_het'] = target_struct['xyz_het']
         out['info_het'] = target_struct['info_het']
+
+    # symmetric template parsing - extract subsymmetry info 
+    if inf_conf.subsymm_template is not None:
+        # Need to rely on the template pdb for number of chains et. al. 
+        tmp_parsed = parse_pdb(inf_conf.subsymm_template, parse_hetatom=False)
+        seq_len = len(tmp_parsed['xyz'])
+
+        nchains = len( set(i[0] for i in tmp_parsed['pdb_idx']) )
+        Lasu = seq_len // nchains 
+        assert seq_len % nchains == 0, "Sequence length must be divisible by number of chains in template."
+        Ls = [Lasu] * nchains
+        
+        # dummy sym metadata 
+        symmids, symmRs, symmeta, symmoffset = symmetry.get_pointsym_meta(inf_conf.internal_sym)
+
+        # parse and reshape the symmetric template pdb 
+        xyz_t, mask_t, t1d_t, seq_t = parsers.read_multichain_template_pdb(Ls, inf_conf.subsymm_template)
+        xyz_t  = xyz_t.reshape(1,len(Ls),-1,27,3).squeeze(dim=0) 
+        mask_t = mask_t.reshape(1,len(Ls),-1,27).squeeze(dim=0)
+        t1d_t  = t1d_t.reshape(1,len(Ls),-1,22).squeeze(dim=0)
+
+        seq_t = torch.argmax(seq_t, dim=-1).reshape(1,len(Ls),-1).squeeze()
+
+
+        if nchains > 1:
+            # one vs all for kabsch --> return axes of symmetry 
+            xyz_int = torch.cat( (xyz_t[0:1].repeat(nchains-1,1,1,1), xyz_t[1:]), dim=1)
+            mask_int = torch.cat( (mask_t[0:1].repeat(nchains-1,1,1), mask_t[1:]), dim=1)
+            
+
+            symmgp, subsymm, symmaxes = symmetry.get_symmetry(xyz_int, mask_int)
+            # assert this, means len symmaxes will be 1 - [(nfold, axis, point, i)]
+            assert 'c' in symmgp.lower(), "Template must be C-symmetric for now."
+            (nfold, _, point, _) = symmaxes[0]
+            print('Detected template symmetry group: ',symmgp)
+
+
+            # map that subsymmetry against the sym of simulation
+            mask_t = mask_t[0:1]
+            xyz_t = xyz_t[0:1,:Lasu]
+            all_possible = inf_conf.subsymm_template_all_possible
+            xyz_t, mask_t_2d_subsymm, axis = symmetry.find_subsymmetry(xyz_t, symmgp, symmaxes, symmRs, all_subsymms=all_possible)
+            # add intra-chain templating.. ones along diag 
+            if all_possible:
+                mask_t_2d_subsymm = mask_t_2d_subsymm + torch.eye(mask_t_2d_subsymm.shape[1]).bool()[None]
+
+
+            angle = 360.0 / nfold
+            angle = angle * np.pi / 180.0 
+            # make stack of rotations that reconstruct the template from ASU 
+            rs = [] 
+            for i in range(nfold):
+                theta = angle * i
+                r = symmetry.matrix_from_rotation(theta, axis)
+                rs.append(r)
+            rs = torch.stack(rs, dim=0)
+
+            # full length template coordinates and sequence 
+            s = rs.shape[0]
+            b,l,a,i = xyz_t.shape
+            rxyz = torch.einsum('sji,blai->bslaj',rs.transpose(-1,-2), xyz_t).squeeze() # (s,l,a,i) 
+            rxyz = rxyz.reshape(l*s,a,i) # (l*s,a,i)
+            
+            # keeping these for use as template 
+            out['mask_2d_subsymm']  = mask_t_2d_subsymm
+            out['axis']             = axis
+            out['subsymm_xyz']      = rxyz
+            out['subsymm_nchains']  = nchains
+            out['subsymm_lasu']     = Lasu
+            out['subsymm_seq']      = seq_t.reshape(-1) 
+            out['subsymm_symbol']   = symmgp
+            out['subsymm_axis']     = axis
+
+        else: # C1 symmetric template
+            out['mask_2d_subsymm'] = None
+            out['axis'] = None 
+            out['subsymm_xyz'] = xyz_t.squeeze()
+            out['subsymm_seq'] = seq_t.reshape(-1)
+            out['subsymm_symbol'] = 'C1'
+            out['subsymm_axis'] = None
+
+
+        # test reconstruction
+        # outfolder = '/home/davidcj/projects/rf_diffusion_allatom/rf_diffusion/' 
+        # outname = os.path.join(outfolder, 'test_symm_template_reconstruction.pdb')
+        # ic(out['template_symm_seq'].shape)
+        # ic(out['template_symm_xyz'].shape)
+        # ic(util.__file__)
+        # util.writepdb(outname, 
+        #               out['template_symm_xyz'].squeeze()[:,:3,:],
+        #               out['template_symm_seq'].squeeze())
+
+
+        # sys.exit('debugging exit')
     return out
     
 
@@ -1425,4 +2035,94 @@ def assemble_config_from_chk(conf: DictConfig):
     
     # TODO change this so we don't have to load the model twice
     pass
+
+
+    
+def find_breaks(ix, thresh=1):
+    # finds positions in ix where the jump is greater than thresh
+    breaks = np.where(np.diff(ix) > thresh)[0]
+    return np.array(breaks)+1
+
+
+def get_breaks(a, cut=1):
+    # finds indices where jumps in a occur
+    assert len(a.shape) == 1 # must be 1D array
+
+    if torch.is_tensor(a):
+        diff = torch.abs( torch.diff(a) )
+        breaks = torch.where(diff > cut)[0]
+
+    else:
+        diff = np.abs( np.diff(a) )
+        breaks = np.where(diff > cut)[0]
+
+    return breaks
+
+def find_true_chunks_indices(tensor):
+    # chat gpt algorithm 
+    true_indices = torch.nonzero(tensor).flatten().tolist()
+    chunks = []
+    
+    if not true_indices:
+        return chunks
+    
+    start = true_indices[0]
+    prev = true_indices[0]
+    
+    for idx in true_indices[1:]:
+        if idx != prev + 1:
+            chunks.append((start, prev))
+            start = idx
+        prev = idx
+    
+    chunks.append((start, prev))
+    return chunks
+
+
+
+
+def find_template_ranges(input_tensor, return_inds=False):
+    # mostly afav, some gpt guidance
+
+    input_list = input_tensor.tolist()
+
+    if return_inds:
+        regions = []
+        start = 0
+        for i in range(1, len(input_tensor)):
+            if input_tensor[i] != input_tensor[i-1] + 1:
+                regions.append((start, i-1))
+                start = i
+        regions.append((start, len(input_tensor)-1))
+
+    else:
+        regions = []
+        start = 0
+        for i in range(1, len(input_tensor)):
+            if input_tensor[i] != input_tensor[i-1] + 1:
+                regions.append((int(input_tensor[start]), int(input_tensor[i-1])))
+                start = i
+        regions.append((int(input_tensor[start]), int(input_tensor[len(input_tensor)-1])))
+
+    return regions
+
+
+def merge_regions(regions1, regions2):
+    # mostly afav, some gpt guidance
+    regions_full = []
+    for r1_start, r1_end in regions1:
+        for r2_start, r2_end in regions2:
+            if r1_start >= r2_start and r1_end <= r2_end:
+                regions_full.append((r1_start, r1_end))
+            elif r2_start >= r1_start and r2_end <= r1_end:
+                regions_full.append((r2_start, r2_end))
+            else:
+                regions_full.append((r1_start, r1_end))
+                regions_full.append((r2_start, r2_end))
+
+    regions_full = sorted(set(regions_full), key=lambda tup: tup[0])
+
+    return regions_full
+
+
 

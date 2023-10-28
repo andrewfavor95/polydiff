@@ -12,6 +12,7 @@ from functools import wraps
 import itertools
 import assertpy
 import ipdb
+import signal
 
 #####################################
 # Misc functions for mask generation
@@ -24,6 +25,7 @@ def sample_gaps(n, M):
     Adapts below solution for getting close to uniform distibution of numbers: 
     https://stackoverflow.com/questions/2640053/getting-n-random-numbers-whose-sum-is-m/2640079#2640079
     """
+
 
     nums = np.random.dirichlet(np.ones(n))*M
 
@@ -76,6 +78,10 @@ def get_chunked_mask(xyz, low_prop, high_prop, max_motif_chunks=8):
     L = xyz.shape[0]
     # L = 100
 
+    # cant be splitting the protein everywhere when we get to small chains (RNA, etc)
+    max_motif_chunks = min(max_motif_chunks, (L//2)-2)
+    # This ensures chunks are generally 2 residues, plus room for termini
+
     # decide number of chunks 
     n_motif_chunks = random.randint(2, max_motif_chunks)
     # decide what proportion of the protein is masked 
@@ -107,7 +113,12 @@ def get_chunked_mask(xyz, low_prop, high_prop, max_motif_chunks=8):
     ngap_low  = len(lengths) - 1
     ngap_high = ngap_low + 1
     ngap = random.randint(ngap_low, ngap_high)
-    
+
+    # Cannot have more gaps than masked chunks (issues arrise with small chains unless we correct)
+    if n_masked <= ngap:
+        ngap = ngap_low
+        
+
     if ngap == (ngap_low): # there's no cterm/nterm gaps 
         Nterm_gap = False
         Cterm_gap = False
@@ -120,9 +131,6 @@ def get_chunked_mask(xyz, low_prop, high_prop, max_motif_chunks=8):
 
     gaps = sample_gaps(ngap, n_masked) # gaps between unmasked chunks 
     random.shuffle(gaps)
-    # print('This is gaps ', gaps)
-    # print()
-    # print('*********')
 
 
     chunks = []
@@ -208,10 +216,11 @@ def _get_diffusion_mask_chunked(xyz, prop_low, prop_high, max_motif_chunks=6):
 
     return mask.bool(), is_motif.bool()
 
-def _get_diffusion_mask_chunked_na(xyz, is_na, prop_low, prop_high, 
+def _get_diffusion_mask_chunked_na(xyz, is_na, prop_low, prop_high, broken_prop,
                                     max_motif_chunks=6,
                                     na_fixed_intra=False,
                                     na_fixed_inter=False,
+
                                 ):
     """
     More complicated masking strategy to create discontiguous chunks
@@ -234,25 +243,52 @@ def _get_diffusion_mask_chunked_na(xyz, is_na, prop_low, prop_high,
 
         return start_stop_indices, values_list
 
+    # Register a handler for the timeout
+    def handler(signum, frame):
+        print("Forever is over!")
+        raise Exception("end of time")
+
+    # # # This function may run for an indeterminate time
+    # def loop_forever(how_long):
+    #     import time
+    #     for i in range(how_long):
+    #         print("sec")
+    #         time.sleep(1)
+
     # Subselect region of xyz to chunk:
     if na_fixed_intra:
+        xyz_to_chunk = xyz[~is_na]
         na_chunk_inds, chunk_is_na = get_na_start_stop_inds(is_na)
-        chunks, chunk_is_motif, motif_ids, ij, ij_can_see = get_chunked_mask(xyz[~is_na], 
-                                                                            prop_low, 
-                                                                            prop_high, 
-                                                                            max_motif_chunks)
-
         L = xyz[~is_na].shape[0]
 
     else:
-        # xyz_to_chunk = xyz.clone()
-        chunks, chunk_is_motif, motif_ids, ij, ij_can_see = get_chunked_mask(xyz,
-                                                                            prop_low, 
-                                                                            prop_high, 
-                                                                            max_motif_chunks)
+        xyz_to_chunk = xyz
         L = xyz.shape[0]
+        
+    # Register the signal function handler
+    signal.signal(signal.SIGALRM, handler)
 
+    # Define a timeout for your function
+    signal.alarm(3)
 
+    try:
+        chunks, chunk_is_motif, motif_ids, ij, ij_can_see = get_chunked_mask(xyz_to_chunk, 
+                                                                        prop_low, 
+                                                                        prop_high, 
+                                                                        max_motif_chunks)
+        # loop_forever(random.randint(1,6))
+
+    # except Exception, msg:
+    except Exception as exc: 
+        print(exc)
+        print('TOOK TOO LONG, DOING SIMPLE MASK!')
+        is_motif = _get_diffusion_mask_simple(xyz, prop_low, prop_high, broken_prop)
+        mask = is_motif[:, None] * is_motif[None, :]
+        
+        return mask.bool(), is_motif.bool()
+
+    # Cancel the timer if the function returned before timeout
+    signal.alarm(0)
     chunk_starts = np.cumsum([0] + chunks[:-1])
     chunk_ends   = np.cumsum(chunks)
 
@@ -320,8 +356,9 @@ def get_diffusion_mask_chunked(indep, atom_mask, low_prop, high_prop, broken_pro
     # wrapper to accomodate indep/atom mask input 
     assert indep.is_sm.sum() == 0, 'small molecules not supported currently for this masking'
 
+    # if torch.logical_and((indep.is_dna, indep.is_rna)).any(): # IF we have nucleic acids, we can choose to process differently
     if indep.is_na.any(): # IF we have nucleic acids, we can choose to process differently
-        mask2d, is_motif = _get_diffusion_mask_chunked_na(indep.xyz, indep.is_na, low_prop, high_prop, 
+        mask2d, is_motif = _get_diffusion_mask_chunked_na(indep.xyz, indep.is_na, low_prop, high_prop, broken_prop,
                                                             max_motif_chunks=max_motif_chunks,
                                                             na_fixed_intra=indep.na_fixed_intra,
                                                             na_fixed_inter=indep.na_fixed_inter)
@@ -677,6 +714,7 @@ def _get_triple_contact_3template_na(xyz,
                                     is_na,
                                     low_prop, 
                                     high_prop, 
+                                    broken_prop,
                                     xyz_less_than=6, 
                                     seq_dist_greater_than=10, 
                                     len_low=1, 
@@ -687,7 +725,7 @@ def _get_triple_contact_3template_na(xyz,
 
     contacts = get_contacts(xyz, xyz_less_than, seq_dist_greater_than)
     if not contacts.any():
-        return _get_diffusion_mask_chunked_na(xyz, is_na, low_prop, high_prop, 
+        return _get_diffusion_mask_chunked_na(xyz, is_na, low_prop, high_prop, broken_prop,
                                             max_motif_chunks=6,
                                             na_fixed_intra=False,
                                             na_fixed_inter=False,
@@ -696,7 +734,7 @@ def _get_triple_contact_3template_na(xyz,
     # find the third contact
     indices = find_third_contact(contacts)
     if indices is None:
-        return _get_diffusion_mask_chunked_na(xyz, is_na, low_prop, high_prop, 
+        return _get_diffusion_mask_chunked_na(xyz, is_na, low_prop, high_prop, broken_prop,
                                                 max_motif_chunks=6,
                                                 na_fixed_intra=False,
                                                 na_fixed_inter=False,
@@ -782,7 +820,7 @@ def get_triple_contact_3template(indep,
     assert indep.is_sm.sum() == 0, 'small molecules not yet supported'
 
     if indep.is_na.any(): # IF we have nucleic acids, we can choose to process differently
-        mask2d, is_motif = _get_triple_contact_3template_na(indep.xyz, indep.is_na, low_prop, high_prop, 
+        mask2d, is_motif = _get_triple_contact_3template_na(indep.xyz, indep.is_na, low_prop, high_prop, broken_prop,
                                                     na_fixed_intra=indep.na_fixed_intra,
                                                     na_fixed_inter=indep.na_fixed_inter)
 
@@ -1123,8 +1161,6 @@ def get_diffusion_mask(
     if indep.is_sm.any(): 
         get_mask = get_sm_contact_mask
 
-
-
     ic(get_mask)
     
     return get_mask(indep, atom_mask, low_prop=low_prop, high_prop=high_prop, broken_prop=broken_prop)
@@ -1151,24 +1187,26 @@ def get_diffusion_mask_na(
     # if not indep.is_sm.any():
     #     get_mask = sm_mask_fallback.get(get_mask, get_mask)
 
-    if indep.is_sm.any() and get_nucleic_acid_residues(indep.seq).any():
-        sys.exit(f'small molecule and nucleic training not currently supported for {task} task!')
+    # if indep.is_sm.any() and get_nucleic_acid_residues(indep.seq).any():
+    #     sys.exit(f'small molecule and nucleic training not currently supported for {task} task!')
 
-    # nucleic masks only
-    if get_nucleic_acid_residues(indep.seq).any():
-        get_mask = get_na_contact_mask
+    if indep.is_sm.any(): 
+        get_mask = get_sm_contact_mask
 
-    return get_mask(indep, atom_mask, 
-                low_prop=low_prop, 
-                high_prop=high_prop, 
-                broken_prop=broken_prop,
-                contact_cut=contact_cut,
-                chunk_size_min=chunk_size_min,
-                chunk_size_max=chunk_size_max,
-                max_num_chunks=max_num_chunks,
-                na_fixed_intra=na_fixed_intra,
-                na_fixed_inter=na_fixed_inter,
-                )
+
+    return get_mask(indep, atom_mask, low_prop=low_prop, high_prop=high_prop, broken_prop=broken_prop)
+
+    # return get_mask(indep, atom_mask, 
+    #             low_prop=low_prop, 
+    #             high_prop=high_prop, 
+    #             broken_prop=broken_prop,
+    #             contact_cut=contact_cut,
+    #             chunk_size_min=chunk_size_min,
+    #             chunk_size_max=chunk_size_max,
+    #             max_num_chunks=max_num_chunks,
+    #             na_fixed_intra=na_fixed_intra,
+    #             na_fixed_inter=na_fixed_inter,
+    #             )
 
 
 
@@ -1598,7 +1636,7 @@ def generate_masks(indep, task, loader_params, chosen_dataset, full_chain=None, 
         #loss_str_mask_2d = seq2_str_mask[None, :] * seq2str_str_mask[:, None]
 
     # dj - only perform diffusion hal on pdb and fb for now 
-    elif task == 'diff' and chosen_dataset not in ['complex','negative','na_compl','tf_distil']:
+    elif task == 'diff' and chosen_dataset not in ['complex','negative','na_compl','tf_distil','rna']:
     # elif task == 'diff' and chosen_dataset not in ['complex','negative']:
         """
         Hal task but created for the diffusion-based training. 
@@ -1638,13 +1676,15 @@ def generate_masks(indep, task, loader_params, chosen_dataset, full_chain=None, 
         loss_seq_mask[diffusion_mask] = False  # Dont score where diffusion mask is True (i.e., where things are not diffused)
 
     # AF: making proper masking for nucleic datasets
-    elif task == 'diff' and chosen_dataset in ['na_compl','tf_distil']:
+    elif task == 'diff' and chosen_dataset in ['na_compl','tf_distil','rna']:
 
         mask_fns = list( loader_params['DIFF_MASK_PROBS'].keys() )
 
         indep.na_fixed_inter=loader_params["NA_FIXED_INTER"]
         indep.na_fixed_intra=loader_params["NA_FIXED_INTRA"]
         indep.is_na = get_nucleic_acid_residues(indep.seq)
+
+        # if len(indep.seq)>12:
         diffusion_mask, is_atom_motif = get_diffusion_mask(
                 indep,
                 atom_mask,
@@ -1675,7 +1715,12 @@ def generate_masks(indep, task, loader_params, chosen_dataset, full_chain=None, 
 
         ## loss masks 
         loss_seq_mask[diffusion_mask] = False  # Dont score where diffusion mask is True (i.e., where things are not diffused)
+        # else:
+        #     input_str_mask = torch.clone(full_chain)
+        #     input_seq_mask = torch.clone(input_str_mask)
 
+        #     input_t1d_str_conf_mask = torch.ones(L)
+        #     input_t1d_seq_conf_mask = torch.ones(L)
 
     elif task == 'diff' and chosen_dataset == 'complex':
         '''
@@ -2007,3 +2052,31 @@ def get_residue_bond_feats(res, include_H=False):
     if not include_H:
         bond_feats = bond_feats[:rf2aa.chemical.NHEAVYPROT, :rf2aa.chemical.NHEAVYPROT]
     return bond_feats
+
+
+
+def get_polymer_type_masks(seq):
+    #21 mask
+    #26  DX (unk DNA)
+    #31  RX (unk RNA)
+
+    # polymer_type_masks = {
+    #         'is_protein_motif': (0 <= seq) & (seq <= 21), 
+    #         'is_dna_motif': (22 <= seq) & (seq <= 26),
+    #         'is_rna_motif': (27 <= seq) & (seq <= 31)
+    # }
+    # return polymer_type_masks
+
+    # is_protein = (0 <= seq) & (seq <= 21)
+    # is_dna = (22 <= seq) & (seq <= 26)
+    # is_rna = (27 <= seq) & (seq <= 31)
+
+    is_protein = torch.logical_and((0 <= seq),(seq <= 21)).squeeze()
+    is_dna = torch.logical_and((22 <= seq),(seq <= 26)).squeeze()
+    is_rna = torch.logical_and((27 <= seq),(seq <= 31)).squeeze()
+
+    return is_protein, is_dna, is_rna
+
+
+
+

@@ -3,7 +3,6 @@ import torch
 import assertpy
 from collections import defaultdict
 import torch.nn.functional as F
-import ipdb
 import dataclasses
 from icecream import ic
 from assertpy import assert_that
@@ -20,18 +19,21 @@ import copy
 import numpy as np
 from kinematics import get_init_xyz
 import chemical
-from rf2aa.chemical import MASKINDEX
+from rf2aa.chemical import MASKINDEX, DNAMASKINDEX, RNAMASKINDEX
 import rf2aa.chemical
 import util
 import inference.utils
 import networkx as nx
 import itertools
 import random
+from typing import Optional 
 import guide_posts as gp
 import rotation_conversions
 import atomize
 import sys 
-
+import mask_generator
+from rf2aa.util_module import XYZConverter
+import ipdb
 
 NINDEL=1
 NTERMINUS=2
@@ -64,6 +66,22 @@ class Indep:
     same_chain: torch.Tensor
     is_sm: torch.Tensor
     terminus_type: torch.Tensor
+
+    # Nucleic specific
+    is_protein: torch.Tensor
+    is_dna: torch.Tensor
+    is_rna: torch.Tensor
+    
+    # # DJ new - introduced for refinement model
+    # metadata: dict
+
+    # # dj - new subsymmetric template information 
+    # subsymm_seq: Optional[torch.Tensor] = None
+    # subsymm_xyz: Optional[torch.Tensor] = None
+    # mask_t_2d_subsymm: Optional[torch.Tensor] = None
+
+
+
 
     def write_pdb(self, path, **kwargs):
         seq = self.seq
@@ -169,6 +187,7 @@ class RFO:
     msa: torch.Tensor
     pair: torch.Tensor
     state: torch.Tensor
+    symmsub: torch.Tensor
 
     # dataclass.astuple returns a deepcopy of the dataclass in which
     # gradients of member tensors are detached, so we define a 
@@ -261,7 +280,6 @@ def make_indep(pdb, ligand=None):
     idx_pdb = torch.concat([torch.tensor(idx_prot), idx_sm])
     
     seq = msa[0]
-    
     # seq, msa_seed_orig, msa_seed, msa_extra, mask_msa = MSAFeaturize(msa, ins, 
     #     p_mask=0.0, params={'MAXLAT': 128, 'MAXSEQ': 1024, 'MAXCYCLE': n_cycle}, tocpu=True)
     bond_feats = torch.zeros((sum(Ls), sum(Ls))).long()
@@ -284,11 +302,17 @@ def make_indep(pdb, ligand=None):
     ###TODO: currently network needs values at 0,2 indices of tensor, need to remove this reliance
     xyz[is_sm, 0] = 0
     xyz[is_sm, 2] = 0
-    
+
+    # Now check where diff polymer types are:
+    is_protein, is_dna, is_rna  = mask_generator.get_polymer_type_masks(seq)
+
     indep = Indep(
         seq,
         xyz,
         xyz.clone(), # DJ -- three template, dummy xyz for now 
+        target_feats,
+        mask,
+        Ls,
         idx_pdb,
         # SM specific
         bond_feats,
@@ -296,22 +320,13 @@ def make_indep(pdb, ligand=None):
         atom_frames,
         same_chain,
         is_sm,
-        terminus_type)
+        terminus_type,
+        # NA specific
+        is_protein,
+        is_dna,
+        is_rna,
+        )
     return indep
-
-
-    # seq:  torch.Tensor # [L]
-    # xyz:  torch.Tensor # [L, 36?, 3]
-    # xyz2: torch.Tensor # DJ - the original xyz
-    # idx:  torch.Tensor 
-
-    # # SM specific
-    # bond_feats: torch.Tensor
-    # chirals: torch.Tensor
-    # atom_frames: torch.Tensor
-    # same_chain: torch.Tensor
-    # is_sm: torch.Tensor
-    # terminus_type: torch.Tensor
 
 
 
@@ -332,42 +347,163 @@ class Model:
         self.NTOKENS = rf2aa.chemical.NAATOKENS
         self.atomizer = None
         self.converter = XYZConverter()
+        self.make_indep = make_indep
 
-    def forward(self, rfi, **kwargs):
-        # ipdb.set_trace()
-        rfi_dict = dataclasses.asdict(rfi)
-        # assert set(rfi_dict.keys()) - set()
-        return RFO(*self.model(**{**rfi_dict, **kwargs}))
+    # def forward(self, rfi, **kwargs):
+    #     # ipdb.set_trace()
+    #     rfi_dict = dataclasses.asdict(rfi)
+    #     # assert set(rfi_dict.keys()) - set()
+    #     return RFO(*self.model(**{**rfi_dict, **kwargs}))
+
+    def forward(self, rfi, N_cycle=1, **kwargs):
+        model = self.model 
+        model.eval()
+        assert N_cycle > 0
+
+        if N_cycle == 1:
+            rfi_dict = dataclasses.asdict(rfi)
+            return RFO(*model(**{**rfi_dict, **kwargs}))
+
+        else:
+
+            # Do the first N-1 recycles 
+            with torch.no_grad():
+                for i in range(N_cycle-1):
+
+                    if i == 0:
+                        rfi_dict = dataclasses.asdict(rfi)
+                        input = {**rfi_dict, **kwargs}
+                        input['msa_prev'] = None
+                        input['pair_prev'] = None
+                        input['state_prev'] = None
+                        input['return_raw'] = True
+                        out = model(**input)
+
+                    else:
+                        msa_prev, pair_prev, xyz_prev, state, alpha_prev, _ = out
+                        rfi_dict = dataclasses.asdict(rfi)
+                        rfi_dict['msa_prev']    = msa_prev
+                        rfi_dict['pair_prev']   = pair_prev
+                        rfi_dict['xyz']         = xyz_prev
+                        rfi_dict['state_prev']  = state
+
+                        input = {**rfi_dict, **kwargs}
+                        input['return_raw'] = True
+                        out = model(**input)
+
+                # Do the last recycle, and return RFO 
+                msa_prev, pair_prev, xyz_prev, state, alpha_prev, _ = out
+                rfi_dict = dataclasses.asdict(rfi)
+                rfi_dict['msa_prev']    = msa_prev
+                rfi_dict['pair_prev']   = pair_prev
+                rfi_dict['xyz']         = xyz_prev
+                rfi_dict['state_prev']  = state
+
+                input = {**rfi_dict, **kwargs}
+                input['return_raw'] = False
+
+                # with grad 
+                return RFO(*model(**input))
 
 
-    def insert_contig(self, indep, contig_map, partial_T=False):
+    def insert_contig(self, indep, contig_map, partial_T=False, refine=False):
+        """
+        Assembl
+        """
         o = copy.deepcopy(indep)
 
         # Insert small mol into contig_map
         all_chains = set(ch for ch,_ in contig_map.hal)
+
         # Not yet implemented due to index shifting
-        assert_that(len(all_chains)).is_equal_to(1)
+        # assert_that(len(all_chains)).is_equal_to(1)
+        print(f'WARNING: only 1 chain supported for now. Found {len(all_chains)} chains: {all_chains}')
+
+        # string
         next_unused_chain = next(e for e in contig_map.chain_order if e not in all_chains)
+
+        # number of small molecule atoms
         n_sm = indep.is_sm.sum()
+
+        # list of indices of small molecule atoms - 0 indexed
         is_sm_idx0 = torch.nonzero(indep.is_sm, as_tuple=True)[0].tolist()
         contig_map.ref_idx0.extend(is_sm_idx0)
-        n_protein_hal = len(contig_map.hal)
-        contig_map.hal_idx0 = np.concatenate((contig_map.hal_idx0, np.arange(n_protein_hal, n_protein_hal+n_sm)))
-        max_hal_idx = max(i for _, i  in contig_map.hal)
-        contig_map.hal.extend(zip([next_unused_chain]*n_sm, range(max_hal_idx+200,max_hal_idx+200+n_sm)))
-        chain_id = np.array([c for c, _ in contig_map.hal])
-        L_mapped = len(contig_map.hal)
-        n_prot = L_mapped - n_sm
-        L_in, NATOMS, _ = indep.xyz.shape
-        o.xyz = torch.full((L_mapped, NATOMS, 3), np.nan)
 
-        o.xyz[contig_map.hal_idx0] = indep.xyz[contig_map.ref_idx0]
+        n_protein_hal       = len(contig_map.hal)
+        contig_map.hal_idx0 = np.concatenate((contig_map.hal_idx0, np.arange(n_protein_hal, n_protein_hal+n_sm)))
+
+        max_hal_idx = max(i for _, i  in contig_map.hal)
+
+        # NOTE - this makes all small molecules in the same chain
+        print(f'WARNING: all small molecules in the same chain. Chain: {next_unused_chain}')
+        contig_map.hal.extend(zip([next_unused_chain]*n_sm, range(max_hal_idx+200,max_hal_idx+200+n_sm)))
+
+        chain_id = np.array([c for c, _ in contig_map.hal])
+
+        L_mapped = len(contig_map.hal)
+        n_prot   = L_mapped - n_sm
+        L_in, NATOMS, _ = indep.xyz.shape
+
+
+        # Some Andrew shit up in here:
+        # First, assign polymer ids to diff chains:
+        full_complex_idx0 = torch.tensor(contig_map.rf, dtype=torch.int64)
+        chain_breaks = inference.utils.get_breaks(full_complex_idx0)
+        chain_range_inds = inference.utils.find_template_ranges(full_complex_idx0, return_inds=True)
+
+        o.is_protein = torch.full((L_mapped,), 0).bool()
+        o.is_dna = torch.full((L_mapped,), 0).bool()
+        o.is_rna = torch.full((L_mapped,), 0).bool()
+
+        o.Ls = []
+        for (start_ind,stop_ind), polymer_type in zip(chain_range_inds, contig_map.polymer_chains):
+
+            # Assign polymer types
+            if polymer_type in ['protein','prot','aa','AA','a','A']:
+                o.is_protein[start_ind:stop_ind+1] = True
+
+            elif polymer_type in ['dna','DNA','d','D']:
+                o.is_dna[start_ind:stop_ind+1] = True
+
+            elif polymer_type in ['rna','RNA','r','R']:
+                o.is_rna[start_ind:stop_ind+1] = True
+
+            o.Ls.append(1+stop_ind-start_ind)
+
+        print('WARNING: in insert_contig(),ASSUMING NO SMALL MOLECULE, BUT CHANGE LATER!')
+        o.Ls.append(0)
+        # o.Ls.append(len(is_sm_idx0))
+        assert L_mapped==sum(o.Ls)
+
+
+        # initialize xyz for trajectory - slice in protein atoms from original indep
+        if not partial_T and not refine:
+            o.xyz = torch.full((L_mapped, NATOMS, 3), np.nan)
+            o.xyz[contig_map.hal_idx0] = indep.xyz[contig_map.ref_idx0]  
+        else:
+            o.xyz = indep.xyz 
+            # The initial coordinates should be exactly the coordinates that 
+            # were parsed out of the protein 
+
+        # initialize seq - slice in sequence from original indep
         o.seq = torch.full((L_mapped,), MASKINDEX)
+        o.seq[o.is_protein] = MASKINDEX
+        o.seq[o.is_dna] = DNAMASKINDEX
+        o.seq[o.is_rna] = RNAMASKINDEX
         o.seq[contig_map.hal_idx0] = indep.seq[contig_map.ref_idx0]
+
+        # slice over the "is_sm" mask from the original indep
         o.is_sm = torch.full((L_mapped,), 0).bool()
         o.is_sm[contig_map.hal_idx0] = indep.is_sm[contig_map.ref_idx0]
         o.same_chain = torch.tensor(chain_id[None, :] == chain_id[:, None])
+        
         o.xyz = get_init_xyz(o.xyz[None, None], o.is_sm).squeeze()
+
+        # HACK.  ComputeAllAtom in the network requires N and C coords even for atomized residues,
+        # However, these have no semantic value.  TODO: Remove the network's reliance on these coordinates.
+        sm_ca = o.xyz[o.is_sm, 1]
+        o.xyz[o.is_sm,:3] = sm_ca[...,None,:]
+        o.xyz[o.is_sm] += chemical.INIT_CRDS
 
         o.bond_feats = torch.full((L_mapped, L_mapped), 0).long()
         o.bond_feats[:n_prot, :n_prot] = rf2aa.util.get_protein_bond_feats(n_prot)
@@ -383,32 +519,106 @@ class Model:
         o.idx = torch.tensor([i for _, i in contig_map.hal])
 
         o.terminus_type = torch.zeros(L_mapped)
-        o.terminus_type[0] = N_TERMINUS
-        o.terminus_type[n_prot-1] = C_TERMINUS
+        # o.terminus_type[0] = N_TERMINUS
+        # o.terminus_type[n_prot-1] = C_TERMINUS
+        for start_ind, stop_ind in chain_range_inds:
+            o.terminus_type[start_ind] = N_TERMINUS
+            o.terminus_type[stop_ind] = C_TERMINUS
 
+        # is_diffused = torch.
         is_diffused_prot = ~torch.from_numpy(contig_map.inpaint_str)
         is_diffused_sm = torch.zeros(n_sm).bool()
         is_diffused = torch.cat((is_diffused_prot, is_diffused_sm))
-        is_atom_str_shown = contig_map.atomize_indices2atomname
-        # The motifs for atomization are double-counted.
-        if is_atom_str_shown:
-            is_diffused[list(is_atom_str_shown.keys())] = True
-        is_res_str_shown = ~is_diffused
-        use_guideposts = 'inference' in self.conf and self.conf.inference.contig_as_guidepost
-        o, is_diffused, is_seq_masked, self.atomizer, contig_map.gp_to_ptn_idx0 = transform_indep(o, is_res_str_shown, is_atom_str_shown, use_guideposts, 'anywhere')
-
-        # HACK.  ComputeAllAtom in the network requires N and C coords even for atomized residues,
-	    # However, these have no semantic value.  TODO: Remove the network's reliance on these coordinates.
-        sm_ca = o.xyz[o.is_sm, 1]
-        o.xyz[o.is_sm,:3] = sm_ca[...,None,:]
-        o.xyz[o.is_sm] += chemical.INIT_CRDS
 
         # To see the shapes of the indep struct with contig inserted
         # print(rf2aa.tensor_util.info(rf2aa.tensor_util.to_ordered_dict(o)))
-        return o, is_diffused, is_seq_masked
+
+        if refine: 
+            pass # want to keep original xyz2 because it contains perfect motif  
+        else:
+            o.xyz2 = o.xyz.clone() # DJ - three template, dummy xyz for now
+
+        return o, is_diffused
+
+    # def insert_contig(self, indep, contig_map, partial_T=False):
+    #     o = copy.deepcopy(indep)
+
+    #     # Insert small mol into contig_map
+    #     all_chains = set(ch for ch,_ in contig_map.hal)
+    #     # Not yet implemented due to index shifting
+    #     assert_that(len(all_chains)).is_equal_to(1)
+    #     next_unused_chain = next(e for e in contig_map.chain_order if e not in all_chains)
+    #     n_sm = indep.is_sm.sum()
+    #     is_sm_idx0 = torch.nonzero(indep.is_sm, as_tuple=True)[0].tolist()
+    #     contig_map.ref_idx0.extend(is_sm_idx0)
+    #     n_protein_hal = len(contig_map.hal)
+    #     contig_map.hal_idx0 = np.concatenate((contig_map.hal_idx0, np.arange(n_protein_hal, n_protein_hal+n_sm)))
+    #     max_hal_idx = max(i for _, i  in contig_map.hal)
+    #     contig_map.hal.extend(zip([next_unused_chain]*n_sm, range(max_hal_idx+200,max_hal_idx+200+n_sm)))
+    #     chain_id = np.array([c for c, _ in contig_map.hal])
+    #     L_mapped = len(contig_map.hal)
+    #     n_prot = L_mapped - n_sm
+    #     L_in, NATOMS, _ = indep.xyz.shape
+    #     o.xyz = torch.full((L_mapped, NATOMS, 3), np.nan)
+
+    #     o.xyz[contig_map.hal_idx0] = indep.xyz[contig_map.ref_idx0]
+    #     o.seq = torch.full((L_mapped,), MASKINDEX)
+    #     o.seq[contig_map.hal_idx0] = indep.seq[contig_map.ref_idx0]
+    #     o.is_sm = torch.full((L_mapped,), 0).bool()
+    #     o.is_sm[contig_map.hal_idx0] = indep.is_sm[contig_map.ref_idx0]
+    #     o.same_chain = torch.tensor(chain_id[None, :] == chain_id[:, None])
+    #     o.xyz = get_init_xyz(o.xyz[None, None], o.is_sm).squeeze()
+
+    #     o.bond_feats = torch.full((L_mapped, L_mapped), 0).long()
+    #     o.bond_feats[:n_prot, :n_prot] = rf2aa.util.get_protein_bond_feats(n_prot)
+    #     n_prot_ref = L_in-n_sm
+    #     o.bond_feats[n_prot:, n_prot:] = indep.bond_feats[n_prot_ref:, n_prot_ref:]
+
+    #     hal_by_ref_d = dict(zip(contig_map.ref_idx0, contig_map.hal_idx0))
+    #     def hal_by_ref(ref):
+    #         return hal_by_ref_d[ref]
+    #     hal_by_ref = np.vectorize(hal_by_ref, otypes=[float])
+    #     o.chirals[...,:-1] = torch.tensor(hal_by_ref(o.chirals[...,:-1]))
+
+    #     o.idx = torch.tensor([i for _, i in contig_map.hal])
+
+    #     o.terminus_type = torch.zeros(L_mapped)
+    #     o.terminus_type[0] = N_TERMINUS
+    #     o.terminus_type[n_prot-1] = C_TERMINUS
+
+    #     is_diffused_prot = ~torch.from_numpy(contig_map.inpaint_str)
+    #     is_diffused_sm = torch.zeros(n_sm).bool()
+    #     is_diffused = torch.cat((is_diffused_prot, is_diffused_sm))
+    #     is_atom_str_shown = contig_map.atomize_indices2atomname
+    #     # The motifs for atomization are double-counted.
+    #     if is_atom_str_shown:
+    #         is_diffused[list(is_atom_str_shown.keys())] = True
+    #     is_res_str_shown = ~is_diffused
+    #     # ipdb.set_trace()
+    #     use_guideposts = 'inference' in self.conf and self.conf.inference.contig_as_guidepost
+    #     o, is_diffused, is_seq_masked, self.atomizer, contig_map.gp_to_ptn_idx0 = transform_indep(o, is_res_str_shown, is_atom_str_shown, use_guideposts, 'anywhere')
+
+    #     # HACK.  ComputeAllAtom in the network requires N and C coords even for atomized residues,
+	#     # However, these have no semantic value.  TODO: Remove the network's reliance on these coordinates.
+    #     sm_ca = o.xyz[o.is_sm, 1]
+    #     o.xyz[o.is_sm,:3] = sm_ca[...,None,:]
+    #     o.xyz[o.is_sm] += chemical.INIT_CRDS
+
+    #     # To see the shapes of the indep struct with contig inserted
+    #     # print(rf2aa.tensor_util.info(rf2aa.tensor_util.to_ordered_dict(o)))
+    #     return o, is_diffused, is_seq_masked
 
 
-    def prepro(self, indep, t, is_diffused, is_protein_motif=None, t2d_is_revealed=None):
+    def prepro(self, 
+                indep, 
+                t, 
+                is_diffused, 
+                twotemplate=True, 
+                threetemplate=True, 
+                t2d_is_revealed=None, 
+                is_motif=None, 
+                polymer_type_masks=None,
+                rfmotif=None):
         """
         Function to prepare inputs to diffusion model
         
@@ -431,6 +641,35 @@ class Model:
                 - last plane is block adjacency
         """
 
+        # Process motifs by polymer type:
+        if polymer_type_masks:
+            is_na = torch.logical_or(indep.is_dna, indep.is_rna)
+            is_diffused_na = torch.logical_and(is_diffused, is_na)
+            is_diffused_protein = torch.logical_and(is_diffused, ~is_na)
+
+            is_protein_motif = is_motif * indep.is_protein
+            is_dna_motif = is_motif * indep.is_dna
+            is_rna_motif = is_motif * indep.is_rna
+        else:
+            is_protein_motif = is_motif
+
+
+
+
+        num_backbone_atoms_protein = 3 # we can make this variable later if we want
+        num_backbone_atoms_nucleic = self.conf['preprocess']['num_atoms_na']
+
+        # if indep.metadata.get('refinement', None) is not None:
+        #     assert twotemplate and threetemplate 
+        #     ref_dict = indep.metadata['refinement']
+        #     refine=True
+        #     src_con_hal_idx0 = torch.from_numpy( ref_dict['con_hal_idx0'] )
+        #     src_con_ref_idx0 = torch.from_numpy( ref_dict['con_ref_idx0'] )
+
+        #     # replace the sequence w/ sequence from original motif
+        #     src_motif_seq = indep.seq2[src_con_ref_idx0]
+        # else:
+        refine=False
 
         xyz_t = indep.xyz
         seq_one_hot = torch.nn.functional.one_hot(
@@ -469,8 +708,11 @@ class Model:
         # t1d = torch.zeros((1,1,L,NAATOKENS-1))
 
         #seqt1d = torch.clone(seq)
+        # We only want to replace mask token with unknown aa token
+        # DNA and RNA were already assigned unknown tokens, so don't shift them.
         seq_cat_shifted = seq_one_hot.argmax(dim=-1)
-        seq_cat_shifted[seq_cat_shifted>=MASKINDEX] -= 1
+        # seq_cat_shifted[seq_cat_shifted>=MASKINDEX] -= 1
+        seq_cat_shifted[seq_cat_shifted==MASKINDEX] -= 1
         t1d = torch.nn.functional.one_hot(seq_cat_shifted, num_classes=NAATOKENS-1)
         t1d = t1d[None, None] # [L, NAATOKENS-1] --> [1,1,L, NAATOKENS-1]
         # for idx in range(L):
@@ -496,12 +738,40 @@ class Model:
             raise Exception('not implemented')
             xyz_t[torch.where(seq_one_hot == 21, True, False),3:,:] = float('nan')
         else:
-            xyz_t[is_diffused,3:,:] = float('nan')
+
+            # Different number of atoms if protein, DNA, RNA, etc
+            
+            if polymer_type_masks:
+                # How many backbone atoms do we need per polymer type?
+                xyz_t[is_diffused_na,num_backbone_atoms_nucleic:,:] = float('nan')
+                xyz_t[is_diffused_protein,num_backbone_atoms_protein:,:] = float('nan')
+
+
+            else:
+                xyz_t[is_diffused,3:,:] = float('nan')
         #xyz_t[:,3:,:] = float('nan')
+        # ipdb.set_trace()
+
+        # DJ - check if using inference.start_from_input
+        # if so, chop off the atoms after 14: 
+        # AF - only do this when doing inference, not during training.
+        # if ('inference' in self.conf) and (self.conf.preprocess.sequence_decode):
+        if ('inference' in self.conf) and (self.conf.inference.start_from_input):
+            print('Warning: start_from_input is True, so chopping off atoms after 14')
+            xyz_t = xyz_t.squeeze()[:,:14,:]
+
+            if polymer_type_masks:
+                # How many backbone atoms do we need per polymer type?
+                xyz_t[is_diffused_na,num_backbone_atoms_nucleic:,:] = float('nan')
+                xyz_t[is_diffused_protein,num_backbone_atoms_protein:,:] = float('nan')
+            else:
+                xyz_t[:,3:,:] = float('nan')
+
 
         assert_that(xyz_t.shape).is_equal_to((L,NHEAVYPROT,3))
         xyz_t=xyz_t[None, None]
         xyz_t = torch.cat((xyz_t, torch.full((1,1,L,NTOTAL-NHEAVYPROT,3), float('nan'))), dim=3)
+
 
         ### t2d ###
         ###########
@@ -548,13 +818,20 @@ class Model:
 
         alpha_t = alpha_t.unsqueeze(1) # [n,I,L,30]
 
-        if not (self.conf.preprocess.motif_only_2d):
-            # only 2 templates (default)
-            alpha_t = alpha_t.tile((1,2,1,1))
-        else:
-            # 3 templates now 
+        if twotemplate and (not threetemplate):
+            alpha_t = alpha_t.tile((1,2,1,1)) # add dim for second template 
+        elif twotemplate and threetemplate:
             alpha_t = alpha_t.tile((1,3,1,1))
+        else:
+            pass 
 
+
+        # if not (self.conf.preprocess.motif_only_2d):
+        #     # only 2 templates (default)
+        #     alpha_t = alpha_t.tile((1,2,1,1))
+        # else:
+        #     # 3 templates now 
+        #     alpha_t = alpha_t.tile((1,3,1,1))
 
 
         # #put tensors on device
@@ -588,53 +865,83 @@ class Model:
             t1d=torch.cat((t1d, hotspot_tens[None,None,...,None].to(self.device)), dim=-1)
         
         # return msa_masked, msa_full, seq[None], torch.squeeze(xyz_t, dim=0), idx, t1d, t2d, xyz_t, alpha_t
-        mask_t = torch.ones(1,2,L,L).bool()
+        if twotemplate and not threetemplate:
+            mask_t = torch.ones(1,2,L,L).bool() # 2 for second template
+        elif twotemplate and threetemplate:
+            mask_t = torch.ones(1,3,L,L).bool()
+        else:
+            mask_t = torch.ones(1,1,L,L).bool()
+        # mask_t = torch.ones(1,2,L,L).bool()
         sctors = torch.zeros((1,L,rf2aa.chemical.NTOTALDOFS,2))
 
         xyz = torch.squeeze(xyz_t, dim=0)
 
         # NO SELF COND
-        xyz_t = torch.zeros(1,2,L,3)
-        t2d = torch.zeros(1,2,L,L,68)
-        if (self.conf.preprocess.motif_only_2d):
-            assert (is_protein_motif is not None)
+        if twotemplate and (not threetemplate):
+            xyz_t = torch.zeros(1,2,L,3)
+            t2d   = torch.zeros(1,2,L,L,68)
+
+            t2d_xt, mask_t_2d_remade = util.get_t2d(
+                xyz, indep.is_sm, indep.atom_frames)
+            t2d[0,0]   = t2d_xt[0]
+            xyz_t[0,0] = xyz[0,:,1]
+        
+        elif twotemplate and threetemplate:
+            assert (is_protein_motif is not None) 
             assert (t2d_is_revealed is not None)
 
             # only inputting motif in 2d template --> need 3rd template 
-            xyz_t = torch.zeros(1,3,L,3)
-            t2d = torch.zeros(1,3,L,L,68)
-            mask_t = torch.ones(1,3,L,L).bool()
-        
-        # t2d for the Xt (2template)
-        t2d_xt, mask_t_2d_remade = util.get_t2d(xyz, indep.is_sm, indep.atom_frames)
-        t2d[0,0]   = t2d_xt[0]
-        xyz_t[0,0] = xyz[0,:,1]
+            xyz_t  = torch.zeros(1,3,L,3)
+            t2d    = torch.zeros(1,3,L,L,68)
 
-        # T2D for 3template protocol
-        if (self.conf.preprocess.motif_only_2d):
-            # ic(t2d_is_revealed.numel())
-            # ic(t2d_is_revealed.sum())
-            
-            # ic(is_protein_motif.shape)
-            # ic(is_protein_motif.sum())
+            ## BUGFIX - the third mask needs to be altered 
+            mask_t = torch.ones(1,3,L,L).bool() 
+            mask_t[0,2,:,:] = t2d_is_revealed.bool()
 
-            # ic(xyz.shape)
-            # ic(indep.xyz2.shape)
+            ##### 2nd template #####
+            t2d_xt, mask_t_2d_remade = util.get_t2d(xyz, indep.is_sm, indep.atom_frames)
+            t2d[0,0]   = t2d_xt[0]
+            xyz_t[0,0] = xyz[0,:,1]
 
+            ##### 3rd template #####
             # set of diffused crds w/ motif sliced in
-            xyz_xt_w_motif = xyz.clone() 
+            xyz_xt_w_motif = xyz.clone()
 
-            xyz_xt_w_motif[0,is_protein_motif,:NHEAVYPROT] = indep.xyz2[is_protein_motif]
-            
+            # DJ - if refine, selection in xyz2 needs to reference the original src pdb for motif
+            sel2 = src_con_ref_idx0 if refine else is_protein_motif
+
+            xyz_xt_w_motif[0,is_protein_motif,:NHEAVYPROT] = indep.xyz2[sel2,:NHEAVYPROT]
+
             # t2d containing desired motif 
             # this construction uses bool mask to allow certain motifs to see others
             # all motifs can see themselves
             t2d_motif, _ = util.get_t2d(xyz_xt_w_motif, indep.is_sm, indep.atom_frames, t2d_is_revealed[None])
-            
-            
+
+
             # put it in as third template
-            t2d[0,2] = t2d_motif[0]
+            t2d[0,2]   = t2d_motif[0]
             xyz_t[0,2] = xyz_xt_w_motif[0,:,1]
+
+            # fig, ax = plt.subplots(2,2,figsize=(5,5), dpi=300)
+
+            # ax[0][0].imshow(t2d[0,0].argmax(-1))
+            # ax[0][0].set_title('First template - Xt in')
+
+            # ax[0][1].imshow(t2d[0,1].argmax(-1))
+            # ax[0][1].set_title('Second template - self cond')
+
+            # ax[1][0].imshow(t2d[0,2].argmax(-1))
+            # ax[1][0].set_title('Third template - motif ')
+
+            # ax[1][1].imshow(t2d_is_revealed)
+            # ax[1][1].set_title('Third template motif mask')
+            
+            # plt.tight_layout()
+            # plt.show()
+            # plt.savefig('repeat_DBP_t2d.png', bbox_inches='tight', dpi='figure')
+            # sys.exit('Exiting early')
+
+
             # stack on final feature 
             blank = torch.ones_like(t2d_is_revealed)*-1 # first two templates will have -1 in this channel
             cattable_t2d_is_revealed = torch.stack((blank, blank, t2d_is_revealed.int()), dim=-1)
@@ -643,7 +950,66 @@ class Model:
 
             t2d = torch.cat((t2d, cattable_t2d_is_revealed), dim=-1)    # (1,3,L,L,69)
 
-        # t2d for the motif 
+
+
+        else:
+            xyz_t = torch.zeros(1,1,L,3)
+            t2d   = torch.zeros(1,1,L,L,68)
+
+
+        # xyz_t = torch.zeros(1,2,L,3)
+        # t2d = torch.zeros(1,2,L,L,68)
+        # if (self.conf.preprocess.motif_only_2d):
+        #     # assert (is_protein_motif is not None)
+        #     assert (is_motif is not None)
+        #     assert (t2d_is_revealed is not None)
+
+        #     # only inputting motif in 2d template --> need 3rd template 
+        #     xyz_t = torch.zeros(1,3,L,3)
+        #     t2d = torch.zeros(1,3,L,L,68)
+        #     mask_t = torch.ones(1,3,L,L).bool()
+        
+        # # t2d for the Xt (2template)
+        # t2d_xt, mask_t_2d_remade = util.get_t2d(xyz, indep.is_sm, indep.atom_frames)
+        # t2d[0,0]   = t2d_xt[0]
+        # xyz_t[0,0] = xyz[0,:,1]
+
+        # # T2D for 3template protocol
+        # if (self.conf.preprocess.motif_only_2d):
+        #     # ic(t2d_is_revealed.numel())
+        #     # ic(t2d_is_revealed.sum())
+            
+        #     # ic(is_protein_motif.shape)
+        #     # ic(is_protein_motif.sum())
+
+        #     # ic(xyz.shape)
+        #     # ic(indep.xyz2.shape)
+
+        #     # set of diffused crds w/ motif sliced in
+        #     xyz_xt_w_motif = xyz.clone() 
+
+        #     # xyz_xt_w_motif[0,is_protein_motif,:NHEAVYPROT] = indep.xyz2[is_protein_motif]
+        #     xyz_xt_w_motif[0,is_motif,:NHEAVYPROT] = indep.xyz2[is_motif]
+            
+        #     # t2d containing desired motif 
+        #     # this construction uses bool mask to allow certain motifs to see others
+        #     # all motifs can see themselves
+        #     t2d_motif, _ = util.get_t2d(xyz_xt_w_motif, indep.is_sm, indep.atom_frames, t2d_is_revealed[None])
+            
+            
+        #     # put it in as third template
+        #     t2d[0,2] = t2d_motif[0]
+        #     xyz_t[0,2] = xyz_xt_w_motif[0,:,1]
+        #     # stack on final feature 
+        #     blank = torch.ones_like(t2d_is_revealed)*-1 # first two templates will have -1 in this channel
+        #     cattable_t2d_is_revealed = torch.stack((blank, blank, t2d_is_revealed.int()), dim=-1)
+        #     cattable_t2d_is_revealed = cattable_t2d_is_revealed.permute(2,0,1) # (L,L,3) -> (3,L,L)
+        #     cattable_t2d_is_revealed = cattable_t2d_is_revealed[None,...,None] # (3,L,L) -> (1,3,L,L,1)
+
+        #     t2d = torch.cat((t2d, cattable_t2d_is_revealed), dim=-1)    # (1,3,L,L,69)
+
+        # # t2d for the motif 
+        
 
         #ic(xyz.shape)
         # ic(
@@ -652,20 +1018,45 @@ class Model:
         #     xyz[0, ~is_diffused * ~indep.is_sm][0][:,0], # nan 14:
         # )
 
-        if is_protein_motif is None:
+        # if is_protein_motif is None:
+        if is_motif is None:
             # DJ - adding this bc if motif_only_t2, is_diffused will be 
             # entire protein --> can't trust it to calculate is_protein_motif
-            is_protein_motif = ~is_diffused * ~indep.is_sm
-
+            # is_protein_motif = ~is_diffused * ~indep.is_sm
+            is_motif = ~is_diffused * ~indep.is_sm
 
         # xyz = torch.nan_to_num(xyz)
-        xyz[0, is_diffused*~indep.is_sm,3:] = torch.nan
+
+        # We probably want to include more atoms if diffusing a nucleic acid chain
+        if polymer_type_masks:
+            # xyz[0, is_diffused_protein*~indep.is_sm,3:] = torch.nan
+            # # xyz[0, is_diffused_na*~indep.is_sm,9:] = torch.nan
+            # xyz[0, is_diffused_na*~indep.is_sm,14:] = torch.nan
+
+            xyz[0, is_diffused_protein*~indep.is_sm,num_backbone_atoms_nucleic:] = torch.nan
+            xyz[0, is_diffused_na*~indep.is_sm,num_backbone_atoms_nucleic:] = torch.nan
+
+            
+
+        else:
+            xyz[0, is_diffused*~indep.is_sm,3:] = torch.nan
+
         xyz[0, indep.is_sm,14:] = 0
-        xyz[0, is_protein_motif, 14:] = 0
+        # xyz[0, is_protein_motif, 14:] = 0
+        xyz[0, is_motif, 14:] = 0
         dist_matrix = rf2aa.data_loader.get_bond_distances(indep.bond_feats)
 
         # minor tweaks to rfi to match gp training
+        # if ('inference' in self.conf) and (self.conf.inference.get('contig_as_guidepost', False)):
+        #     '''Manually inspecting the pickled features passed to RF during training, 
+        #     I did not see markers for the N and C termini. This is to more accurately 
+        #     replicate the features seen during training at inference.'''
+        #     # Erase N/C termini markers
+        #     msa_masked[...,-2:] = 0
+        #     msa_full[...,-2:] = 0
         if ('inference' in self.conf) and (self.conf.inference.get('contig_as_guidepost', False)):
+            print('>'*80)
+            print('Erase N/C termini markers')
             '''Manually inspecting the pickled features passed to RF during training, 
             I did not see markers for the N and C termini. This is to more accurately 
             replicate the features seen during training at inference.'''
@@ -674,23 +1065,41 @@ class Model:
             msa_full[...,-2:] = 0
         
 
-        # T1D 
-        if not (self.conf.preprocess.motif_only_2d): # classic 2template t1d 
-            t1d = torch.tile(t1d, (1,2,1,1))
-            t1d[0,1,:,-1] = -1
+        # # T1D 
+        # if not (self.conf.preprocess.motif_only_2d): # classic 2template t1d 
+        #     t1d = torch.tile(t1d, (1,2,1,1))
+        #     t1d[0,1,:,-1] = -1
 
-        else: # new "3template" t1d
+        # else: # new "3template" t1d
+        #     t1d = torch.tile(t1d, (1,3,1,1))
+        #     t1d[0,1,:,-1] = -1 # second template (Xt) gets -1 for timestep feature 
+        #     t1d[0,2,:,-1] = -1 # third template (motif) gets -1 for timestep feature
+            
+        #     # feature for 3rd template - is it motif or not?
+        #     # cattable_is_protein_motif = torch.tile(is_protein_motif[None,None,:,None], (1,3,1,1)).to(device=t1d.device, dtype=t1d.dtype)
+        #     # cattable_is_protein_motif[:,:-1,...] = -1  # first two templates get -1 for the motif feature 
+        #     # t1d = torch.cat((t1d, cattable_is_protein_motif), dim=-1) 
+        #     cattable_is_motif = torch.tile(is_motif[None,None,:,None], (1,3,1,1)).to(device=t1d.device, dtype=t1d.dtype)
+        #     cattable_is_motif[:,:-1,...] = -1  # first two templates get -1 for the motif feature 
+        #     t1d = torch.cat((t1d, cattable_is_motif), dim=-1) 
+
+        
+        ### T1D ### 
+        if twotemplate and (not threetemplate):
+            t1d = torch.tile(t1d, (1,2,1,1)) # add dim for second template
+            t1d[0,1,:,-1] = -1
+        
+        elif twotemplate and threetemplate:  # new "3 template" t1d - has extra feature 
             t1d = torch.tile(t1d, (1,3,1,1))
             t1d[0,1,:,-1] = -1 # second template (Xt) gets -1 for timestep feature 
             t1d[0,2,:,-1] = -1 # third template (motif) gets -1 for timestep feature
-            
+
             # feature for 3rd template - is it motif or not?
             cattable_is_protein_motif = torch.tile(is_protein_motif[None,None,:,None], (1,3,1,1)).to(device=t1d.device, dtype=t1d.dtype)
             cattable_is_protein_motif[:,:-1,...] = -1  # first two templates get -1 for the motif feature 
             t1d = torch.cat((t1d, cattable_is_protein_motif), dim=-1) 
 
-
-
+        # ipdb.set_trace()
         # Note: should be batched
         rfi = RFI(
             msa_masked,
@@ -795,6 +1204,8 @@ def adaptor_fix_bb_indep(out):
 
     is_sm = rf2aa.util.is_atom(seq)
 
+    is_protein, is_dna, is_rna  = mask_generator.get_polymer_type_masks(seq)
+
     is_n_terminus = msa_full[0, 0, :, MSAFULL_N_TERM].bool()
     is_c_terminus = msa_full[0, 0, :, MSAFULL_C_TERM].bool()
     terminus_type = torch.zeros(msa_masked.shape[2], dtype=int)
@@ -816,7 +1227,13 @@ def adaptor_fix_bb_indep(out):
         atom_frames,
         same_chain,
         rf2aa.tensor_util.assert_squeeze(is_sm),
-        terminus_type)
+        terminus_type,
+
+        # Nuc specific
+        is_protein,
+        is_dna,
+        is_rna,
+        )
     
     return indep, atom_mask, dataset_name
 
@@ -848,6 +1265,9 @@ def pop_mask(indep, pop):
     indep.same_chain    = indep.same_chain[pop2d].reshape(N,N)
     indep.is_sm         = indep.is_sm[pop]
     indep.terminus_type = indep.terminus_type[pop]
+    indep.is_protein    = indep.is_protein[pop]
+    indep.is_dna        = indep.is_dna[pop]
+    indep.is_rna        = indep.is_rna[pop]
 
     if indep.chirals.numel():
         n_shift = (~pop).cumsum(dim=0)
@@ -867,7 +1287,21 @@ def centre(indep, is_diffused):
 
 
 def diffuse(conf, diffuser, indep, is_diffused, t):
+    
     indep.xyz = add_fake_frame_legs(indep.xyz, indep.is_sm)
+
+    # Process nucleic acid shit
+    # ipdb.set_trace()
+    if conf['preprocess']['mask_by_polymer_type']:
+        if conf['preprocess']['num_atoms_na']:
+            num_atoms_na = conf['preprocess']['num_atoms_na']
+        else:
+            num_atoms_na = 3
+
+        assert (num_atoms_na % 3) == 0
+
+        num_frames_na = num_atoms_na//3
+
 
     if t == diffuser.T: 
         t_list = [t,t]
@@ -884,9 +1318,15 @@ def diffuse(conf, diffuser, indep, is_diffused, t):
         't_list'                  :t_list,
         'diffuse_sidechains'      :conf['preprocess']['sidechain_input'],
         'include_motif_sidechains':conf['preprocess']['motif_sidechain_input'],
-        'is_sm': indep.is_sm
+        'is_sm': indep.is_sm,
+        'is_na': indep.is_na,
+        'num_frames_na': num_frames_na
     }
+
     diffused_fullatoms, aa_masks, true_crds = diffuser.diffuse_pose(**kwargs)
+
+
+
 
     ############################################
     ########### New Self Conditioning ##########
@@ -955,8 +1395,18 @@ def forward(model, rfi, **kwargs):
     rfi_dict = dataclasses.asdict(rfi)
     return RFO(*model(**{**rfi_dict, **kwargs}))
 
-def mask_indep(indep, is_diffused):
-    indep.seq[is_diffused] = MASKINDEX
+def mask_indep(indep, is_diffused, polymer_type_masks=None):
+
+    if polymer_type_masks:
+        indep.seq[is_diffused * indep.is_protein] = MASKINDEX
+        indep.seq[is_diffused * indep.is_dna] = DNAMASKINDEX
+        indep.seq[is_diffused * indep.is_rna] = RNAMASKINDEX
+
+
+    else:
+
+        indep.seq[is_diffused] = MASKINDEX
+
 
 # def get_xyz_t_t2d(atom_frames, is_sm, xyz):
 #     '''
@@ -976,41 +1426,74 @@ def mask_indep(indep, is_diffused):
 #     return
 
 
-def self_cond_new(indep, rfi, rfo):
-    # RFI is already batched
-    B = 1
-    L = indep.xyz.shape[0]
-    rfi_sc = copy.deepcopy(rfi)
-    zeros = torch.zeros(B,1,L,36-3,3).float().to(rfi.xyz.device)
-    xyz_t = torch.cat((rfo.xyz[-1:], zeros), dim=-2) # [B,T,L,27,3]
-    ic(xyz_t[0].shape, rfi.atom_frames.shape)
-    t2d, mask_t_2d_remade = util.get_t2d(
-        xyz_t[0], indep.is_sm, rfi.atom_frames[0])
-    t2d = t2d[None] # Add batch dimension # [B,T,L,L,44]
-    rfi_sc.xyz_t[0,1] = xyz_t[0, 0, :, 1]
-    rfi_sc.t2d[0, 1] = t2d[0, 0]
-    return rfi_sc
+# def self_cond_new(indep, rfi, rfo):
+#     # RFI is already batched
+#     B = 1
+#     L = indep.xyz.shape[0]
+#     rfi_sc = copy.deepcopy(rfi)
+#     zeros = torch.zeros(B,1,L,36-3,3).float().to(rfi.xyz.device)
+#     xyz_t = torch.cat((rfo.xyz[-1:], zeros), dim=-2) # [B,T,L,27,3]
+#     ic(xyz_t[0].shape, rfi.atom_frames.shape)
+#     t2d, mask_t_2d_remade = util.get_t2d(
+#         xyz_t[0], indep.is_sm, rfi.atom_frames[0])
+#     t2d = t2d[None] # Add batch dimension # [B,T,L,L,44]
+#     rfi_sc.xyz_t[0,1] = xyz_t[0, 0, :, 1]
+#     rfi_sc.t2d[0, 1] = t2d[0, 0]
+#     return rfi_sc
 
-def self_cond(indep, rfi, rfo):
+# def self_cond(indep, rfi, rfo):
+#     # RFI is already batched
+#     B = 1
+#     L = indep.xyz.shape[0]
+#     rfi_sc = copy.deepcopy(rfi)
+#     zeros = torch.zeros(B,1,L,36-3,3).float().to(rfi.xyz.device)
+#     # cat BB prediction with sidechain zeros 
+#     xyz_t = torch.cat((rfo.xyz[-1:], zeros), dim=-2) # [B,T,L,27,3]
+
+#     t2d, mask_t_2d_remade = util.get_t2d(xyz_t[0], indep.is_sm, rfi.atom_frames[0])
+#     t2d = t2d[None] # Add batch dimension # [B,T,L,L,44]
+    
+#     # SECOND template is the previous px0 (index 1)
+#     # This spot has -1 confidence in t1d, marking it as SC template
+#     rfi_sc.xyz_t[0,1] = xyz_t[0, 0, :, 1]
+
+#     # add 69th feature to t2d (accomodation for 3-template version)
+#     blank = (torch.ones((1,1,L,L,1))*-1).to(rfi.xyz.device)
+#     t2d = torch.cat((t2d, blank), dim=-1)
+#     rfi_sc.t2d[0, 1] = t2d[0, 0]
+
+#     return rfi_sc
+
+
+def self_cond(indep, rfi, rfo, twotemplate, threetemplate):
     # RFI is already batched
     B = 1
     L = indep.xyz.shape[0]
     rfi_sc = copy.deepcopy(rfi)
-    zeros = torch.zeros(B,1,L,36-3,3).float().to(rfi.xyz.device)
+    zeros = torch.zeros(B,1,L,36-3,3).float().to(rfi.xyz.device) # zeros for sidechains 
     # cat BB prediction with sidechain zeros 
-    xyz_t = torch.cat((rfo.xyz[-1:], zeros), dim=-2) # [B,T,L,27,3]
+    xyz_t = torch.cat((rfo.xyz[-1:], zeros), dim=-2) # [B,T,L,36,3] 
 
     t2d, mask_t_2d_remade = util.get_t2d(xyz_t[0], indep.is_sm, rfi.atom_frames[0])
-    t2d = t2d[None] # Add batch dimension # [B,T,L,L,44]
     
-    # SECOND template is the previous px0 (index 1)
-    # This spot has -1 confidence in t1d, marking it as SC template
-    rfi_sc.xyz_t[0,1] = xyz_t[0, 0, :, 1]
+    t2d = t2d[None] # Add batch dimension # [B,T,L,L,44]
 
-    # add 69th feature to t2d (accomodation for 3-template version)
-    blank = (torch.ones((1,1,L,L,1))*-1).to(rfi.xyz.device)
-    t2d = torch.cat((t2d, blank), dim=-1)
-    rfi_sc.t2d[0, 1] = t2d[0, 0]
+    if twotemplate and (not threetemplate):
+        # Insert the previous px0 into the SECOND template spot (index 1)
+        # This spot has -1 confidence in t1d, marking it as SC template
+        rfi_sc.xyz_t[0,1] = xyz_t[0,0,:,1]
+        rfi_sc.t2d[0,1] = t2d[0,0]
+
+    elif twotemplate and threetemplate:
+        rfi_sc.xyz_t[0,1] = xyz_t[0,0,:,1]
+
+        # add 69th feature to t2d (accomodation for 3-template version)
+        blank = (torch.ones((1,1,L,L,1))*-1).to(rfi.xyz.device)
+        t2d = torch.cat((t2d, blank), dim=-1)
+        rfi_sc.t2d[0, 1] = t2d[0, 0]
+    
+    else:
+        raise RuntimeError('Unsure what should happen here - re-evaluate when hit. -DJ')
 
     return rfi_sc
 

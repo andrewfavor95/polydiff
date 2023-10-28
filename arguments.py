@@ -60,6 +60,10 @@ def get_args(in_args=None):
             help="output directory")
     train_group.add_argument("-grad_clip", default=0.2, action='store', type=float,
             help='grad norm clipping value')
+    train_group.add_argument("-polymer_focus", default=None,
+            help="filter training set items by whether they contain a specific polymer type")
+    train_group.add_argument("-polymer_frac_cutoff", type=float, default=0.25,
+            help="minimum fraction of input that is of specified polymer class")
 
     # data-loading parameters
     data_group = parser.add_argument_group("data loading parameters")
@@ -211,6 +215,11 @@ def get_args(in_args=None):
             help='If true, ensure all frames are identity at each step')
     diff_group.add_argument('-p_show_motif_seq', default=1.0, type=float, 
             help='Fraction of the time to show the motif sequence during training')
+    diff_group.add_argument('-mask_by_polymer_type',  default=False, action='store_true',
+            help='If true, assigns different type of masking token per polymer (protein, dna, rna)')
+    diff_group.add_argument('-p_keep_frames', default=1.0, type=float, 
+            help='fraction of time that we leave frames to be noised/denoised normally, rather than randomizing or setting to identity')
+
 
     # Trunk module properties
     trunk_group = parser.add_argument_group("Trunk module parameters")
@@ -371,6 +380,13 @@ def get_args(in_args=None):
     preprocess_group.add_argument('-d_t2d', type=int, default = 44,
             help = 'dimension of t2d raw inputs')
     preprocess_group.add_argument('-motif_only_2d', action='store_true', default=False)
+    preprocess_group.add_argument('-num_atoms_na', type=int, default=9,
+            help='How many backbone atoms do we use for nucleic acid diffusion?')
+
+    preprocess_group.add_argument('-twotemplate', default="True", choices=("True","False"),
+            help="do we want to use the twotemplate method")
+    preprocess_group.add_argument('-threetemplate', default="True", choices=("True","False"),
+            help="do we want to use the threetemplate method")
 
     diff_group.add_argument('-prob_self_cond', type=float, default=0,
             help='The probability the model will receive self conditioning information during training. Default=0')
@@ -387,6 +403,8 @@ def get_args(in_args=None):
     # parse boolean arguments
     args.sidechain_input = args.sidechain_input == 'True'
     args.motif_sidechain_input = args.motif_sidechain_input == 'True'
+    args.twotemplate = args.twotemplate == 'True'
+    args.threetemplate = args.threetemplate == 'True'
     args.sequence_decode = args.sequence_decode == 'True'
     args.discontiguous_crop = args.discontiguous_crop == 'True'
     args.na_fixed_intra = args.na_fixed_intra == 'True'
@@ -436,7 +454,8 @@ def get_args(in_args=None):
                   'diff_min_b',
                   'diff_max_b',
                   'diff_min_sigma',
-                  'diff_max_sigma']:
+                  'diff_max_sigma',
+                  ]:
         diffusion_params[param] = getattr(args, param)
     
 
@@ -505,8 +524,13 @@ def get_args(in_args=None):
                   'new_self_cond',
                   'randomize_frames',
                   'eye_frames',
+                  'p_keep_frames',
                   'motif_only_2d',
                   'p_show_motif_seq',
+                  'mask_by_polymer_type',
+                  'num_atoms_na',
+                  'twotemplate',
+                  'threetemplate',
                   ]:
         preprocess_param[param] = getattr(args, param)
     if not preprocess_param['sequence_decode']:

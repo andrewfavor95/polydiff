@@ -3,6 +3,7 @@ import numpy as np
 import random
 from icecream import ic
 from collections import OrderedDict
+import ipdb
 class ContigMap():
     '''
     New class for doing mapping.
@@ -11,7 +12,7 @@ class ContigMap():
     Default chain outputs are inpainted chains as A (and B, C etc if multiple chains), and all fragments of receptor chain on the next one (generally B)
     Output chains can be specified. Sequence must be the same number of elements as in contig string
     '''
-    def __init__(self, parsed_pdb, contigs=None, contig_atoms=None, inpaint_seq=None, inpaint_str=None, length=None, ref_idx=None, hal_idx=None, idx_rf=None, inpaint_seq_tensor=None, inpaint_str_tensor=None, topo=False):
+    def __init__(self, parsed_pdb, contigs=None, contig_atoms=None, inpaint_seq=None, inpaint_str=None, length=None, ref_idx=None, hal_idx=None, idx_rf=None, inpaint_seq_tensor=None, inpaint_str_tensor=None, topo=False, polymer_chains=None):
         #sanity checks
         if contigs is None and ref_idx is None:
             sys.exit("Must either specify a contig string or precise mapping")
@@ -77,6 +78,19 @@ class ContigMap():
         self.ref_idx0,self.hal_idx0, self.ref_idx0_inpaint, self.hal_idx0_inpaint, self.ref_idx0_receptor, self.hal_idx0_receptor=self.get_idx0()
         self.con_ref_pdb_idx=[i for i in self.ref if i != ('_','_')] 
 
+        contig_list = self.contigs[0].strip().split()
+        # if polymer_chains is None, then loop through and assign polymer_chains=['protein',...] for each chain
+        if polymer_chains is None:
+            print('WARNING: CURRENTLY ASSUMES EVERYTHING IS PROTEIN')
+            print('TO DO: GO IN AND ASSIGN POLYMER TYPES BASED ON TEMPLATE/INPUT-PDB POLYMER TYPES')
+            self.polymer_chains = ['protein' for chain_i in range(len(contig_list))]
+        # else check that the input spec polymer_chains is same length as number of chains in design.
+        else:
+            assert len(polymer_chains)==len(contig_list) , "specified polymer chains need to match number of chains in design"
+            self.polymer_chains = polymer_chains
+
+
+
     def get_sampled_mask(self):
         '''
         Function to get a sampled mask from a contig.
@@ -86,34 +100,41 @@ class ContigMap():
         while length_compatible is False:
             inpaint_chains=0
             contig_list = self.contigs[0].strip().split()
-            assert len(contig_list) == 1, f'contig_list with >1 element not curently supported: {contig_list}'
+            # assert len(contig_list) == 1, f'contig_list with >1 element not curently supported: {contig_list}'
             sampled_mask = []
             sampled_mask_length = 0
+            #allow receptor chain to be last in contig string
+            if all([i[0].isalpha() for i in contig_list[-1].split(",")]):
+                contig_list[-1] = f'{contig_list[-1]},0'
             for con in contig_list:
-                inpaint_chains += 1
-                #chain to be inpainted. These are the only chains that count towards the length of the contig
-                subcons = con.split(",")
-                subcon_out = []
-                for subcon in subcons:
-                    if subcon[0].isalpha():
-                        subcon_out.append(subcon)
-                        if '-' in subcon:
-                            sampled_mask_length += (int(subcon.split("-")[1])-int(subcon.split("-")[0][1:])+1)
-                        else:
-                            sampled_mask_length += 1
+                if (all([i[0].isalpha() for i in con.split(",")[:-1]]) and con.split(",")[-1] == '0') or self.topo is True:
+                    #receptor chain
+                    sampled_mask.append(con)
+                else:
+                    inpaint_chains += 1
+                    #chain to be inpainted. These are the only chains that count towards the length of the contig
+                    subcons = con.split(",")
+                    subcon_out = []
+                    for subcon in subcons:
+                        if subcon[0].isalpha():
+                            subcon_out.append(subcon)
+                            if '-' in subcon:
+                                sampled_mask_length += (int(subcon.split("-")[1])-int(subcon.split("-")[0][1:])+1)
+                            else:
+                                sampled_mask_length += 1
 
-                    else:
-                        if '-' in subcon:
-                            length_inpaint=random.randint(int(subcon.split("-")[0]),int(subcon.split("-")[1]))
-                            subcon_out.append(f'{length_inpaint}-{length_inpaint}')
-                            sampled_mask_length += length_inpaint
-                        elif subcon == '0':
-                            subcon_out.append('0')
                         else:
-                            length_inpaint=int(subcon)
-                            subcon_out.append(f'{length_inpaint}-{length_inpaint}')
-                            sampled_mask_length += int(subcon)
-                sampled_mask.append(','.join(subcon_out))
+                            if '-' in subcon:
+                                length_inpaint=random.randint(int(subcon.split("-")[0]),int(subcon.split("-")[1]))
+                                subcon_out.append(f'{length_inpaint}-{length_inpaint}')
+                                sampled_mask_length += length_inpaint
+                            elif subcon == '0':
+                                subcon_out.append('0')
+                            else:
+                                length_inpaint=int(subcon)
+                                subcon_out.append(f'{length_inpaint}-{length_inpaint}')
+                                sampled_mask_length += int(subcon)
+                    sampled_mask.append(','.join(subcon_out))
             #check length is compatible 
             if self.length is not None:
                 if sampled_mask_length >= self.length[0] and sampled_mask_length < self.length[1]:
@@ -249,3 +270,343 @@ class ContigMap():
         mappings['mask_1d'] = self.mask_1d
         mappings['atomize_indices2atomname'] = self.atomize_indices2atomname
         return mappings
+
+
+
+def select_and_apply_contig(indep, contig_conf, idx_pdb):
+    if contig_conf.contig_type == 'DNA_Duplex_Protein_Monomer':
+        return DNA_Duplex_Protein_Monomer(indep, contig_conf, idx_pdb)
+    elif contig_conf.contig_type == 'Partial_Diffusion_DNA_Duplex_Protein_Monomer':
+        return Partial_Diffusion_DNA_Duplex_Protein_Monomer(indep, contig_conf, idx_pdb)
+    elif contig_conf.contig_type == 'Single_Protein_Chain_Arbitrary_Context':
+        return Single_Protein_Chain_Arbitrary_Context(indep, contig_conf, idx_pdb)
+
+
+def process_insert(group, indep):
+    if '-' in group:
+        split = group.split('-')
+        insert_min, insert_max = int(split[0]), int(split[1])
+        insert = random.randint(insert_min, insert_max)
+    else:
+        insert = int(group)
+    insert_seq = torch.full((insert,), MASKINDEX)
+    insert_xyz = INIT_CRDS.clone().to(indep.xyz.device).unsqueeze(0)
+    insert_xyz = insert_xyz.repeat(insert, 1, 1)
+
+    return insert_seq, insert_xyz
+
+
+def process_copy(group, indep, pdbidx_index_map):
+    if '-' in group:
+        split = group.split('-')
+        copy_start, copy_end = int(split[0]), int(split[1])
+    else:
+        copy_start, copy_end = int(group), int(group)
+    
+    try:
+        original_index_start, original_index_end = pdbidx_index_map[copy_start], pdbidx_index_map[copy_end]
+    except:
+        original_index_start = pdbidx_index_map[copy_start]
+        original_index_end = original_index_start
+
+    return indep.seq[original_index_start:original_index_end + 1], indep.xyz[original_index_start:original_index_end + 1]
+    
+    
+def DNA_Duplex_Protein_Monomer(indep, contig_conf, idx_pdb):
+    assert len(contig_conf.protein_chains) == 1, "this code currently assumes protein monomers"
+    chain_pdbidx_index_map = {}
+    chain_index_map = {}
+
+    for chainid in contig_conf.dna_chains + contig_conf.protein_chains:
+        chain_pdbidx_index_map[chainid] = {}
+        chain_index_map[chainid] = []
+
+    for i, (chainid, pdbidx) in enumerate(idx_pdb):
+        chain_pdbidx_index_map[chainid][pdbidx] = i
+        chain_index_map[chainid].append(i)
+
+    chain_index_map = {key: np.array(value) for key, value in chain_index_map.items()}
+
+    seq = []
+    xyz = []
+    idx = []
+    is_diffused = []
+    
+    last_start = 0
+    chain_lengths = []
+    
+    for chainid in 'ABCDEFG123456789':
+        if chainid in contig_conf.dna_chains:
+            chain_indices, L = chain_index_map[chainid], len(chain_index_map[chainid])
+            seq.append(indep.seq[chain_indices])
+            xyz.append(indep.xyz[chain_indices])
+            idx.append(torch.arange(last_start, last_start + L))
+            is_diffused.extend([False] * L)
+            last_start += 200 + L
+            chain_lengths.append(L)
+
+        elif chainid in contig_conf.protein_chains:
+            L = 0
+
+            for i, group in enumerate(contig_conf.protein_contig.split(',')):
+                if group[0] == 'i': # insert
+                    # Logic for forcing total length if you're adding the final insert
+                    # Currently only works if the final contig in the contig string is an insertion, and does not check
+                    # for if the added length violates the actual desired length at that position. 
+                    if i == len(contig_conf.protein_contig.split(',')) - 1 and 'total_protein_length' in contig_conf:
+                        insert_seq, insert_xyz = process_insert(str(int(contig_conf.total_protein_length) - L), indep)
+                        is_diffused.extend([True] * len(insert_seq))
+                    else:
+                        insert_seq, insert_xyz = process_insert(group[1:], indep)
+                        is_diffused.extend([True] * len(insert_seq))
+                else:
+                    insert_seq, insert_xyz = process_copy(group, indep, chain_pdbidx_index_map[chainid])
+                    is_diffused.extend([False] * len(insert_seq))
+
+                seq.append(insert_seq)
+                xyz.append(insert_xyz)
+                idx.append(torch.arange(last_start, last_start + len(insert_seq)))
+                last_start += len(insert_seq)
+                L += len(insert_seq)
+
+            last_start += 200
+            chain_lengths.append(L)
+
+    ######## This code block only works because there is just one protein chain
+    protein_start = 0
+    i = 0
+    for chain in 'ABCDEFGHIJKLMNOPQRSTUVWXYZ123456789':
+        if chain in contig_conf.protein_chains:
+            protein_end = protein_start + chain_lengths[i]
+            break
+        elif chain in contig_conf.dna_chains:
+            protein_start += chain_lengths[i]
+            i += 1
+    # for i, chainid in enumerate('ABCDEFG'):
+    #     if chainid in contig_conf.protein_chains:
+    #         protein_end = protein_start + chain_lengths[i]
+    #     elif chainid in contig_conf.dna_chains:
+    #         protein_start += chain_lengths[i]
+    ########
+
+    total_length = sum(chain_lengths)
+    bond_feats = torch.full((total_length, total_length), 0).long()
+    bond_feats[protein_start:protein_end, protein_start:protein_end] = get_protein_bond_feats(protein_end-protein_start)
+
+    same_chain = same_chain_2d_from_Ls(chain_lengths)
+    
+    # same_chain = torch.full((total_length, total_length), 0).long()
+    # for start, end in zip([0] + chain_lengths[:-1], chain_lengths):
+    #     same_chain[start:end, start:end] = 1
+    
+    terminus_type = torch.zeros(total_length)
+    terminus_type[protein_start] = N_TERMINUS
+    terminus_type[protein_end-1] = C_TERMINUS
+
+    is_sm = torch.zeros(total_length).bool()
+
+    seq = torch.cat(seq)
+    xyz = torch.cat(xyz)
+    idx = torch.cat(idx)
+    is_diffused = torch.Tensor(is_diffused).bool()
+
+
+    return Indep(seq,
+                 xyz,
+                 idx,
+                 bond_feats,
+                 indep.chirals,
+                 indep.atom_frames,
+                 same_chain,
+                 is_sm,
+                 terminus_type), is_diffused
+
+    # handle bond feats 
+
+def Single_Protein_Chain_Arbitrary_Context(indep, contig_conf, idx_pdb):
+    """
+    Assumes all your chains are either only context chains (the entire chain should be copied over as context, as a separate chain, or is the single diffusion chain (all parts to be concatenated to a single protein chain))
+    """
+    chain_pdbidx_index_map = {}
+    chain_index_map = {}
+
+    for chainid in contig_conf.context_chains + contig_conf.diffusion_chain:
+        chain_pdbidx_index_map[chainid] = {}
+        chain_index_map[chainid] = []
+
+    for i, (chainid, pdbidx) in enumerate(idx_pdb):
+        chain_pdbidx_index_map[chainid][pdbidx] = i
+        chain_index_map[chainid].append(i)
+
+    chain_index_map = {key: np.array(value) for key, value in chain_index_map.items()}
+
+    seq = []
+    xyz = []
+    idx = []
+    is_diffused = []
+    
+    last_start = 0
+    chain_lengths = []
+
+    for chainid in 'ABCDEFGHIJKLMNOPQRSTUVWXYZ123456789':
+        if chainid in contig_conf.context_chains:
+            chain_indices, L = chain_index_map[chainid], len(chain_index_map[chainid])
+            seq.append(indep.seq[chain_indices])
+            xyz.append(indep.xyz[chain_indices])
+            idx.append(torch.arange(last_start, last_start + L))
+            is_diffused.extend([False] * L)
+            last_start += 200 + L
+            chain_lengths.append(L)
+
+        elif chainid in contig_conf.diffusion_chain:
+            L = 0
+            for i, group in enumerate(contig_conf.protein_contig.split(',')):
+                if group[0] == 'i': # insert
+                    insert_seq, insert_xyz = process_insert(group[1:], indep)
+                    is_diffused.extend([True] * len(insert_seq))
+                else:
+                    insert_seq, insert_xyz = process_copy(group, indep, chain_pdbidx_index_map[chainid])
+                    is_diffused.extend([False] * len(insert_seq))
+
+                seq.append(insert_seq)
+                xyz.append(insert_xyz)
+                idx.append(torch.arange(last_start, last_start + len(insert_seq)))
+                last_start += len(insert_seq)
+                L += len(insert_seq)
+
+            last_start += 200
+            chain_lengths.append(L)
+    
+    seq = torch.cat(seq)
+    xyz = torch.cat(xyz)
+    idx = torch.cat(idx)
+    is_diffused = torch.Tensor(is_diffused).bool()
+
+    curr_ind = 0
+    total_length = sum(chain_lengths)
+    bond_feats = torch.full((total_length, total_length), 0).long()
+    terminus_type = torch.zeros(total_length)
+    chainids = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ123456789'
+    for i, L in enumerate(chain_lengths):
+        if chainids[i] in contig_conf.diffusion_chain:
+            bond_feats[curr_ind : curr_ind + L, curr_ind : curr_ind + L] = get_protein_bond_feats(L)
+            terminus_type[curr_ind] = N_TERMINUS
+            terminus_type[curr_ind + L] = C_TERMINUS
+
+        curr_ind += L
+
+    is_sm = torch.zeros(total_length).bool()
+    same_chain = same_chain_2d_from_Ls(chain_lengths)
+
+
+    return Indep(seq,
+                 xyz,
+                 idx,
+                 bond_feats,
+                 indep.chirals,
+                 indep.atom_frames,
+                 same_chain,
+                 is_sm,
+                 terminus_type), is_diffused
+
+def Partial_Diffusion_DNA_Duplex_Protein_Monomer(indep, contig_conf, idx_pdb):
+    assert len(contig_conf.protein_chains) == 1, "this code currently assumes protein monomers"
+    chain_pdbidx_index_map = {}
+    chain_index_map = {}
+
+    for chainid in contig_conf.dna_chains + contig_conf.protein_chains:
+        chain_pdbidx_index_map[chainid] = {}
+        chain_index_map[chainid] = []
+
+    for i, (chainid, pdbidx) in enumerate(idx_pdb):
+        chain_pdbidx_index_map[chainid][pdbidx] = i
+        chain_index_map[chainid].append(i)
+
+    chain_index_map = {key: np.array(value) for key, value in chain_index_map.items()}
+
+    seq = []
+    xyz = []
+    idx = []
+    is_diffused = []
+    
+    last_start = 0
+    chain_lengths = []
+
+    for chainid in 'ABCDEFG':
+        if chainid in contig_conf.dna_chains:
+            chain_indices, L = chain_index_map[chainid], len(chain_index_map[chainid])
+            seq.append(indep.seq[chain_indices])
+            xyz.append(indep.xyz[chain_indices])
+            idx.append(torch.arange(last_start, last_start + L))
+            is_diffused.extend([False] * L)
+            last_start += 200 + L
+            chain_lengths.append(L)
+
+        elif chainid in contig_conf.protein_chains:
+            prot_pdbidx_start = chain_index_map[chainid][0]
+            chain_indices, L = chain_index_map[chainid], len(chain_index_map[chainid])
+
+            prot_is_diffused = [True] * L
+            seq.append(torch.full((L,), MASKINDEX))
+            xyz_to_append = torch.full((L, NTOTAL, 3), np.nan)
+            xyz_to_append[:, :3] = indep.xyz[chain_indices, :3]
+            xyz.append(xyz_to_append) # only take the N, C, Ca 
+            idx.append(torch.arange(last_start, last_start + L))
+
+            if 'motif_residues' in contig_conf:
+                for motif_residue_index in contig_conf.motif_residues.split(','):
+                    prot_is_diffused[int(motif_residue_index) - prot_pdbidx_start] = False
+            
+            is_diffused.extend(prot_is_diffused)
+            last_start += 200 + L
+            chain_lengths.append(L)
+
+    ######## This code block only works because there is just one protein chain
+    protein_start = 0
+    i = 0
+    for chain in 'ABCDEFGHIJKLMNOPQRSTUVWXYZ':
+        if chain in contig_conf.protein_chains:
+            protein_end = protein_start + chain_lengths[i]
+            break
+        elif chain in contig_conf.dna_chains:
+            protein_start += chain_lengths[i]
+            i += 1
+    # for i, chainid in enumerate('ABCDEFG'):
+    #     if chainid in contig_conf.protein_chains:
+    #         protein_end = protein_start + chain_lengths[i]
+    #     elif chainid in contig_conf.dna_chains:
+    #         protein_start += chain_lengths[i]
+    ########
+
+    total_length = sum(chain_lengths)
+    bond_feats = torch.full((total_length, total_length), 0).long()
+    bond_feats[protein_start:protein_end, protein_start:protein_end] = get_protein_bond_feats(protein_end-protein_start)
+
+    same_chain = same_chain_2d_from_Ls(chain_lengths)
+    
+    # same_chain = torch.full((total_length, total_length), 0).long()
+    # for start, end in zip([0] + chain_lengths[:-1], chain_lengths):
+    #     same_chain[start:end, start:end] = 1
+    
+    terminus_type = torch.zeros(total_length)
+    terminus_type[protein_start] = N_TERMINUS
+    terminus_type[protein_end-1] = C_TERMINUS
+
+    is_sm = torch.zeros(total_length).bool()
+
+    seq = torch.cat(seq)
+    xyz = torch.cat(xyz)
+    idx = torch.cat(idx)
+    is_diffused = torch.Tensor(is_diffused).bool()
+
+    return Indep(seq,
+                 xyz,
+                 idx,
+                 bond_feats,
+                 indep.chirals,
+                 indep.atom_frames,
+                 same_chain,
+                 is_sm,
+                 terminus_type), is_diffused
+
+

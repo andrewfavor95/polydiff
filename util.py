@@ -5,13 +5,12 @@ import torch
 
 import scipy.sparse
 
-from chemical import *
-from scoring import *
+from rf2aa.chemical import *
+from rf2aa.scoring import *
 
 import rf2aa.kinematics
 import rf2aa.util
-
-
+import ipdb
 
 def generate_Cbeta(N,Ca,C):
     # recreate Cb given N,Ca,C
@@ -344,16 +343,16 @@ def writepdb(filename, atoms, seq, binderlen=None, idx_pdb=None, bfacts=None, ch
 
 
 # resolve tip atom indices
-tip_indices = torch.full((22,), 0)
-for i in range(22):
+tip_indices = torch.full((NNAPROTAAS,), 0)
+for i in range(NNAPROTAAS):
     tip_atm = aa2tip[i]
     atm_long = aa2long[i]
     tip_indices[i] = atm_long.index(tip_atm)
 
 # resolve torsion indices
-torsion_indices = torch.full((22,4,4),0)
-torsion_can_flip = torch.full((22,10),False,dtype=torch.bool)
-for i in range(22):
+torsion_indices = torch.full((NNAPROTAAS,4,4),0)
+torsion_can_flip = torch.full((NNAPROTAAS,10),False,dtype=torch.bool)
+for i in range(NNAPROTAAS):
     i_l, i_a = aa2long[i], aa2longalt[i]
     for j in range(4):
         if torsions[i][j] is None:
@@ -367,9 +366,9 @@ for i in range(22):
 torsion_can_flip[8,4]=False
 
 # build the mapping from atoms in the full rep (Nx27) to the "alternate" rep
-allatom_mask = torch.zeros((22,27), dtype=torch.bool)
-long2alt = torch.zeros((22,27), dtype=torch.long)
-for i in range(22):
+allatom_mask = torch.zeros((NNAPROTAAS,NTOTAL), dtype=torch.bool)
+long2alt = torch.zeros((NNAPROTAAS,NTOTAL), dtype=torch.long)
+for i in range(NNAPROTAAS):
     i_l, i_lalt = aa2long[i],  aa2longalt[i]
     for j,a in enumerate(i_l):
         if (a is None):
@@ -379,9 +378,9 @@ for i in range(22):
             allatom_mask[i,j] = True
 
 # bond graph traversal
-num_bonds = torch.zeros((22,27,27), dtype=torch.long)
-for i in range(22):
-    num_bonds_i = np.zeros((27,27))
+num_bonds = torch.zeros((NNAPROTAAS,NTOTAL,NTOTAL), dtype=torch.long)
+for i in range(NNAPROTAAS):
+    num_bonds_i = np.zeros((NTOTAL,NTOTAL))
     for (bnamei,bnamej) in aabonds[i]:
         bi,bj = aa2long[i].index(bnamei),aa2long[i].index(bnamej)
         num_bonds_i[bi,bj] = 1
@@ -391,9 +390,9 @@ for i in range(22):
 
 
 # LJ/LK scoring parameters
-ljlk_parameters = torch.zeros((22,27,5), dtype=torch.float)
-lj_correction_parameters = torch.zeros((22,27,4), dtype=bool) # donor/acceptor/hpol/disulf
-for i in range(22):
+ljlk_parameters = torch.zeros((NNAPROTAAS,NTOTAL,5), dtype=torch.float)
+lj_correction_parameters = torch.zeros((NNAPROTAAS,NTOTAL,4), dtype=bool) # donor/acceptor/hpol/disulf
+for i in range(NNAPROTAAS):
     for j,a in enumerate(aa2type[i]):
         if (a is not None):
             ljlk_parameters[i,j,:] = torch.tensor( type2ljlk[a] )
@@ -401,6 +400,7 @@ for i in range(22):
             lj_correction_parameters[i,j,1] = (type2hb[a]==HbAtom.AC)+(type2hb[a]==HbAtom.DA)
             lj_correction_parameters[i,j,2] = (type2hb[a]==HbAtom.HP)
             lj_correction_parameters[i,j,3] = (a=="SH1" or a=="HS")
+
 
 # hbond scoring parameters
 def donorHs(D,bonds,atoms):
@@ -458,11 +458,12 @@ def acceptorBB0(A,hyb,bonds,atoms):
     return B,B0
 
 
-hbtypes = torch.full((22,27,3),-1, dtype=torch.long) # (donortype, acceptortype, acchybtype)
-hbbaseatoms = torch.full((22,27,2),-1, dtype=torch.long) # (B,B0) for acc; (D,-1) for don
+
+hbtypes = torch.full((NNAPROTAAS,NTOTAL,3),-1, dtype=torch.long) # (donortype, acceptortype, acchybtype)
+hbbaseatoms = torch.full((NNAPROTAAS,NTOTAL,2),-1, dtype=torch.long) # (B,B0) for acc; (D,-1) for don
 hbpolys = torch.zeros((HbDonType.NTYPES,HbAccType.NTYPES,3,15)) # weight,xmin,xmax,ymin,ymax,c9,...,c0
 
-for i in range(22):
+for i in range(NNAPROTAAS):
     for j,a in enumerate(aa2type[i]):
         if (a in type2dontype):
             j_hs = donorHs(aa2long[i][j],aabonds[i],aa2long[i])
@@ -498,12 +499,12 @@ for i in range(HbDonType.NTYPES):
         hbpolys[i,j,2,5:] = torch.tensor(coeffs)
 
 # kinematic parameters
-base_indices = torch.full((22,27),0, dtype=torch.long)
-xyzs_in_base_frame = torch.ones((22,27,4))
-RTs_by_torsion = torch.eye(4).repeat(22,7,1,1)
-reference_angles = torch.ones((22,3,2))
+base_indices = torch.full((NNAPROTAAS,NTOTAL),0, dtype=torch.long)
+xyzs_in_base_frame = torch.ones((NNAPROTAAS,NTOTAL,4))
+RTs_by_torsion = torch.eye(4).repeat(NNAPROTAAS,7,1,1)
+reference_angles = torch.ones((NNAPROTAAS,3,2))
 
-for i in range(22):
+for i in range(NNAPROTAAS):
     i_l = aa2long[i]
     for name, base, coords in ideal_coords[i]:
         idx = i_l.index(name)
@@ -654,3 +655,38 @@ def get_t2d(xyz_t, is_sm, atom_frames, mask_t_2d=None):
     # Strip batch dimension
     t2d = t2d[0]
     return t2d, mask_t_2d
+
+def polymer_content_check(seq, polymer_focus='protein', polymer_frac_cutoff=0.2):
+
+    
+    if polymer_focus is not None:
+        if polymer_focus in ['protein','prot','aa','AA','a','A']:
+            lower_lim = 0
+            upper_lim = 21
+
+        elif polymer_focus in ['dna','DNA','d','D']:
+            lower_lim = 22
+            upper_lim = 26
+
+        elif polymer_focus in ['rna','RNA','r','R']:
+            lower_lim = 27
+            upper_lim = 31
+
+        resi_in_focus = torch.ge(seq, lower_lim) & torch.le(seq, upper_lim)
+
+        frac_in_focus = resi_in_focus.sum()/len(seq)
+
+        if frac_in_focus >= polymer_frac_cutoff:
+            passes_check = True
+        else:
+            passes_check = False
+        
+
+    else:
+        passes_check = True
+
+    return passes_check
+
+
+
+

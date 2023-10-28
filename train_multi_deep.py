@@ -162,7 +162,7 @@ class Trainer():
                  maxcycle=4, diffusion_param={}, preprocess_param={}, outdir=None, wandb_prefix='',
                  metrics=None, zero_weights=False, log_inputs=False, n_write_pdb=100,
                  reinitialize_missing_params=False, verbose_checks=False, saves_per_epoch=None, resume=False,
-                 grad_clip=0.2):
+                 grad_clip=0.2, polymer_focus=None, polymer_frac_cutoff=0.25):
 
         self.model_name = model_name #"BFF"
         self.ckpt_load_path = ckpt_load_path
@@ -181,6 +181,9 @@ class Trainer():
         self.verbose_checks=verbose_checks
         self.resume=resume
         self.grad_clip=grad_clip
+
+        self.polymer_focus=polymer_focus
+        self.polymer_frac_cutoff=polymer_frac_cutoff
 
         self.outdir = self.outdir or f'./train_session{get_datetime()}'
         ic(self.outdir)
@@ -367,6 +370,7 @@ class Trainer():
         # assuming all bad crds have been popped
         assert not torch.isnan(pred_in).any()
         assert not torch.isnan(true).any()
+
         gpu = pred_in.device
 
 
@@ -1224,12 +1228,23 @@ class Trainer():
         
         print('About to enter train loader loop')
         for loader_out in train_loader:
+            
             indep, rfi_tp1_t, chosen_dataset, item, little_t, is_diffused, chosen_task, atomizer, masks_1d, item_context = loader_out
             context_msg = f'rank: {rank}: {item_context}'
             
             if indep.seq.shape[0] <= 3:
                 # skip SM examples w/ too few atoms
                 continue 
+
+            # If we want to filter data inputs based on polymer content:
+            if self.polymer_focus:
+                passes_content_check = util.polymer_content_check(indep.seq, self.polymer_focus,  self.polymer_frac_cutoff)
+                # Skip if example doesn't have enough of our focus polymer
+                if not passes_content_check:
+                    continue
+
+
+
 
             with error.context(context_msg):
                 rfi_tp1, rfi_t = rfi_tp1_t
@@ -1252,7 +1267,7 @@ class Trainer():
                 # Save trues for writing pdbs later.
                 xyz_prev_orig = rfi_tp1.xyz[0]
                 seq_unmasked = indep.seq[None]
-
+                # ipdb.set_trace()
                 # for saving pdbs
                 seq_original = torch.clone(indep.seq)
 
@@ -1291,7 +1306,10 @@ class Trainer():
                                         use_checkpoint=False,
                                         return_raw=False
                                         )
-                                rfi_t = aa_model.self_cond(indep, rfi_t, rfo)
+                                rfi_t = aa_model.self_cond(indep, rfi_t, rfo,
+                                                        twotemplate=self.preprocess_param['twotemplate'], 
+                                                        threetemplate=self.preprocess_param['threetemplate'],
+                                        )
                                 xyz_prev_orig = rfi_t.xyz[0,:,:14].clone()
                 if DEBUG:
                     # torch.save(rfi_t, 'rfi_t_bugfixed.pt')
@@ -1307,14 +1325,14 @@ class Trainer():
                     if counter%self.ACCUM_STEP != 0:
                         stack.enter_context(ddp_model.no_sync())
                     with torch.cuda.amp.autocast(enabled=USE_AMP):
-                        
                         rfo = aa_model.forward(
                                         ddp_model,
                                         rfi_t,
+                                        # N_cycle=N_cycle,
                                         use_checkpoint=True,
                                         **({model_input_logger.LOG_ONLY_KEY: {'t':int(little_t), 'item': item}} if self.log_inputs else {}))
-                        logit_s, logit_aa_s, logits_pae, logits_pde, p_bind, pred_crds, alphas, px0_allatom, pred_lddts, _, _, _ = rfo.unsafe_astuple()
 
+                        logit_s, logit_aa_s, logits_pae, logits_pde, p_bind, pred_crds, alphas, px0_allatom, pred_lddts, _, _, _, _ = rfo.unsafe_astuple()
                         is_diffused = is_diffused.to(gpu)
                         indep.seq = indep.seq.to(gpu)
                         indep.is_sm = indep.is_sm.to(gpu)
@@ -1324,6 +1342,8 @@ class Trainer():
                         true_crds = torch.zeros((1,L,36,3)).to(gpu)
                         indep.natstack = indep.natstack.to(gpu)
                         indep.maskstack = indep.maskstack.to(gpu)
+
+
 
                         true_crds[0,:,:14,:] = indep.xyz[:,:14,:]
                         mask_crds = ~torch.isnan(true_crds).any(dim=-1)
@@ -1523,6 +1543,7 @@ class Trainer():
 
                 # if self.diffusion_param['seqdiff'] == 'continuous':
                 #     top1_sequence = torch.argmax(logit_aa_s[:,:20,:], dim=1)
+                # ipdb.set_trace()
 
                 n_processed = self.batch_size*world_size * counter
                 save_pdb = np.random.randint(0,self.n_write_pdb) == 0
@@ -1577,6 +1598,7 @@ class Trainer():
                     m, s = divmod(expected_epoch_time, 60)
                     h, m = divmod(m, 60)
                     print(f'Expected time per epoch of size ({self.n_train}) (h:m:s) based off {n_processed} measured pseudo batch times: {h:d}:{m:02d}:{s:.0f}')
+
                 if self.saves_per_epoch and rank==0:
                     n_processed_next = self.batch_size*world_size * (counter+1)
                     n_fractionals = np.arange(1, self.saves_per_epoch) / self.saves_per_epoch
@@ -1679,7 +1701,10 @@ def make_trainer(args, model_param, loader_param, loss_param, diffusion_param, p
                     saves_per_epoch=args.saves_per_epoch,
                     outdir=args.out_dir,
                     resume=args.resume,
-                    grad_clip=args.grad_clip)
+                    grad_clip=args.grad_clip,
+                    polymer_focus=args.polymer_focus,
+                    polymer_frac_cutoff=args.polymer_frac_cutoff,
+                    )
     return train
 
 if __name__ == "__main__":

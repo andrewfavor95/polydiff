@@ -6,7 +6,7 @@ inference:
   num_designs: 1
   output_prefix: debug/unconditional_l60_t200
   model_runner: NRBStyleSelfCond
-  input_pdb: /home/ahern/projects/rf_diffusion/benchmark/input/5kax.pdb
+  input_pdb: /home/afavor/git/RFD_AF/inputs/5kax.pdb
 
 contigmap:
   contigs: ['60']
