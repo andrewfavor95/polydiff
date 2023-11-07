@@ -1,0 +1,35 @@
+# Base inference Configuration.
+defaults:
+  - aa
+
+inference:
+  ckpt_path: /projects/ml/afavor/RFD/models/train_session2023-08-09_1691609548.1971881/BFF_3.pt
+  str_self_cond: True
+  model_runner: NRBStyleSelfCond
+  two_template: True
+  three_template: True
+  cautious: True
+  input_pdb: /home/afavor/git/RFD_AF/inputs/DBP035.pdb
+  ij_visible: null
+  motif_only_2d: True
+  chainbreak_chunks: True
+  supply_motif_seq: True
+  mask_seq_by_polymer: True
+  num_atoms_modeled: 23
+  num_atoms_saved: 23
+
+  # align_motif: False
+
+preprocess:
+  eye_frames: True
+  num_atoms_na: 23
+
+contigmap:
+  contigs: ['2', 'A374-380' ,'5' , 'B410-415', '3']
+
+denoiser:
+  noise_scale_frame: 0.9
+  noise_scale_ca: 0.9
+
+diffuser:
+  T: 50

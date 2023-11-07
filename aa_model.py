@@ -6,7 +6,7 @@ import torch.nn.functional as F
 import dataclasses
 from icecream import ic
 from assertpy import assert_that
-from rf2aa.chemical import NAATOKENS, MASKINDEX, NTOTAL, NHEAVYPROT, UNKINDEX
+from rf2aa.chemical import NAATOKENS, MASKINDEX, NTOTAL, NHEAVYPROT, NHEAVY, NHEAVYNUC, UNKINDEX
 import rf2aa.util
 from rf2aa import parsers
 from dataclasses import dataclass
@@ -84,9 +84,12 @@ class Indep:
 
 
     def write_pdb(self, path, **kwargs):
+        # assert 0, "PROBABLY SHOULDNT USE THIS WITH NA"
         seq = self.seq
         seq = torch.where(seq == 20, 0, seq)
         seq = torch.where(seq == 21, 0, seq)
+        seq = torch.where(seq == 26, 22, seq)
+        seq = torch.where(seq == 31, 27, seq)
         # This is a hacky way of specifying same_chain.
         # TODO: convert same_chain from a 2D input to a 1D input
         chain_Ls = []
@@ -101,8 +104,12 @@ class Indep:
         chain_letters = np.chararray((self.length(),), unicode=True)
         chain_letters[longest_connected_component] = 'A'
         chain_letters[other_component] = 'B'
-        rf2aa.util.writepdb(path,
-            torch.nan_to_num(self.xyz[:,:14]), seq, idx_pdb=self.idx, chain_letters=chain_letters, **kwargs)
+        # rf2aa.util.writepdb(path,
+        #     torch.nan_to_num(self.xyz[:,:14]), seq, idx_pdb=self.idx, chain_letters=chain_letters, **kwargs)
+        rf2aa.util.writepdb(path, torch.nan_to_num(self.xyz), seq, self.bond_feats, 
+                            idx_pdb=self.idx, 
+                            chain_letters=chain_letters, 
+                            **kwargs)
 
     def ca_dists(self):
         xyz_ca = self.xyz[:,1]
@@ -133,9 +140,11 @@ class Indep:
         # return np.chararray([rf2aa.chemical.num2aa[s] for s in self.seq], unicode=False)
     
     def has_heavy_atoms_and_seq(self, atom_mask):
+        ipdb.set_trace()
         want_atom_mask = rf2aa.util.allatom_mask[self.seq]
         has_all_heavy_atoms = (want_atom_mask[:,:rf2aa.chemical.NHEAVYPROT] == atom_mask[:,:rf2aa.chemical.NHEAVYPROT]).all(dim=-1)
         has_sequence = self.seq < 20
+        print('aa_model.py, line 140, only selecting AA tokens...')
         return has_all_heavy_atoms * ~self.is_sm * has_sequence
     
     def is_valid_for_atomization(self, atom_mask):
@@ -227,6 +236,8 @@ def filter_het(pdb_lines, ligand):
         raise Exception('\n'.join(violations))
     return lines
 
+
+
 def make_indep(pdb, ligand=None):
     # self.target_feats = iu.process_target(self.inf_conf.input_pdb, parse_hetatom=True, center=False)
     # init_protein_tmpl=False, init_ligand_tmpl=False, init_protein_xyz=False, init_ligand_xyz=False,
@@ -234,12 +245,26 @@ def make_indep(pdb, ligand=None):
     chirals = torch.Tensor()
     atom_frames = torch.zeros((0,3,2))
 
+    # xyz_prot, mask_prot, idx_prot, seq_prot = parsers.parse_pdb(pdb, xyz27=True, seq=True)
     xyz_prot, mask_prot, idx_prot, seq_prot = parsers.parse_pdb(pdb, seq=True)
 
     target_feats = inference.utils.parse_pdb(pdb)
     xyz_prot, mask_prot, idx_prot, seq_prot = target_feats['xyz'], target_feats['mask'], target_feats['idx'], target_feats['seq']
-    xyz_prot[:,14:] = 0 # remove hydrogens
-    mask_prot[:,14:] = False
+    
+    is_protein = np.logical_and((0  <= seq_prot),(seq_prot <= 21)).squeeze()
+    is_nucleic = np.logical_and((22 <= seq_prot),(seq_prot <= 31)).squeeze()
+
+    chain_length_list = util.get_chain_lengths(target_feats['pdb_idx'])
+
+    # remove hydrogens
+
+    xyz_prot[is_protein,NHEAVYPROT:] = 0
+    xyz_prot[is_nucleic,NHEAVYNUC:] = 0
+    mask_prot[is_protein,NHEAVYPROT:] = False
+    mask_prot[is_nucleic,NHEAVYNUC:] = False
+    # xyz_prot[:,14:] = 0 # remove hydrogens
+    # mask_prot[:,14:] = False
+
     xyz_prot = torch.tensor(xyz_prot)
     mask_prot = torch.tensor(mask_prot)
     protein_L, nprotatoms, _ = xyz_prot.shape
@@ -283,7 +308,12 @@ def make_indep(pdb, ligand=None):
     # seq, msa_seed_orig, msa_seed, msa_extra, mask_msa = MSAFeaturize(msa, ins, 
     #     p_mask=0.0, params={'MAXLAT': 128, 'MAXSEQ': 1024, 'MAXCYCLE': n_cycle}, tocpu=True)
     bond_feats = torch.zeros((sum(Ls), sum(Ls))).long()
+
     bond_feats[:Ls[0], :Ls[0]] = rf2aa.util.get_protein_bond_feats(Ls[0])
+    # bond_feats[:Ls[0], :Ls[0]] = rf2aa.util.bond_feats_from_Ls(chain_length_list)
+    # bond_feats2 = rf2aa.util.bond_feats_from_Ls(chain_length_list)
+
+    # ipdb.set_trace()
     if ligand:
         bond_feats[Ls[0]:, Ls[0]:] = rf2aa.util.get_bond_feats(mol)
 
@@ -362,6 +392,7 @@ class Model:
 
         if N_cycle == 1:
             rfi_dict = dataclasses.asdict(rfi)
+            # ipdb.set_trace()
             return RFO(*model(**{**rfi_dict, **kwargs}))
 
         else:
@@ -401,7 +432,7 @@ class Model:
 
                 input = {**rfi_dict, **kwargs}
                 input['return_raw'] = False
-
+                # ipdb.set_trace()
                 # with grad 
                 return RFO(*model(**input))
 
@@ -411,6 +442,68 @@ class Model:
         Assembl
         """
         o = copy.deepcopy(indep)
+
+
+       # Some Andrew shit up in here:
+        # First, assign polymer ids to diff chains:
+        full_complex_idx0 = torch.tensor(contig_map.rf, dtype=torch.int64)
+        chain_breaks = inference.utils.get_breaks(full_complex_idx0)
+        chain_range_inds = inference.utils.find_template_ranges(full_complex_idx0, return_inds=True)
+
+        o.is_protein = torch.full((len(contig_map.hal),), 0).bool()
+        o.is_dna = torch.full((len(contig_map.hal),), 0).bool()
+        o.is_rna = torch.full((len(contig_map.hal),), 0).bool()
+
+        o.Ls = []
+        contig_map_hal = []
+        for chain_num, ((start_ind,stop_ind), polymer_type) in enumerate(zip(chain_range_inds, contig_map.polymer_chains)):
+
+            # Assign polymer types
+            if polymer_type in ['protein','prot','aa','AA','a','A']:
+                o.is_protein[start_ind:stop_ind+1] = True
+
+            elif polymer_type in ['dna','DNA','d','D']:
+                o.is_dna[start_ind:stop_ind+1] = True
+
+            elif polymer_type in ['rna','RNA','r','R']:
+                o.is_rna[start_ind:stop_ind+1] = True
+
+            o.Ls.append(1+stop_ind-start_ind)
+
+            # Now modify contig_map.hal to make things into all the real chain breaks
+            for ind in range(start_ind, stop_ind+1):
+                contig_map_hal.append((contig_map.chain_order[chain_num], contig_map.hal[ind][1]))
+
+        print('TO DO: add input bond features')
+        # # get ref inds:
+        # ref_ranges = []
+        # for contig in contig_map.contigs[0].split(' '):
+        #     for subcontig in contig.split(','):
+        #         if subcontig[0].isalpha():
+        #             start, stop = 
+
+        #     all_chunk_ranges = []
+        # is_motif_chunk = []
+        # last_idx = 0
+        # for contig_i in contig_map.sampled_mask:
+        #     for subcontig_ij in contig_i.split(','):
+        #         if subcontig_ij[0].isalpha(): # if it is a template region:
+        #             chain_ij = subcontig_ij[0]
+        #             start_resi_ij, stop_resi_ij = [int(idx) for idx in subcontig_ij[1:].split('-')]
+                    
+        #             len_ij = stop_resi_ij - start_resi_ij
+        #             new_idx = last_idx + len_ij
+
+        #             # contig_chunk_ranges.append((last_idx , new_idx))
+        #             is_motif_chunk.append(1)
+        #             all_chunk_ranges.append((last_idx , new_idx))
+
+        contig_map.hal = contig_map_hal
+
+        print('WARNING: in insert_contig(),ASSUMING NO SMALL MOLECULE, BUT CHANGE LATER!')
+        print('Just modify o.Ls[-1] after computing sm stuff')
+        o.Ls.append(0)
+
 
         # Insert small mol into contig_map
         all_chains = set(ch for ch,_ in contig_map.hal)
@@ -445,36 +538,10 @@ class Model:
         L_in, NATOMS, _ = indep.xyz.shape
 
 
-        # Some Andrew shit up in here:
-        # First, assign polymer ids to diff chains:
-        full_complex_idx0 = torch.tensor(contig_map.rf, dtype=torch.int64)
-        chain_breaks = inference.utils.get_breaks(full_complex_idx0)
-        chain_range_inds = inference.utils.find_template_ranges(full_complex_idx0, return_inds=True)
-
-        o.is_protein = torch.full((L_mapped,), 0).bool()
-        o.is_dna = torch.full((L_mapped,), 0).bool()
-        o.is_rna = torch.full((L_mapped,), 0).bool()
-
-        o.Ls = []
-        for (start_ind,stop_ind), polymer_type in zip(chain_range_inds, contig_map.polymer_chains):
-
-            # Assign polymer types
-            if polymer_type in ['protein','prot','aa','AA','a','A']:
-                o.is_protein[start_ind:stop_ind+1] = True
-
-            elif polymer_type in ['dna','DNA','d','D']:
-                o.is_dna[start_ind:stop_ind+1] = True
-
-            elif polymer_type in ['rna','RNA','r','R']:
-                o.is_rna[start_ind:stop_ind+1] = True
-
-            o.Ls.append(1+stop_ind-start_ind)
-
-        print('WARNING: in insert_contig(),ASSUMING NO SMALL MOLECULE, BUT CHANGE LATER!')
-        o.Ls.append(0)
+ 
         # o.Ls.append(len(is_sm_idx0))
         assert L_mapped==sum(o.Ls)
-
+        
 
         # initialize xyz for trajectory - slice in protein atoms from original indep
         if not partial_T and not refine:
@@ -505,10 +572,16 @@ class Model:
         o.xyz[o.is_sm,:3] = sm_ca[...,None,:]
         o.xyz[o.is_sm] += chemical.INIT_CRDS
 
+        
+
         o.bond_feats = torch.full((L_mapped, L_mapped), 0).long()
-        o.bond_feats[:n_prot, :n_prot] = rf2aa.util.get_protein_bond_feats(n_prot)
-        n_prot_ref = L_in-n_sm
-        o.bond_feats[n_prot:, n_prot:] = indep.bond_feats[n_prot_ref:, n_prot_ref:]
+        # o.bond_feats[:n_prot, :n_prot] = rf2aa.util.get_protein_bond_feats(n_prot)
+        poly_bond_feats = rf2aa.util.bond_feats_from_Ls(o.Ls[:-1])
+        for bond_feats_i, (start_i, end_i) in zip(poly_bond_feats, chain_range_inds):
+            o.bond_feats[start_i:end_i, start_i:end_i] = poly_bond_feats[start_i:end_i, start_i:end_i]
+
+        # n_prot_ref = L_in-n_sm
+        # o.bond_feats[n_prot:, n_prot:] = indep.bond_feats[n_prot_ref:, n_prot_ref:]
 
         hal_by_ref_d = dict(zip(contig_map.ref_idx0, contig_map.hal_idx0))
         def hal_by_ref(ref):
@@ -516,14 +589,18 @@ class Model:
         hal_by_ref = np.vectorize(hal_by_ref, otypes=[float])
         o.chirals[...,:-1] = torch.tensor(hal_by_ref(o.chirals[...,:-1]))
 
-        o.idx = torch.tensor([i for _, i in contig_map.hal])
-
+        
         o.terminus_type = torch.zeros(L_mapped)
-        # o.terminus_type[0] = N_TERMINUS
-        # o.terminus_type[n_prot-1] = C_TERMINUS
+        o.idx = torch.tensor([i for _, i in contig_map.hal])
+        last_start = 0
         for start_ind, stop_ind in chain_range_inds:
             o.terminus_type[start_ind] = N_TERMINUS
             o.terminus_type[stop_ind] = C_TERMINUS
+
+            o.idx[start_ind:stop_ind+1] += last_start
+            last_start += 200
+
+        # ipdb.set_trace()
 
         # is_diffused = torch.
         is_diffused_prot = ~torch.from_numpy(contig_map.inpaint_str)
@@ -532,12 +609,10 @@ class Model:
 
         # To see the shapes of the indep struct with contig inserted
         # print(rf2aa.tensor_util.info(rf2aa.tensor_util.to_ordered_dict(o)))
-
         if refine: 
             pass # want to keep original xyz2 because it contains perfect motif  
         else:
             o.xyz2 = o.xyz.clone() # DJ - three template, dummy xyz for now
-
         return o, is_diffused
 
     # def insert_contig(self, indep, contig_map, partial_T=False):
@@ -650,14 +725,15 @@ class Model:
             is_protein_motif = is_motif * indep.is_protein
             is_dna_motif = is_motif * indep.is_dna
             is_rna_motif = is_motif * indep.is_rna
+            is_na_motif = torch.logical_or(is_dna_motif, is_rna_motif)
+
         else:
             is_protein_motif = is_motif
 
 
 
 
-        num_backbone_atoms_protein = 3 # we can make this variable later if we want
-        num_backbone_atoms_nucleic = self.conf['preprocess']['num_atoms_na']
+
 
         # if indep.metadata.get('refinement', None) is not None:
         #     assert twotemplate and threetemplate 
@@ -732,6 +808,14 @@ class Model:
         t1d = torch.cat((t1d, strconf), dim=-1)
         t1d = t1d.float()
 
+        num_backbone_atoms_protein = 3 # we can make this variable later if we want
+        num_backbone_atoms_nucleic = self.conf['preprocess']['num_atoms_na']
+        atom_trim_range = self.conf['inference']['num_atoms_modeled']
+        if self.conf['inference']['num_atoms_modeled']>=num_backbone_atoms_nucleic :
+            atom_trim_range = self.conf['inference']['num_atoms_modeled']
+        else:
+            atom_trim_range = NHEAVY
+        # num_backbone_atoms_nucleic = 3
         ### xyz_t ###
         #############
         if self.conf.preprocess.sidechain_input:
@@ -742,6 +826,7 @@ class Model:
             # Different number of atoms if protein, DNA, RNA, etc
             
             if polymer_type_masks:
+
                 # How many backbone atoms do we need per polymer type?
                 xyz_t[is_diffused_na,num_backbone_atoms_nucleic:,:] = float('nan')
                 xyz_t[is_diffused_protein,num_backbone_atoms_protein:,:] = float('nan')
@@ -758,20 +843,44 @@ class Model:
         # if ('inference' in self.conf) and (self.conf.preprocess.sequence_decode):
         if ('inference' in self.conf) and (self.conf.inference.start_from_input):
             print('Warning: start_from_input is True, so chopping off atoms after 14')
-            xyz_t = xyz_t.squeeze()[:,:14,:]
+            # assert 0, 'FOR ANDREW (note to self): check this line to see if we actually need to change, or how to best handle with both prot and NA: xyz_t = xyz_t.squeeze()[:,:14,:]'
+            
+            # atom_trim_range = self.conf['preprocess']['num_atoms_input'] # AF: default to 14, but can control how many
 
+            xyz_t = xyz_t.squeeze()[:,:atom_trim_range,:]
+            # xyz_t = xyz_t.squeeze()[:,:14,:]
+            # xyz_t = xyz_t.squeeze()[:,:NHEAVY,:]
+            # ipdb.set_trace()
+            # xyz_t = xyz_t.squeeze()[:,:NHEAVY,:]
             if polymer_type_masks:
                 # How many backbone atoms do we need per polymer type?
-                xyz_t[is_diffused_na,num_backbone_atoms_nucleic:,:] = float('nan')
-                xyz_t[is_diffused_protein,num_backbone_atoms_protein:,:] = float('nan')
+                print('AF: MAYBE THIS PART IS MESSING UP THE MODEL! LINE 857 aa_model.py')
+                xyz_t[is_diffused_na, num_backbone_atoms_nucleic:, :] = float('nan')
+                xyz_t[is_diffused_protein, num_backbone_atoms_protein:, :] = float('nan')
+                # xyz_t[:,3:,:] = float('nan')
+
             else:
                 xyz_t[:,3:,:] = float('nan')
 
 
-        assert_that(xyz_t.shape).is_equal_to((L,NHEAVYPROT,3))
-        xyz_t=xyz_t[None, None]
-        xyz_t = torch.cat((xyz_t, torch.full((1,1,L,NTOTAL-NHEAVYPROT,3), float('nan'))), dim=3)
+        #     # atom_trim_range = self.conf['preprocess']['num_atoms_input'] # AF: default to 14, but can control how many
+        #     print('AF: Check if this is the best way to handle this... (line 787, aa_model.py)')
+        #     atom_trim_range = xyz_t.shape[1]
 
+        # AF: since we diffuse NA now, switch to NHEAVY
+        # if not atom_trim_range==NHEAVYPROT:
+            # print(f'WARNING: preprocessed inputs are being trimmed to {atom_trim_range} instead of {NHEAVYPROT} (the NHEAVYPROT default). Hopefully this is for a good reason!')
+
+        assert_that(xyz_t.shape).is_equal_to((L,NHEAVY,3))
+        xyz_t=xyz_t[None, None]
+        xyz_t = torch.cat((xyz_t, torch.full((1,1,L,NTOTAL-NHEAVY,3), float('nan'))), dim=3)
+        # ipdb.set_trace()
+        # assert_that(xyz_t.shape).is_equal_to((L,atom_trim_range,3))
+        # xyz_t=xyz_t[None, None]
+        # xyz_t = torch.cat((xyz_t, torch.full((1,1,L,NTOTAL-atom_trim_range,3), float('nan'))), dim=3)
+        # assert_that(xyz_t.shape).is_equal_to((L,NHEAVYPROT,3))
+        # xyz_t=xyz_t[None, None]
+        # xyz_t = torch.cat((xyz_t, torch.full((1,1,L,NTOTAL-NHEAVYPROT,3), float('nan'))), dim=3)
 
         ### t2d ###
         ###########
@@ -908,9 +1017,15 @@ class Model:
             xyz_xt_w_motif = xyz.clone()
 
             # DJ - if refine, selection in xyz2 needs to reference the original src pdb for motif
-            sel2 = src_con_ref_idx0 if refine else is_protein_motif
+            sel2_prot = src_con_ref_idx0 if refine else is_protein_motif
+            sel2_nuc = src_con_ref_idx0 if refine else is_na_motif
 
-            xyz_xt_w_motif[0,is_protein_motif,:NHEAVYPROT] = indep.xyz2[sel2,:NHEAVYPROT]
+            # AF change: make NHEAVY (see if we need this change)
+            # xyz_xt_w_motif[0,is_protein_motif,:NHEAVY] = indep.xyz2[sel2,:NHEAVY]
+            if sum(is_protein_motif) > 0:
+                xyz_xt_w_motif[0,is_protein_motif,:NHEAVYPROT] = indep.xyz2[sel2_prot,:NHEAVYPROT]
+            if sum(is_na_motif) > 0:
+                xyz_xt_w_motif[0,is_na_motif,:NHEAVYNUC] = indep.xyz2[sel2_nuc,:NHEAVYNUC]
 
             # t2d containing desired motif 
             # this construction uses bool mask to allow certain motifs to see others
@@ -957,66 +1072,7 @@ class Model:
             t2d   = torch.zeros(1,1,L,L,68)
 
 
-        # xyz_t = torch.zeros(1,2,L,3)
-        # t2d = torch.zeros(1,2,L,L,68)
-        # if (self.conf.preprocess.motif_only_2d):
-        #     # assert (is_protein_motif is not None)
-        #     assert (is_motif is not None)
-        #     assert (t2d_is_revealed is not None)
 
-        #     # only inputting motif in 2d template --> need 3rd template 
-        #     xyz_t = torch.zeros(1,3,L,3)
-        #     t2d = torch.zeros(1,3,L,L,68)
-        #     mask_t = torch.ones(1,3,L,L).bool()
-        
-        # # t2d for the Xt (2template)
-        # t2d_xt, mask_t_2d_remade = util.get_t2d(xyz, indep.is_sm, indep.atom_frames)
-        # t2d[0,0]   = t2d_xt[0]
-        # xyz_t[0,0] = xyz[0,:,1]
-
-        # # T2D for 3template protocol
-        # if (self.conf.preprocess.motif_only_2d):
-        #     # ic(t2d_is_revealed.numel())
-        #     # ic(t2d_is_revealed.sum())
-            
-        #     # ic(is_protein_motif.shape)
-        #     # ic(is_protein_motif.sum())
-
-        #     # ic(xyz.shape)
-        #     # ic(indep.xyz2.shape)
-
-        #     # set of diffused crds w/ motif sliced in
-        #     xyz_xt_w_motif = xyz.clone() 
-
-        #     # xyz_xt_w_motif[0,is_protein_motif,:NHEAVYPROT] = indep.xyz2[is_protein_motif]
-        #     xyz_xt_w_motif[0,is_motif,:NHEAVYPROT] = indep.xyz2[is_motif]
-            
-        #     # t2d containing desired motif 
-        #     # this construction uses bool mask to allow certain motifs to see others
-        #     # all motifs can see themselves
-        #     t2d_motif, _ = util.get_t2d(xyz_xt_w_motif, indep.is_sm, indep.atom_frames, t2d_is_revealed[None])
-            
-            
-        #     # put it in as third template
-        #     t2d[0,2] = t2d_motif[0]
-        #     xyz_t[0,2] = xyz_xt_w_motif[0,:,1]
-        #     # stack on final feature 
-        #     blank = torch.ones_like(t2d_is_revealed)*-1 # first two templates will have -1 in this channel
-        #     cattable_t2d_is_revealed = torch.stack((blank, blank, t2d_is_revealed.int()), dim=-1)
-        #     cattable_t2d_is_revealed = cattable_t2d_is_revealed.permute(2,0,1) # (L,L,3) -> (3,L,L)
-        #     cattable_t2d_is_revealed = cattable_t2d_is_revealed[None,...,None] # (3,L,L) -> (1,3,L,L,1)
-
-        #     t2d = torch.cat((t2d, cattable_t2d_is_revealed), dim=-1)    # (1,3,L,L,69)
-
-        # # t2d for the motif 
-        
-
-        #ic(xyz.shape)
-        # ic(
-        #     xyz[0, is_diffused][0][:,0], # nan 3:
-        #     xyz[0, indep.is_sm][0][:,0], # nan 14:
-        #     xyz[0, ~is_diffused * ~indep.is_sm][0][:,0], # nan 14:
-        # )
 
         # if is_protein_motif is None:
         if is_motif is None:
@@ -1029,21 +1085,17 @@ class Model:
 
         # We probably want to include more atoms if diffusing a nucleic acid chain
         if polymer_type_masks:
-            # xyz[0, is_diffused_protein*~indep.is_sm,3:] = torch.nan
-            # # xyz[0, is_diffused_na*~indep.is_sm,9:] = torch.nan
-            # xyz[0, is_diffused_na*~indep.is_sm,14:] = torch.nan
-
-            xyz[0, is_diffused_protein*~indep.is_sm,num_backbone_atoms_nucleic:] = torch.nan
-            xyz[0, is_diffused_na*~indep.is_sm,num_backbone_atoms_nucleic:] = torch.nan
-
-            
-
+            xyz[0, is_diffused_protein*~indep.is_sm, num_backbone_atoms_protein:] = torch.nan
+            xyz[0, is_diffused_na*~indep.is_sm, num_backbone_atoms_nucleic:] = torch.nan
         else:
             xyz[0, is_diffused*~indep.is_sm,3:] = torch.nan
 
-        xyz[0, indep.is_sm,14:] = 0
-        # xyz[0, is_protein_motif, 14:] = 0
-        xyz[0, is_motif, 14:] = 0
+        # ipdb.set_trace()
+        # xyz[0, indep.is_sm,14:] = 0
+        # xyz[0, is_motif, 14:] = 0
+        xyz[0, indep.is_sm, NHEAVYPROT:] = 0
+        xyz[0, is_protein_motif, NHEAVYPROT:] = 0
+        xyz[0, is_na_motif, NHEAVYNUC:] = 0
         dist_matrix = rf2aa.data_loader.get_bond_distances(indep.bond_feats)
 
         # minor tweaks to rfi to match gp training
@@ -1094,11 +1146,14 @@ class Model:
             t1d[0,1,:,-1] = -1 # second template (Xt) gets -1 for timestep feature 
             t1d[0,2,:,-1] = -1 # third template (motif) gets -1 for timestep feature
 
+            # # feature for 3rd template - is it motif or not?
+            # cattable_is_protein_motif = torch.tile(is_protein_motif[None,None,:,None], (1,3,1,1)).to(device=t1d.device, dtype=t1d.dtype)
+            # cattable_is_protein_motif[:,:-1,...] = -1  # first two templates get -1 for the motif feature 
+            # t1d = torch.cat((t1d, cattable_is_protein_motif), dim=-1) 
             # feature for 3rd template - is it motif or not?
-            cattable_is_protein_motif = torch.tile(is_protein_motif[None,None,:,None], (1,3,1,1)).to(device=t1d.device, dtype=t1d.dtype)
-            cattable_is_protein_motif[:,:-1,...] = -1  # first two templates get -1 for the motif feature 
-            t1d = torch.cat((t1d, cattable_is_protein_motif), dim=-1) 
-
+            cattable_is_motif = torch.tile(is_motif[None,None,:,None], (1,3,1,1)).to(device=t1d.device, dtype=t1d.dtype)
+            cattable_is_motif[:,:-1,...] = -1  # first two templates get -1 for the motif feature 
+            t1d = torch.cat((t1d, cattable_is_motif), dim=-1) 
         # ipdb.set_trace()
         # Note: should be batched
         rfi = RFI(
@@ -1214,8 +1269,8 @@ def adaptor_fix_bb_indep(out):
 
     indep = Indep(
         rf2aa.tensor_util.assert_squeeze(seq), # [L]
-        true_crds[:,:14], # [L, 14, 3]
-        true_crds[:,:14], # DJ- new xyz2 to keep track of orig AND diffused xyz
+        true_crds[:,:NHEAVY], # [L, 14, 3]
+        true_crds[:,:NHEAVY], # DJ- new xyz2 to keep track of orig AND diffused xyz
         natstack, 
         maskstack,
         Ls,
@@ -1298,7 +1353,7 @@ def diffuse(conf, diffuser, indep, is_diffused, t):
         else:
             num_atoms_na = 3
 
-        assert (num_atoms_na % 3) == 0
+        # assert (num_atoms_na % 3) == 0
 
         num_frames_na = num_atoms_na//3
 
@@ -1318,6 +1373,7 @@ def diffuse(conf, diffuser, indep, is_diffused, t):
         't_list'                  :t_list,
         'diffuse_sidechains'      :conf['preprocess']['sidechain_input'],
         'include_motif_sidechains':conf['preprocess']['motif_sidechain_input'],
+        # 'include_na_sidechains':conf['preprocess']['na_sidechain_input'],
         'is_sm': indep.is_sm,
         'is_na': indep.is_na,
         'num_frames_na': num_frames_na
@@ -1387,12 +1443,15 @@ def diffuse(conf, diffuser, indep, is_diffused, t):
         assert not torch.isnan(tmp_x_t[:,1,0]).any()
         diffused_fullatoms[1] = tmp_x_t
 
-    indep_diffused_tplus1.xyz = diffused_fullatoms[0, :, :14]
-    indep_diffused_t.xyz = diffused_fullatoms[1, :, :14]
+    # indep_diffused_tplus1.xyz = diffused_fullatoms[0, :, :14]
+    # indep_diffused_t.xyz = diffused_fullatoms[1, :, :14]
+    indep_diffused_tplus1.xyz = diffused_fullatoms[0, :, :NHEAVY]
+    indep_diffused_t.xyz = diffused_fullatoms[1, :, :NHEAVY]
     return (indep_diffused_tplus1, indep_diffused_t), t_list
 
 def forward(model, rfi, **kwargs):
     rfi_dict = dataclasses.asdict(rfi)
+    # ipdb.set_trace()
     return RFO(*model(**{**rfi_dict, **kwargs}))
 
 def mask_indep(indep, is_diffused, polymer_type_masks=None):
@@ -1704,6 +1763,7 @@ class AtomizeResidues:
         atom_idx_by_res = {}
         
         N_atoms = rf2aa.chemical.NHEAVYPROT
+        ipdb.set_trace()
         if expect_H:
             N_atoms = rf2aa.chemical.NTOTAL
         atomized_mask = rf2aa.util.allatom_mask[torch.tensor(self.atomized_res, dtype=int)][:,:N_atoms]
@@ -1725,6 +1785,7 @@ class AtomizeResidues:
         atom_idx_by_res = {}
         
         N_atoms = rf2aa.chemical.NHEAVYPROT
+        ipdb.set_trace()
         if expect_H:
             N_atoms = rf2aa.chemical.NTOTAL
 

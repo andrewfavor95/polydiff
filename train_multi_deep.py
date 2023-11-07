@@ -1229,8 +1229,10 @@ class Trainer():
         print('About to enter train loader loop')
         for loader_out in train_loader:
             
+
             indep, rfi_tp1_t, chosen_dataset, item, little_t, is_diffused, chosen_task, atomizer, masks_1d, item_context = loader_out
             context_msg = f'rank: {rank}: {item_context}'
+            # ipdb.set_trace()
             
             if indep.seq.shape[0] <= 3:
                 # skip SM examples w/ too few atoms
@@ -1267,7 +1269,7 @@ class Trainer():
                 # Save trues for writing pdbs later.
                 xyz_prev_orig = rfi_tp1.xyz[0]
                 seq_unmasked = indep.seq[None]
-                # ipdb.set_trace()
+
                 # for saving pdbs
                 seq_original = torch.clone(indep.seq)
 
@@ -1300,17 +1302,21 @@ class Trainer():
                     with torch.no_grad():
                         with ddp_model.no_sync():
                             with torch.cuda.amp.autocast(enabled=USE_AMP):
+                                # ipdb.set_trace()
                                 rfo = aa_model.forward(
                                         ddp_model,
                                         rfi_tp1,
                                         use_checkpoint=False,
                                         return_raw=False
                                         )
+                                # ipdb.set_trace()
                                 rfi_t = aa_model.self_cond(indep, rfi_t, rfo,
                                                         twotemplate=self.preprocess_param['twotemplate'], 
                                                         threetemplate=self.preprocess_param['threetemplate'],
                                         )
-                                xyz_prev_orig = rfi_t.xyz[0,:,:14].clone()
+                                # xyz_prev_orig = rfi_t.xyz[0,:,:14].clone()
+                                # ipdb.set_trace()
+                                xyz_prev_orig = rfi_t.xyz[0,:,:rf2aa.chemical.NHEAVY].clone()
                 if DEBUG:
                     # torch.save(rfi_t, 'rfi_t_bugfixed.pt')
                     # sys.exit('exiting early')
@@ -1343,9 +1349,8 @@ class Trainer():
                         indep.natstack = indep.natstack.to(gpu)
                         indep.maskstack = indep.maskstack.to(gpu)
 
-
-
-                        true_crds[0,:,:14,:] = indep.xyz[:,:14,:]
+                        # true_crds[0,:,:14,:] = indep.xyz[:,:14,:]
+                        true_crds[0,:,:rf2aa.chemical.NHEAVY,:] = indep.xyz[:,:rf2aa.chemical.NHEAVY,:]
                         mask_crds = ~torch.isnan(true_crds).any(dim=-1)
                         if all([len(a) > 0 for a in indep.Ls]): 
                             # we have prot and sm
@@ -1398,7 +1403,8 @@ class Trainer():
 
                         seq_diffusion_mask[:] = True
                         # mask_crds[:] = False
-                        true_crds[:,:,14:] = 0
+                        true_crds[:,indep.is_protein,rf2aa.chemical.NHEAVYPROT:] = 0
+                        true_crds[:,indep.is_na,rf2aa.chemical.NHEAVYNUC:] = 0
                         xyz_t[:] = 0
                         seq_t[:] = 0
 
@@ -1543,7 +1549,6 @@ class Trainer():
 
                 # if self.diffusion_param['seqdiff'] == 'continuous':
                 #     top1_sequence = torch.argmax(logit_aa_s[:,:20,:], dim=1)
-                # ipdb.set_trace()
 
                 n_processed = self.batch_size*world_size * counter
                 save_pdb = np.random.randint(0,self.n_write_pdb) == 0
@@ -1554,8 +1559,11 @@ class Trainer():
                     prefix = f'{pdb_dir}/epoch_{epoch}_{n_processed}_{chosen_task}_{chosen_dataset}_t_{int( little_t )}'
 
                     rf2aa.tensor_util.to_device(indep, 'cpu')
+
                     pred_xyz = xyz_prev_orig.clone()
+                    # ipdb.set_trace()
                     pred_xyz[:,:3] = pred_crds[-1, 0]
+                    # ipdb.set_trace()
 
                     for suffix, xyz in [
                         ('input', xyz_prev_orig),
@@ -1563,7 +1571,8 @@ class Trainer():
                         ('true', indep.xyz),
                     ]:
                         indep_write = copy.deepcopy(indep)
-                        indep_write.xyz[:,:14] = xyz[:,:14]
+                        # indep_write.xyz[:,:14] = xyz[:,:14]
+                        indep_write.xyz[:,:rf2aa.chemical.NHEAVY] = xyz[:,:rf2aa.chemical.NHEAVY]
                         if atomizer:
                             indep_write = atomize.deatomize(atomizer, indep_write)
                         indep_write.write_pdb(f'{prefix}_{suffix}.pdb')

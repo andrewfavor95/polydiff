@@ -303,10 +303,12 @@ def sample_one(sampler,inf_conf, i_des, simple_logging=False):
             assert xyz_template_t is None or not sampler.rfmotif, 'cant use rfmotif and regular template'
 
             # assert_that(indep.xyz.shape).is_equal_to(x_t.shape)
+            # ipdb.set_trace()
             rf2aa.tensor_util.assert_same_shape(indep.xyz, x_t)
             indep.xyz = x_t
                 
             aa_model.assert_has_coords(indep.xyz, indep)
+
             # missing_backbone = torch.isnan(indep.xyz).any(dim=-1)[...,:3].any(dim=-1)
             # prot_missing_bb = missing_backbone[~indep.is_sm]
             # sm_missing_ca = torch.isnan(indep.xyz).any(dim=-1)[...,1]
@@ -318,17 +320,21 @@ def sample_one(sampler,inf_conf, i_des, simple_logging=False):
             #     import ipdb
             #     ipdb.set_trace()
             # ipdb.set_trace()
-
+            
             px0_xyz_stack.append(px0)
             denoised_xyz_stack.append(x_t)
             seq_stack.append(seq_t)
             chi1_stack.append(tors_t[:,:])
+
+
+
+
             # plddt_stack.append(plddt[0]) # remove singleton leading dimension
             # motif_rmsd_stack.append(motif_rmsd) 
         # else:
         #     success = True
 
-            
+        # ipdb.set_trace()
         # if not success:
         #     print(f'failed to produce design {i_des} {t}, continuing...')
         #     continue
@@ -366,7 +372,6 @@ def sample_one(sampler,inf_conf, i_des, simple_logging=False):
         denoised_xyz_stack = torch.flip(denoised_xyz_stack, [0,])
         px0_xyz_stack = torch.stack(px0_xyz_stack)
         px0_xyz_stack = torch.flip(px0_xyz_stack, [0,])
-
         return indep, denoised_xyz_stack, px0_xyz_stack, seq_stack, xyz_particle, seq_particle, Lasu
 
 def save_outputs(sampler, out_prefix, indep, denoised_xyz_stack, px0_xyz_stack, seq_stack, xyz_particle, seq_particle, Lasu):
@@ -376,6 +381,7 @@ def save_outputs(sampler, out_prefix, indep, denoised_xyz_stack, px0_xyz_stack, 
     final_seq = seq_stack[-1]
 
     if sampler._conf.seq_diffuser.seqdiff is not None:
+        assert 0, "BEFORE USING THIS SEQ DIFFUSON OPTION, MODIFY TO INCLUDE NA BASE TOKENS!"
         # When doing sequence diffusion the model does not make predictions beyond category 19
         final_seq = final_seq[:,:20] # [L,20]
 
@@ -384,16 +390,31 @@ def save_outputs(sampler, out_prefix, indep, denoised_xyz_stack, px0_xyz_stack, 
 
     bfacts = torch.ones_like(final_seq.squeeze())
 
-    # replace mask and unknown tokens in the final seq with alanine
-    final_seq = torch.where((final_seq == 20) | (final_seq==21), 0, final_seq)
+    # replace mask and unknown tokens in the final seq: 
+    # for protein chains, replace with alanine
+    pro_condition = ((final_seq == 20) | (final_seq==21)) & indep.is_protein
+    final_seq = torch.where(pro_condition, 0, final_seq)
+    # for DNA chains, replace with deoxyribo-adenine
+    dna_condition = ((final_seq == 26) | (final_seq==21)) & indep.is_dna
+    final_seq = torch.where(dna_condition, 22, final_seq)
+    # for RNA chains, replace with ribo-adenine
+    rna_condition = ((final_seq == 31) | (final_seq==21)) & indep.is_rna
+    final_seq = torch.where(rna_condition, 27, final_seq)
+    # final_seq = torch.where((final_seq == 20) | (final_seq==21), 0, final_seq)
+    
+    
 
     # determine lengths of protein and ligand for correct chain labeling in output pdb
     sm_mask = rf2aa.util.is_atom(final_seq)
-    chain_Ls = [len(sm_mask)-sm_mask.sum(), sm_mask.sum()] # assumes 1 protein followed by 1 ligand
+    # chain_Ls = [len(sm_mask)-sm_mask.sum(), sm_mask.sum()] # assumes 1 protein followed by 1 ligand
+    chain_Ls = rf2aa.util.Ls_from_same_chain_2d(indep.same_chain)
     
     # pX0 last step
     out = f'{out_prefix}.pdb'
-    aa_model.write_traj(out, denoised_xyz_stack[0:1], final_seq, indep.bond_feats, chain_Ls=chain_Ls)
+    # aa_model.write_traj(out, denoised_xyz_stack[0:1], final_seq, indep.bond_feats, chain_Ls=chain_Ls)
+    aa_model.write_traj(out, denoised_xyz_stack[0:1], final_seq, indep.bond_feats, chain_Ls=chain_Ls, natoms=sampler.num_atoms_saved )
+
+    
     des_path = os.path.abspath(out)
 
     # symmetric oligomer PDB dump (New point symmetry protocol)

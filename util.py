@@ -688,5 +688,25 @@ def polymer_content_check(seq, polymer_focus='protein', polymer_frac_cutoff=0.2)
     return passes_check
 
 
+def get_chain_lengths(pdb_idx, return_dict=False):
 
+    prev_chain = '_'
+    chain_letter_list = []
+    chain_length_list = []
+    chain_length_dict = {}
+    for chain_letter_i, resdex_i in pdb_idx:
+        if not chain_letter_i==prev_chain:
+            chain_letter_list.append(chain_letter_i)
+            chain_length_dict[chain_letter_i] = 1
+        else:
+            chain_length_dict[chain_letter_i] += 1
+
+        prev_chain = chain_letter_i
+
+    chain_length_list = [chain_length_dict[chain_letter] for chain_letter in chain_letter_list]
+
+    if return_dict:
+        return chain_length_list, chain_length_dict
+    else:
+        return chain_length_list
 

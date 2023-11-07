@@ -1587,6 +1587,7 @@ def dna_complementarity_direction(seq, xyz, Ls): # TODO better way is to match t
     
 
 def loader_na_complex_diff(item, params, native_NA_frac=0.25, negative=False, pick_top=True, random_noise=5.0, fixbb=False):
+    
     pdb_set = item['CHAINID']
     msa_id = item['HASH']
     Ls = item['LEN']
@@ -1627,8 +1628,12 @@ def loader_na_complex_diff(item, params, native_NA_frac=0.25, negative=False, pi
         a3mB = rf2aa.data_loader.merge_a3m_hetero(a3mB, a3mC, Ls[1:])
         # if (pdbB['seq']==pdbC['seq']):
             # NMDLS=2 # flip B and C
-    a3m = rf2aa.data_loader.merge_a3m_hetero(a3mA, a3mB, [Ls[0],sum(Ls[1:])])
 
+    # For some reason the data has wrong length info
+    if ( not a3mA['msa'].shape[-1] == Ls[0] ) and (a3mA['msa'].shape[-1] == pdbA['xyz'].shape[0] ):
+        Ls[0] = a3mA['msa'].shape[-1]
+
+    a3m = rf2aa.data_loader.merge_a3m_hetero(a3mA, a3mB, [Ls[0],sum(Ls[1:])])
     # note: the block below is due to differences in the way RNA and DNA structures are processed
     # to support NMR, RNA structs return multiple states
     # For protein/NA complexes get rid of the 'NMODEL' dimension (if present)
@@ -2625,6 +2630,7 @@ class DistilledDataset(data.Dataset):
                             indep_diffused.xyz = aa_model.randomly_rotate_frames(indep_diffused.xyz)
                         
                         if self.preprocess_param['eye_frames']:
+                            # print('DOING EYE FRAMES!!!')
                             assert not self.preprocess_param['randomize_frames']
                             indep_diffused.xyz = aa_model.eye_frames2(indep_diffused.xyz)
 
@@ -2727,7 +2733,7 @@ class DistilledDataset(data.Dataset):
                         else: 
                             # no NaNs in Ca 
                             assert not torch.isnan(v.squeeze(0)[:,1:2,:]).any(), f'nan in {k}'
-            
+            # ipdb.set_trace()
             return indep, rfi_tp1_t, chosen_dataset, sel_item, t, is_diffused, task, atomizer, masks_1d, item_context
 
 

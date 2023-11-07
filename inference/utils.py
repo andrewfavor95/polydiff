@@ -17,6 +17,7 @@ from util import reference_angles as REF_ANGLES
 from util import rigid_from_3_points
 from util_module import ComputeAllAtomCoords
 from potentials.manager import PotentialManager
+from rf2aa.chemical import NAATOKENS, aa2num, aa2long, atomnum2atomtype, NTOTAL, CHAIN_GAP, to1letter, NHEAVY, NHEAVYPROT, NHEAVYNUC
 import util
 import random
 import logging
@@ -37,6 +38,12 @@ from . import symmetry
 ###########################################################
 
 # These functions behave exactly the same as before but now do not rely on class fields from the Denoiser
+
+# Useful thing for keeping track of chain indices:
+abet = 'abcdefghijklmnopqrstuvwxyz'
+abet = [a for a in abet]
+abet2num = {a:i for i,a in enumerate(abet)} 
+num2abet = {i:a for i,a in enumerate(abet)} 
 
 def slerp_update(r_t, r_0, t, mask=0):
     """slerp_update uses SLERP to update the frames at time t to the
@@ -730,6 +737,7 @@ class Denoise():
                       rigid_symm_motif_kwargs={},
                       rigid_repeat_motif_kwargs={},
                       origin_before_update=False,
+                      num_atoms_modeled=14,
                       rfmotif=None):
                       # origin_before_update=False):
         """
@@ -833,6 +841,7 @@ class Denoise():
             torsions_next = torch.zeros(1,1)
 
             if self.seq_diffuser:
+                assert 0, "MODIFY THIS TO ACCOMODATE NA TOKENS!"
                 seq_next = self.seq_diffuser.get_next_sequence(seq_t[:,:20], pseq0, t, seq_diffusion_mask) # [L,20]
 
                 # Add zeros to make the sequence have 22 classes and match the AR case
@@ -849,14 +858,16 @@ class Denoise():
                     seq_next = seq_t
         
         if include_motif_sidechains:
-            fullatom_next[:,diffusion_mask,:14] = xt[None,diffusion_mask]
+            # fullatom_next[:,diffusion_mask,:14] = xt[None,diffusion_mask]
+            fullatom_next[:,diffusion_mask,:num_atoms_modeled] = xt[None,diffusion_mask]
 
         if origin_before_update:
             fullatom_next = fullatom_next + COM_ALL
             px0 = px0 + COM_ALL.to(px0.device)
             # print('Successful px0 origin before update')
-
-        return fullatom_next.squeeze()[:,:14,:], seq_next, torsions_next, px0, next_rigid_tmplt
+        # ipdb.set_trace()
+        # return fullatom_next.squeeze()[:,:14,:], seq_next, torsions_next, px0, next_rigid_tmplt
+        return fullatom_next.squeeze()[:,:num_atoms_modeled,:], seq_next, torsions_next, px0, next_rigid_tmplt
     
 
 def fit_rigid_motif_symm(frames_next, motif_mask, xyz_template, symmRs, symmsub, TSCALE=1.0, **kwargs):
@@ -1169,6 +1180,7 @@ def preprocess(seq, xyz_t, t, T, ppi_design, binderlen, target_res, device):
         t1d (torch.tensor, required): (1,L,22) this is the t1d before tacking on the chi angles. Last plane is 1/t (conf hacked as timestep)
     """
     L = seq.shape[-1]
+    ipdb.set_trace()
     ### msa_masked ###
     ##################
     msa_masked = torch.zeros((1,1,L,48))
@@ -1245,6 +1257,83 @@ def parse_pdb(filename, **kwargs):
     '''extract xyz coords for all heavy atoms'''
     lines = open(filename,'r').readlines()
     return parse_pdb_lines(lines, **kwargs)
+    # return parse_pdb_na(lines, **kwargs)
+
+# def parse_pdb(filename, **kwargs):
+#     '''extract xyz coords for all heavy atoms'''
+#     lines = open(filename,'r').readlines()
+#     return parse_pdb_lines(lines, **kwargs)
+
+# def parse_pdb_na(lines, parse_hetatom=False, ignore_het_h=True):
+#     """
+#     adapted from code sent by Ryan
+#     """
+#     res = []
+#     for l in lines:
+#         split = l.split()
+#         if len(split) < 5:
+#             continue
+#         if split[0] == 'ATOM' and split[2] == "CA":
+#             res.append((split[5], split[3], split[4]))
+#         elif split[0] == 'ATOM' and split[2] == "C1'":
+#             res.append((split[5], ' ' + split[3], split[4]))
+
+
+#     # res = [(l[22:26],l[17:20],l[21]) for l in lines if \
+#     #         l[:4]=="ATOM" and l[12:16].strip() in ["CA","C1'"] and l[16] in [" ","A"]]
+#     # print('res',res)
+#     # idx_s = [(int(r[0]),r[2]) for r in res]
+#     idx_s = [(r[2], int(r[0])) for r in res]
+#     seq = [rf2aa.chemical.aa2num[r[1]] if r[1] in rf2aa.chemical.aa2num.keys() else 20 for r in res]
+#     chains = []
+#     for r in res:
+#         if r[2] not in chains:
+#             chains.append(r[2])
+#     L_s = [sum([1 for r in res if r[2] == x]) for x in chains]
+#     #print('L_s',L_s)
+#     xyz = np.full((len(idx_s), rf2aa.chemical.NTOTAL, 3), np.nan, dtype=np.float32)
+#     for l in lines:
+#         if len(l) < 5 or l[:4] != "ATOM":
+#             continue
+#         split = l.split()
+#         resNo, atom, aa, chid = int(split[5]), split[2], split[3], split[4]
+#         if aa in ['DA', 'DC', 'DG', 'DT', 'DX']:
+#             aa = ' ' + aa
+#         # resNo, atom, aa, chid = int(l[22:26]), l[12:16], l[17:20], l[21]
+#         #print(resNo, atom, aa)
+#         if (chid,resNo) not in idx_s:
+#             continue
+#         idx = idx_s.index((chid,resNo))
+#         if aa not in rf2aa.chemical.aa2num.keys():
+#             continue
+#         for i_atm, tgtatm in enumerate(rf2aa.chemical.aa2long[rf2aa.chemical.aa2num[aa]]):
+#             if tgtatm and tgtatm.strip() == atom:
+#                 #print(i_atm, tgtatm)
+#                 # xyz[idx,i_atm,:] = [float(l[30:38]), float(l[38:46]), float(l[46:54])]
+#                 xyz[idx,i_atm,:] = [float(split[6]), float(split[7]), float(split[8])]
+#                 break
+    
+#     mask = np.logical_not(np.isnan(xyz[...,0]))
+#     seq = np.array(seq)
+#     #xyz[np.isnan(xyz[...,0])] = 0.0
+#     # pdbs = []
+    
+#     # HACK should find a better place for this
+#     residue_mask = ~np.isnan(xyz)[:, :3].any(axis=(1, 2))
+#     xyz = xyz[residue_mask]
+#     # idx = idx[residue_mask]
+#     seq = seq[residue_mask]
+#     mask = mask[residue_mask]
+#     idx_s = [idxpdb for idxpdb, resmask in zip(idx_s, residue_mask) if resmask]
+#     out = {
+#         'xyz': xyz,
+#         'mask': mask,
+#         'idx': np.array([i[1] for i in idx_s]),
+#         'seq': seq,
+#         'pdb_idx': idx_s
+#     }
+
+#     return out
 
 def parse_pdb_lines(lines, parse_hetatom=False, ignore_het_h=True):
     # indices of residues observed in the structure
@@ -1254,11 +1343,18 @@ def parse_pdb_lines(lines, parse_hetatom=False, ignore_het_h=True):
     pdb_idx = []
     prev_idx_string = 'XXXX'
     for l in lines:
-        if l[:4]=="ATOM":
-            atm_string = l[12:16]
-            res_string = l[17:20]
-            chn_string = l[21:22]
-            idx_string = l[22:26]
+        split = l.split()
+        if len(split) < 5:
+            continue
+
+        # if l[:4]=="ATOM":
+        #     atm_string = l[12:16]
+        #     res_string = l[17:20]
+        #     chn_string = l[21:22]
+        #     idx_string = l[22:26]
+
+        if split[0]=="ATOM":
+            atm_string, res_string, chn_string, idx_string = split[2:6]
 
             # Only add this stuff if we haven't added anything for this resi yet:
             if not idx_string==prev_idx_string:
@@ -1272,34 +1368,56 @@ def parse_pdb_lines(lines, parse_hetatom=False, ignore_het_h=True):
                     prev_idx_string = idx_string
 
                 elif atm_string.strip()=="P":
-                    res.append((idx_string, res_string))
+                    res.append((idx_string, ' ' +res_string))
                     pdb_idx.append(( chn_string.strip(), int(idx_string.strip()) ))
                     prev_idx_string = idx_string
 
                 elif atm_string.strip()=="O5'":
-                    res.append((idx_string, res_string))
+                    res.append((idx_string, ' ' +res_string))
                     pdb_idx.append(( chn_string.strip(), int(idx_string.strip()) ))
                     prev_idx_string = idx_string
 
-                elif atm_string.strip()=="C5'":
-                    print("Really not an ideal situation if we have to use C5 prime...")
-                    res.append((idx_string, res_string))
+                elif atm_string.strip()=="C1'":
+                    res.append((idx_string, ' ' +res_string))
                     pdb_idx.append(( chn_string.strip(), int(idx_string.strip()) ))
                     prev_idx_string = idx_string
 
-    seq = [util.aa2num[r[1]] if r[1] in util.aa2num.keys() else 20 for r in res]
+                # elif atm_string.strip()=="C5'":
+                #     print("Really not an ideal situation if we have to use C5 prime...")
+                #     res.append((idx_string, res_string))
+                #     pdb_idx.append(( chn_string.strip(), int(idx_string.strip()) ))
+                #     prev_idx_string = idx_string
 
-    # 4 BB + up to 10 SC atoms
-    xyz = np.full((len(res), 14, 3), np.nan, dtype=np.float32)
+    idx_s = [(i[0], i[1]) for i in pdb_idx]
+    seq = [util.aa2num[r[1]] if r[1] in rf2aa.chemical.aa2num.keys() else 20 for r in res]
+    chains = []
+    
+    for c in pdb_idx:
+        if c[0] not in chains:
+            chains.append(c[0])
+
+    L_s = [sum([1 for c in pdb_idx if c[0] == x]) for x in chains]
+
+    xyz = np.full((len(idx_s), rf2aa.chemical.NTOTAL, 3), np.nan, dtype=np.float32)
     for l in lines:
-        if l[:4] != "ATOM":
+        if len(l) < 5 or l[:4] != "ATOM":
             continue
-        chain, resNo, atom, aa = l[21:22], int(l[22:26]), ' '+l[12:16].strip().ljust(3), l[17:20]
-        idx = pdb_idx.index((chain,resNo))
-        # for i_atm, tgtatm in enumerate(util.aa2long[util.aa2num[aa]]):
-        for i_atm, tgtatm in enumerate(util.aa2long[util.aa2num[aa]][:14]): # Nate's proposed change
-            if tgtatm is not None and tgtatm.strip() == atom.strip(): # ignore whitespace
-                xyz[idx,i_atm,:] = [float(l[30:38]), float(l[38:46]), float(l[46:54])]
+        split = l.split()
+        resNo, atom, aa, chid = int(split[5]), split[2], split[3], split[4]
+        if aa in ['DA', 'DC', 'DG', 'DT', 'DX', 'RA', 'RC', 'RG', 'RU', 'RX',]:
+            aa = ' ' + aa
+        # resNo, atom, aa, chid = int(l[22:26]), l[12:16], l[17:20], l[21]
+        #print(resNo, atom, aa)
+        if (chid,resNo) not in idx_s:
+            continue
+        idx = idx_s.index((chid,resNo))
+        if aa not in rf2aa.chemical.aa2num.keys():
+            continue
+        for i_atm, tgtatm in enumerate(rf2aa.chemical.aa2long[rf2aa.chemical.aa2num[aa]]):
+            if tgtatm and tgtatm.strip() == atom:
+                #print(i_atm, tgtatm)
+                # xyz[idx,i_atm,:] = [float(l[30:38]), float(l[38:46]), float(l[46:54])]
+                xyz[idx,i_atm,:] = [float(split[6]), float(split[7]), float(split[8])]
                 break
 
     # save atom mask
@@ -1320,10 +1438,19 @@ def parse_pdb_lines(lines, parse_hetatom=False, ignore_het_h=True):
 
     seq = np.array(seq)[i_unique]
 
+    # remove missing shit:
+    residue_mask = ~np.isnan(xyz)[:, :3].any(axis=(1, 2))
+    xyz = xyz[residue_mask]
+    # idx = idx[residue_mask]
+    seq = seq[residue_mask]
+    mask = mask[residue_mask]
+    idx_s = [idxpdb for idxpdb, resmask in zip(idx_s, residue_mask) if resmask]
+
     out = {
         'xyz':xyz, # cartesian coordinates, [Lx14]
         'mask':mask, # mask showing which atoms are present in the PDB file, [Lx14]
-        'idx':np.array([i[1] for i in pdb_idx]), # residue numbers in the PDB file, [L]
+        'idx':np.array([i[1] for i in idx_s]), # residue numbers in the PDB file, [L]
+        # 'idx':np.array([i[1] for i in pdb_idx]), # residue numbers in the PDB file, [L]
         'seq':np.array(seq), # amino acid sequence, [L]
         'pdb_idx': pdb_idx,  # list of (chain letter, residue number) in the pdb file, [L]
     }
@@ -1343,8 +1470,109 @@ def parse_pdb_lines(lines, parse_hetatom=False, ignore_het_h=True):
 
         out['xyz_het'] = np.array(xyz_het)
         out['info_het'] = info_het
-
+        
     return out
+
+
+# def parse_pdb_lines(lines, parse_hetatom=False, ignore_het_h=True):
+#     # indices of residues observed in the structure
+    
+
+#     res = []
+#     pdb_idx = []
+#     prev_idx_string = 'XXXX'
+#     for l in lines:
+#         if l[:4]=="ATOM":
+#             atm_string = l[12:16]
+#             res_string = l[17:20]
+#             chn_string = l[21:22]
+#             idx_string = l[22:26]
+
+#             # Only add this stuff if we haven't added anything for this resi yet:
+#             if not idx_string==prev_idx_string:
+
+#                 # Break this into tower of conditionals so we can exit once we get a valid atom:
+#                 # have to do it this way for a ranking in atom priority, sadly.
+#                 # update this prev_idx_string so we can compare to it in the next iter
+#                 if atm_string.strip()=="CA":
+#                     res.append((idx_string, res_string))
+#                     pdb_idx.append(( chn_string.strip(), int(idx_string.strip()) ))
+#                     prev_idx_string = idx_string
+
+#                 elif atm_string.strip()=="P":
+#                     res.append((idx_string, res_string))
+#                     pdb_idx.append(( chn_string.strip(), int(idx_string.strip()) ))
+#                     prev_idx_string = idx_string
+
+#                 elif atm_string.strip()=="O5'":
+#                     res.append((idx_string, res_string))
+#                     pdb_idx.append(( chn_string.strip(), int(idx_string.strip()) ))
+#                     prev_idx_string = idx_string
+
+#                 elif atm_string.strip()=="C5'":
+#                     print("Really not an ideal situation if we have to use C5 prime...")
+#                     res.append((idx_string, res_string))
+#                     pdb_idx.append(( chn_string.strip(), int(idx_string.strip()) ))
+#                     prev_idx_string = idx_string
+
+#     seq = [util.aa2num[r[1]] if r[1] in util.aa2num.keys() else 20 for r in res]
+
+#     # 4 BB + up to 10 SC atoms
+#     xyz = np.full((len(res), 14, 3), np.nan, dtype=np.float32)
+#     for l in lines:
+#         if l[:4] != "ATOM":
+#             continue
+#         chain, resNo, atom, aa = l[21:22], int(l[22:26]), ' '+l[12:16].strip().ljust(3), l[17:20]
+#         idx = pdb_idx.index((chain,resNo))
+#         # for i_atm, tgtatm in enumerate(util.aa2long[util.aa2num[aa]]):
+#         for i_atm, tgtatm in enumerate(util.aa2long[util.aa2num[aa]][:14]): # Nate's proposed change
+#             if tgtatm is not None and tgtatm.strip() == atom.strip(): # ignore whitespace
+#                 xyz[idx,i_atm,:] = [float(l[30:38]), float(l[38:46]), float(l[46:54])]
+#                 break
+
+#     # save atom mask
+#     mask = np.logical_not(np.isnan(xyz[...,0]))
+#     xyz[np.isnan(xyz[...,0])] = 0.0
+
+#     # remove duplicated (chain, resi)
+#     new_idx = []
+#     i_unique = []
+#     for i,idx in enumerate(pdb_idx):
+#         if idx not in new_idx:
+#             new_idx.append(idx)
+#             i_unique.append(i)
+
+#     pdb_idx = new_idx
+#     xyz = xyz[i_unique]
+#     mask = mask[i_unique]
+
+#     seq = np.array(seq)[i_unique]
+
+#     out = {
+#         'xyz':xyz, # cartesian coordinates, [Lx14]
+#         'mask':mask, # mask showing which atoms are present in the PDB file, [Lx14]
+#         'idx':np.array([i[1] for i in pdb_idx]), # residue numbers in the PDB file, [L]
+#         'seq':np.array(seq), # amino acid sequence, [L]
+#         'pdb_idx': pdb_idx,  # list of (chain letter, residue number) in the pdb file, [L]
+#     }
+
+#     # heteroatoms (ligands, etc)
+#     if parse_hetatom:
+#         xyz_het, info_het = [], []
+#         for l in lines:
+#             if l[:6]=='HETATM' and not (ignore_het_h and l[77]=='H'):
+#                 info_het.append(dict(
+#                     idx=int(l[7:11]),
+#                     atom_id=l[12:16],
+#                     atom_type=l[77],
+#                     name=l[16:20]
+#                 ))
+#                 xyz_het.append([float(l[30:38]), float(l[38:46]), float(l[46:54])])
+
+#         out['xyz_het'] = np.array(xyz_het)
+#         out['info_het'] = info_het
+
+#     return out
 
 
 # def parse_pdb_lines(lines, parse_hetatom=False, ignore_het_h=True):
@@ -1562,7 +1790,7 @@ def symm2nchain(S):
     elif S.startswith('C'):
         return int(S[1:])
 
-def process_target(pdb_path, parse_hetatom=False, center=True, inf_conf=None):
+def process_target(pdb_path, parse_hetatom=False, center=True, inf_conf=None, d_t1d=32):
     """
     Generally parse target pdb file and return a dictionary of features.
 
@@ -1582,12 +1810,23 @@ def process_target(pdb_path, parse_hetatom=False, center=True, inf_conf=None):
     atom_mask = torch.from_numpy(target_struct['mask'])
     seq_len   = len(xyz)
 
+    # is_protein = torch.logical_and((0  <= seq),(seq <= 21)).squeeze()
+    # is_nucleic = torch.logical_and((22 <= seq),(seq <= 31)).squeeze()
+    # xyz_prot[is_protein,NHEAVYPROT:] = 0
+    # xyz_prot[is_nucleic,NHEAVYNUC:] = 0
+    # mask_prot[is_protein,NHEAVYPROT:] = False
+    # mask_prot[is_nucleic,NHEAVYNUC:] = False
+
     # Make 27 atom representation
     xyz_27 = torch.full((seq_len, 27, 3), np.nan).float()
-    xyz_27[:, :14, :] = xyz[:, :14, :]
-
+    # ipdb.set_trace()
+    xyz_27[:, :NHEAVY, :] = xyz[:, :NHEAVY, :]
+    # xyz_27[:, :14, :] = xyz[:, :14, :]
+    # ipdb.set_trace()
     mask_27 = torch.full((seq_len, 27), False)
-    mask_27[:, :14] = atom_mask
+    mask_27[:, :NHEAVY] = atom_mask[:, :NHEAVY]
+    # mask_27[:, :14] = atom_mask
+
     out = {
            'xyz_27': xyz_27,
             'mask_27': mask_27,
@@ -1616,6 +1855,9 @@ def process_target(pdb_path, parse_hetatom=False, center=True, inf_conf=None):
         xyz_t, mask_t, t1d_t, seq_t = parsers.read_multichain_template_pdb(Ls, inf_conf.subsymm_template)
         xyz_t  = xyz_t.reshape(1,len(Ls),-1,27,3).squeeze(dim=0) 
         mask_t = mask_t.reshape(1,len(Ls),-1,27).squeeze(dim=0)
+        
+        if not d_t1d==22:
+            print(f'WARNING: t1d has dim {d_t1d} instead of 22. Hopefully you are using a model trained with NA tokens. ')
         t1d_t  = t1d_t.reshape(1,len(Ls),-1,22).squeeze(dim=0)
 
         seq_t = torch.argmax(seq_t, dim=-1).reshape(1,len(Ls),-1).squeeze()
@@ -2123,6 +2365,67 @@ def merge_regions(regions1, regions2):
     regions_full = sorted(set(regions_full), key=lambda tup: tup[0])
 
     return regions_full
+
+
+
+# def get_pdb_contig_ranges(contig_conf, pdb_idx_spec):
+
+#     start_stop_tuples = []
+#     for i, contig_i in enumerate(contig_conf):
+#         for j, subcontig_ij in enumerate(contig_i.split(',')):
+#             if subcontig_ij[0].isalpha():
+#                 start_str, stop_str = subcontig_ij[1:].split('-')
+#                 start_key_ij = (subcontig_ij[0], int(start_str))
+#                 stop_key_ij = (subcontig_ij[0], int(stop_str))
+#                 start_stop_tuples.append((pdb_idx_spec.index(start_key_ij),pdb_idx_spec.index(stop_key_ij)))
+    
+
+    
+#     mask_1d_pdb = torch.full((len(pdb_idx_spec),), 0)
+#     for start, stop in start_stop_tuples:
+#         mask_1d_pdb[start:stop+1] = 1
+
+#     mask_1d_pdb = mask_1d_pdb.bool()
+
+#     return start_stop_tuples, mask_1d_pdb
+
+# def get_hal_contig_ranges(contig_conf, pdb_idx_spec):
+
+#     start_stop_tuples = []
+
+    
+#     contig_list = [subcontig_str for contig_str in contig_conf for subcontig_str in contig_str.split(' ') ]
+#     # for i, contig_i in enumerate(contig_conf): # chain num is i
+#     for i, contig_i in enumerate(contig_list): # chain num is i
+#         running_length = 0
+#         for j, subcontig_ij in enumerate(contig_i.split(',')):
+#             if subcontig_ij[0].isalpha():
+#                 start_str, stop_str = subcontig_ij[1:].split('-')
+#                 len_diff_ij = int(stop_str)-int(start_str)
+#                 # assert num2abet[i].upper()=='A', "Only single chain diffusion currently supported. Need to find way to specify multi chain free diffusion."
+#                 start_key_ij = (num2abet[i].upper(), 1+running_length)
+#                 stop_key_ij = (num2abet[i].upper(), 1+running_length+len_diff_ij)
+                
+#                 # print(start_key_ij)
+#                 # print(stop_key_ij)
+#                 # ipdb.set_trace()
+#                 start_stop_tuples.append((pdb_idx_spec.index(start_key_ij),pdb_idx_spec.index(stop_key_ij)))
+#                 running_length += len_diff_ij+1
+#             else: # then we at the hal range thingie
+#                 if not '-' in subcontig_ij:
+#                     len_diff_ij = int(subcontig_ij)
+#                     running_length += len_diff_ij
+#                 else:
+#                     print('INPAINT-RANGE NOT CURRENTLY SUPPORTED. GO BACK AND PROVIDE A FIXED LENGTH CONTIG.')
+
+
+#     mask_1d_hal = torch.full((len(pdb_idx_spec),), 0)
+#     for start, stop in start_stop_tuples:
+#         mask_1d_hal[start:stop+1] = 1
+
+#     mask_1d_hal = mask_1d_hal.bool()
+
+#     return start_stop_tuples, mask_1d_hal
 
 
 

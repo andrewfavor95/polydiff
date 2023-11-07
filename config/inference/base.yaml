@@ -65,6 +65,10 @@ inference:
   atomized_output: False
   contig_as_guidepost: False
   remove_guideposts_from_output: True
+  mask_seq_by_polymer: False
+  t2d_pic_filename: null
+  num_atoms_modeled: 14
+  num_atoms_saved: 23
   # ema: True
 
 contigmap:
@@ -185,6 +189,7 @@ contig_settings:
 preprocess:
   sidechain_input: False
   motif_sidechain_input: True
+  na_sidechain_input: True
   sequence_decode: True
   d_t1d: 22
   d_t2d: 44
@@ -194,7 +199,8 @@ preprocess:
   predict_previous: False
   eye_frames: False 
   randomize_frames: False
-  num_atoms_na: 12
+  num_atoms_na: 14
+  # num_atoms_input: 14
   
 logging:
   inputs: False

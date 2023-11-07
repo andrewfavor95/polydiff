@@ -373,6 +373,8 @@ def get_args(in_args=None):
         help='Do you want to provide diffused sidechains to the model. No default - make up your mind')
     preprocess_group.add_argument("-motif_sidechain_input", default="True", choices=("True","False"),
         help = 'Do you want to provide sidechains of the motif to the model. Default = True')
+    # preprocess_group.add_argument("-na_sidechain_input", default="True", choices=("True","False"),
+    #     help = 'Do you want to provide sidechains of the nucleic acid bases to the model. Default = True')
     preprocess_group.add_argument("-sequence_decode", choices=("True","False"), default="True",
         help='Do you want to decode sequence. Overrides aa_decode_steps. Default=True')
     preprocess_group.add_argument('-d_t1d', type=int, default=21+1+1,
@@ -380,7 +382,7 @@ def get_args(in_args=None):
     preprocess_group.add_argument('-d_t2d', type=int, default = 44,
             help = 'dimension of t2d raw inputs')
     preprocess_group.add_argument('-motif_only_2d', action='store_true', default=False)
-    preprocess_group.add_argument('-num_atoms_na', type=int, default=9,
+    preprocess_group.add_argument('-num_atoms_na', type=int, default=14,
             help='How many backbone atoms do we use for nucleic acid diffusion?')
 
     preprocess_group.add_argument('-twotemplate', default="True", choices=("True","False"),
@@ -403,6 +405,7 @@ def get_args(in_args=None):
     # parse boolean arguments
     args.sidechain_input = args.sidechain_input == 'True'
     args.motif_sidechain_input = args.motif_sidechain_input == 'True'
+    # args.na_sidechain_input = args.na_sidechain_input == 'True'
     args.twotemplate = args.twotemplate == 'True'
     args.threetemplate = args.threetemplate == 'True'
     args.sequence_decode = args.sequence_decode == 'True'
@@ -514,6 +517,7 @@ def get_args(in_args=None):
     preprocess_param = {}
     for param in ['sidechain_input',
                   'motif_sidechain_input',
+                  # 'na_sidechain_input',
                   'sequence_decode',
                   'd_t1d',
                   'd_t2d',

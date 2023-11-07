@@ -8,7 +8,7 @@ from icecream import ic
 import pickle 
 
 import rf2aa.chemical
-from rf2aa.chemical import NAATOKENS, MASKINDEX, NTOTAL, NHEAVYPROT, DNAMASKINDEX, RNAMASKINDEX
+from rf2aa.chemical import NAATOKENS, MASKINDEX, NTOTAL, NHEAVY, NHEAVYPROT, NHEAVYNUC, DNAMASKINDEX, RNAMASKINDEX
 import rf2aa.util
 import rf2aa.data_loader
 # from rf2aa.util_module import ComputeAllAtomCoords
@@ -27,7 +27,7 @@ from mpl_toolkits.axes_grid1.axes_divider import make_axes_locatable
 from kinematics import get_init_xyz
 from diffusion import Diffuser
 import seq_diffusion
-from contigs import ContigMap
+from contigs import ContigMap, DNA_Duplex_Protein_Monomer
 from inference import utils as iu
 from potentials.manager import PotentialManager
 from inference import symmetry
@@ -452,24 +452,35 @@ class Sampler:
             indep.mask_t_2d_subsymm  = self.target_feats['mask_2d_subsymm'].to(self.device) if torch.is_tensor(self.target_feats['mask_2d_subsymm']) else None
 
         is_partial = self.diffuser_conf.partial_T is not None
-        
+
+        # ipdb.set_trace()
+        # TEST TEST TEST
+        # indep, is_diffused = DNA_Duplex_Protein_Monomer(indep, self.contig_conf, self.target_feats['pdb_idx'])
+        # TEST TEST TEST
+
         indep, is_diffused = self.model_adaptor.insert_contig(indep, self.contig_map, partial_T=is_partial) 
+        # ipdb.set_trace()
         
-        # set attribute for polymer mask tokens, and check that all positions are accounted for:
-        self.polymer_mask = torch.full_like(is_diffused, -1, dtype=indep.seq.dtype)
-        self.polymer_mask[indep.is_protein] = MASKINDEX
-        self.polymer_mask[indep.is_dna] = DNAMASKINDEX
-        self.polymer_mask[indep.is_rna] = RNAMASKINDEX
-        assert ~(self.polymer_mask < 0).any(), "SOME POSITIONS DONT HAVE A VALID POLYMER TYPE ASSIGNMENT"
-        
+
         # create a residue mask based on polymer type:
-        self.polymer_res_mask = torch.zeros(1, indep.seq.shape[0], NAATOKENS)
-        self.polymer_res_mask[0, indep.is_protein,  0:22] = 1
-        self.polymer_res_mask[0, indep.is_dna,     22:27] = 1
-        self.polymer_res_mask[0, indep.is_rna,     27:32] = 1
+        # I think we want this to be on the gpu
+        self.polymer_mask = torch.zeros(1, indep.seq.shape[0], NAATOKENS).to(self.device)
+        self.polymer_mask[0, indep.is_protein,  0:22] = 1
+        self.polymer_mask[0, indep.is_dna,     22:27] = 1
+        self.polymer_mask[0, indep.is_rna,     27:32] = 1
 
 
+        # set attribute for polymer mask tokens, and check that all positions are accounted for:
+        # I think we want this to be on the cpu
+        self.polymer_mask_resi = torch.full_like(is_diffused, -1, dtype=indep.seq.dtype)
+        self.polymer_mask_resi[indep.is_protein] = MASKINDEX
+        self.polymer_mask_resi[indep.is_dna] = DNAMASKINDEX
+        self.polymer_mask_resi[indep.is_rna] = RNAMASKINDEX
+        assert ~(self.polymer_mask_resi < 0).any(), "SOME POSITIONS DONT HAVE A VALID POLYMER TYPE ASSIGNMENT"
+        
 
+        # Control how many atoms we save in the pdb
+        self.num_atoms_saved = self.inf_conf.num_atoms_saved
         
         
 
@@ -504,7 +515,7 @@ class Sampler:
             self.is_diffused = is_diffused
             # need to reset according to new is diffused mask 
             # indep.seq[self.is_diffused] = 21 # set any residues allowed to diffuse to masked
-            indep.seq = torch.where(self.is_diffused, self.polymer_mask, indep.seq)
+            indep.seq = torch.where(self.is_diffused, self.polymer_mask_resi, indep.seq)
 
             # create tensor denoting which residues should have perfect confidence
             # even though they may technically be diffused (moving)
@@ -533,7 +544,7 @@ class Sampler:
 
             # need to reset according to new is diffused mask 
             # indep.seq[self.is_diffused] = 21 # set any residues allowed to diffuse to masked
-            indep.seq = torch.where(self.is_diffused, self.polymer_mask, indep.seq)
+            indep.seq = torch.where(self.is_diffused, self.polymer_mask_resi, indep.seq)
 
             # diffuser sees the motif as not diffused (i.e. can't move)
             # just for initialization 
@@ -553,9 +564,9 @@ class Sampler:
             # indep.seq[self.is_diffused] = 21
 
             if self.inf_conf.supply_motif_seq:
-                indep.seq = torch.where(self.is_diffused_orig, self.polymer_mask, indep.seq)
+                indep.seq = torch.where(self.is_diffused_orig, self.polymer_mask_resi, indep.seq)
             else:
-                indep.seq = torch.where(self.is_diffused, self.polymer_mask, indep.seq)
+                indep.seq = torch.where(self.is_diffused, self.polymer_mask_resi, indep.seq)
 
             # diffuser will also diffuse everything
             diffuser_is_diffused = torch.clone(is_diffused_denoiser)
@@ -589,7 +600,9 @@ class Sampler:
                 symmRs=symmRs,
                 motif_only_2d=self.inf_conf.motif_only_2d)
             
-            xT = fa_stack[-1].squeeze()[:,:14,:]
+            # xT = fa_stack[-1].squeeze()[:,:14,:]
+            xT = fa_stack[-1].squeeze()[:,:NHEAVY,:]
+            # xT = fa_stack[-1].squeeze()[:,:self.inf_conf.num_atoms_modeled,:]
             xt = torch.clone(xT)
             indep.xyz = xt
         
@@ -600,7 +613,9 @@ class Sampler:
             fa_stack = None
             xyz_true = None
 
-            xT = indep.xyz[:,:14,:]
+            # xT = indep.xyz[:,:14,:]
+            xT = indep.xyz[:,:NHEAVY,:]
+            # xT = indep.xyz[:,:self.inf_conf.num_atoms_modeled,:]
             xt = torch.clone(xT) 
             indep.xyz = xt
     
@@ -616,6 +631,7 @@ class Sampler:
             visible = is_motif | is_shown_at_t
             if self.diffuser_conf.partial_T:
                 # seq_t[visible] = seq_orig[visible]
+                assert 0, 'NEED TO MODIFY TO INCLUDE NA TOKENS!'
                 indep.seq = torch.full_like(indep.seq, 20)
         else:
             # Sequence diffusion
@@ -745,6 +761,7 @@ class Sampler:
         # ic(indep.xyz.shape)
         # assert False
         print('Total AA modeled: ', indep.xyz.shape[0])
+        # ipdb.set_trace()
         return indep
 
     def _preprocess(self, seq, xyz_t, t, repack=False):
@@ -858,7 +875,7 @@ class Sampler:
         else:
             xyz_t[~self.mask_str.squeeze(),3:,:] = float('nan')
         #xyz_t[:,3:,:] = float('nan')
-
+        ipdb.set_trace()
         assert_that(xyz_t.shape).is_equal_to((L,NHEAVYPROT,3))
         xyz_t=xyz_t[None, None]
         xyz_t = torch.cat((xyz_t, torch.full((1,1,L,NTOTAL-NHEAVYPROT,3), float('nan'))), dim=3)
@@ -1143,7 +1160,119 @@ def merge_regions(regions1, regions2):
 
     return regions_full
 
-def get_repeat_t2d_mask(L, con_hal_idx0, ij_is_visible, nrepeat, full_complex_idx0, supplied_full_contig):
+# def get_repeat_t2d_mask(L, con_hal_idx0, ij_is_visible, nrepeat, full_complex_idx0, supplied_full_contig):
+#     """
+#     Given contig map and motif chunks that can see each other, create t2d mask
+#     defining which motif chunks can see each other. 
+
+#     Parameters:
+#     -----------
+#     L (int): total length of protein being modelled
+    
+#     con_ref_idx0 (torch.tensor): tensor containing zero-indexed indices of where motif chunks are 
+#                                  going to be placed in the output protein.
+
+#     ij_is_visible (list): List of tuples, each tuple defines a set of motif chunks that can see each other.
+
+#     nrepeat (int): Number of repeat units in repeat protein being modelled 
+#     """
+#     assert all([type(x) == tuple for x in ij_is_visible]), 'ij_is_visible must be list of tuples'
+#     assert L%nrepeat == 0
+#     Lasu = L // nrepeat
+
+#     # (1) Define matrix where each row/col is a motif chunk, entries are 1 if motif chunks can see each other
+#     #     and 0 otherwise.
+#     breaks = get_breaks(con_hal_idx0)
+#     nchunk = len(breaks) + 1
+#     nchunk_total = nchunk * nrepeat
+
+    
+#     # initially empty
+#     chunk_ij_visible = torch.eye(nchunk_total)
+#     # fill in user-defined visibility
+#     for S in ij_is_visible:
+#         for i in S:
+#             for j in S: 
+#                 if i == j:
+#                     continue # already visible bc eye 
+#                 chunk_ij_visible[i,j] = 1
+#                 chunk_ij_visible[j,i] = 1
+
+
+#     # (2) Fill in LxL matrix with coarse mask info
+#     L_contigs = len(con_hal_idx0)
+#     if not supplied_full_contig:
+#         con_hal_idx0_full = torch.cat([con_hal_idx0 + i*Lasu for i in range(nrepeat)])
+#     else: 
+#         con_hal_idx0_full = con_hal_idx0
+
+
+#     mask2d = torch.zeros(L, L)
+
+#     # make 1D array designating which chunks are motif
+#     is_motif = torch.zeros(L)
+#     is_motif[con_hal_idx0_full] = 1 
+#     breaks2 = find_true_chunks_indices(is_motif)
+
+#     # fill in 2d mask
+#     for i in range(len(breaks2)):
+#         for j in range(len(breaks2)):
+
+#             visible = chunk_ij_visible[i,j] 
+
+#             if visible: 
+#                 start_i, end_i = breaks2[i]
+#                 start_j, end_j = breaks2[j]
+#                 mask2d[start_i:end_i+1, start_j:end_j+1] = 1
+#                 mask2d[start_j:end_j+1, start_i:end_i+1] = 1
+
+
+#     return mask2d, is_motif
+
+def get_contig_chunks(contig_map):
+
+    
+    # contig_chunk_ranges = []
+    all_chunk_ranges = []
+    is_motif_chunk = []
+    last_idx = 0
+    for contig_i in contig_map.sampled_mask:
+        for subcontig_ij in contig_i.split(','):
+            if subcontig_ij[0].isalpha(): # if it is a template region:
+                chain_ij = subcontig_ij[0]
+                start_resi_ij, stop_resi_ij = [int(idx) for idx in subcontig_ij[1:].split('-')]
+                
+                len_ij = stop_resi_ij - start_resi_ij
+                new_idx = last_idx + len_ij
+
+                # contig_chunk_ranges.append((last_idx , new_idx))
+                is_motif_chunk.append(1)
+                all_chunk_ranges.append((last_idx , new_idx))
+
+                last_idx = new_idx + 1
+
+            else: # if it is a diffused region:
+                len_ij = int(subcontig_ij.split('-')[0])
+                new_idx = last_idx + len_ij
+
+                is_motif_chunk.append(0)
+                all_chunk_ranges.append((last_idx, new_idx - 1))
+
+                last_idx = new_idx
+
+
+
+    contig_chunk_ranges = [con_tup for con_tup,is_mot in zip(all_chunk_ranges,is_motif_chunk) if is_mot]
+
+    # for i,j in contig_chunk_ranges: print(1 + j - i)
+    # print(contig_chunk_ranges)
+    # ipdb.set_trace()
+
+    return contig_chunk_ranges
+
+
+
+def get_repeat_t2d_mask(L, con_hal_idx0, contig_map, ij_is_visible, nrepeat, supplied_full_contig):
     """
     Given contig map and motif chunks that can see each other, create t2d mask
     defining which motif chunks can see each other. 
@@ -1163,23 +1292,25 @@ def get_repeat_t2d_mask(L, con_hal_idx0, ij_is_visible, nrepeat, full_complex_id
     assert L%nrepeat == 0
     Lasu = L // nrepeat
 
-    # (1) Define matrix where each row/col is a motif chunk, entries are 1 if motif chunks can see each other
-    #     and 0 otherwise.
+    # # (1) Define matrix where each row/col is a motif chunk, entries are 1 if motif chunks can see each other
+    # #     and 0 otherwise.
 
-    # AF : break regions into the start stop indices based on both template breaks and chain breaks
-    # this just gets the breaks by mask regions between motifs
-    mask_breaks = get_breaks(con_hal_idx0)
-    templ_range_inds = find_template_ranges(con_hal_idx0, return_inds=False)
+    # # AF : break regions into the start stop indices based on both template breaks and chain breaks
+    # # this just gets the breaks by mask regions between motifs
+    # mask_breaks = get_breaks(con_hal_idx0)
+    # templ_range_inds = find_template_ranges(con_hal_idx0, return_inds=False)
 
-    # add the breaks from the chain jumps
-    if full_complex_idx0 is not None:
-        chain_breaks = get_breaks(full_complex_idx0)
-        chain_range_inds = find_template_ranges(full_complex_idx0, return_inds=True)
-        # merge these into a list of sub-chunk tuples for template region locations
-        chunk_range_inds = merge_regions(templ_range_inds, chain_range_inds)
-    else:
-        chunk_range_inds = templ_range_inds
+    # # add the breaks from the chain jumps
+    # if full_complex_idx0 is not None:
+    #     chain_breaks = get_breaks(full_complex_idx0)
+    #     chain_range_inds = find_template_ranges(full_complex_idx0, return_inds=True)
+    #     # merge these into a list of sub-chunk tuples for template region locations
+    #     chunk_range_inds = merge_regions(templ_range_inds, chain_range_inds)
+    # else:
+    #     chunk_range_inds = templ_range_inds
 
+
+    chunk_range_inds = get_contig_chunks(contig_map)
     # now we have the complete con_hal_idx0 including templates that are separated by chain breaks!
     true_con_hal_idx0 = torch.tensor([ind for start,end in chunk_range_inds for ind in range(start,end+1)])
 
@@ -1197,11 +1328,11 @@ def get_repeat_t2d_mask(L, con_hal_idx0, ij_is_visible, nrepeat, full_complex_id
                 chunk_ij_visible[i,j] = 1
                 chunk_ij_visible[j,i] = 1
 
-
+    # chunk_range_inds_hal, mask_1d_hal = iu.get_hal_contig_ranges(contig_map.contigs, contig_map.inpaint_hal)
     # (2) Fill in LxL matrix with coarse mask info
     con_hal_idx0_full = torch.cat([true_con_hal_idx0 + i*Lasu for i in range(nrepeat)])
     chunk_range_inds_full = [(R[0] + i*Lasu, R[1] + i*Lasu) for i in range(nrepeat) for R in chunk_range_inds]
-
+    
 
     mask2d = torch.zeros(L, L)
     
@@ -1221,8 +1352,8 @@ def get_repeat_t2d_mask(L, con_hal_idx0, ij_is_visible, nrepeat, full_complex_id
                 mask2d[start_i:end_i+1, start_j:end_j+1] = 1
                 mask2d[start_j:end_j+1, start_i:end_i+1] = 1
 
+    # ipdb.set_trace()
     return mask2d, is_motif
-
 
 def parse_ij_get_repeat_mask(ij_visible, L, n_repeat, con_hal_idx0, supplied_full_contig, full_complex_idx0):
     """
@@ -1255,6 +1386,10 @@ def parse_ij_get_repeat_mask(ij_visible, L, n_repeat, con_hal_idx0, supplied_ful
     mask_t2d, _ = get_repeat_t2d_mask(L, con_hal_idx0, ij_visible_int, n_repeat, full_complex_idx0, supplied_full_contig)
 
     return mask_t2d
+
+
+
+
 
 
 
@@ -1360,6 +1495,7 @@ class NRBStyleSelfCond(Sampler):
             # # trying to reconstruct motif from 2d only 
 
             if not self._conf.model.symmetrize_repeats:
+                
                 # asymmetric case 
                 is_protein_motif = ~indep.is_sm * ~self.is_diffused_orig
                 if refine: 
@@ -1383,10 +1519,11 @@ class NRBStyleSelfCond(Sampler):
                 assert ij_visible is not None, '3 template + motif_only_2d requires description of motif pairwise visibility'
                 ij_visible = ij_visible.split('-') # e.g., [abc,de,df,...]
                 ij_visible_int = [tuple([abet2num[a] for a in s]) for s in ij_visible]
-
                 # mask_t2d, _ = get_repeat_t2d_mask(L, con_hal_idx0, ij_visible_int, 1, supplied_full_contig=True)
-                mask_t2d, _ = get_repeat_t2d_mask(L, con_hal_idx0, ij_visible_int, 1, full_complex_idx0, supplied_full_contig=True)
-            
+                # ipdb.set_trace()
+                # mask_t2d, _ = get_repeat_t2d_mask(L, con_hal_idx0, ij_visible_int, 1, full_complex_idx0, self.contig_map, supplied_full_contig=True)
+                mask_t2d, _ = get_repeat_t2d_mask(L, con_hal_idx0, self.contig_map, ij_visible_int, 1, supplied_full_contig=True)
+
             else:
                 # repeat/symmetric case
                 assert not refine, 'refine not yet implemented for symmetry/repeat' 
@@ -1455,6 +1592,24 @@ class NRBStyleSelfCond(Sampler):
         else:
             is_motif, t2d_is_revealed = None,None 
 
+        # ipdb.set_trace()
+        if (self.inf_conf.t2d_pic_filename) and (t==self._conf['diffuser']['T']):
+            if self.inf_conf.t2d_pic_filename.endswith('.png'):
+                out_pic_name = self.inf_conf.t2d_pic_filename
+            else:
+                out_pic_name = self.inf_conf.t2d_pic_filename + '.png'
+
+            fig, ax = plt.subplots(1,1,figsize=(5,5), dpi=300)
+            ax.imshow(t2d_is_revealed)
+            plt.tight_layout()
+            # plt.show()
+            plt.savefig(out_pic_name, bbox_inches='tight', dpi='figure')
+            plt.close()
+
+
+
+
+
         if not self.inf_conf.subsymm_t1d_perfect: 
             # all AA that are diffused (according to contigs) have intermediate confidences
             # even if they are templated in T2D 
@@ -1463,8 +1618,9 @@ class NRBStyleSelfCond(Sampler):
                                             self.is_diffused, 
                                             twotemplate=twotemplate,
                                             threetemplate=threetemplate,
-                                            is_motif=is_motif, 
                                             t2d_is_revealed=t2d_is_revealed,
+                                            is_motif=is_motif, 
+                                            polymer_type_masks=self.inf_conf.mask_seq_by_polymer,
                                             rfmotif=rfmotif
                                             )
         else:
@@ -1476,8 +1632,9 @@ class NRBStyleSelfCond(Sampler):
                                             self.has_imperfect_t1d, 
                                             twotemplate=twotemplate,
                                             threetemplate=threetemplate,
-                                            is_motif=is_motif, 
                                             t2d_is_revealed=t2d_is_revealed,
+                                            is_motif=is_motif, 
+                                            polymer_type_masks=self.inf_conf.mask_seq_by_polymer,
                                             rfmotif=rfmotif
                                             )
 
@@ -1685,18 +1842,27 @@ class NRBStyleSelfCond(Sampler):
 
                     if self.seq_self_cond:
                         # Allow this model to also do sequence recycling
-
+                        assert 0, 'MODIFY THIS LINE TO INCLUDE NA TOKENS!'
                         t1d[:,:,:,:20] = logits[:,None,:,:20]
                         t1d[:,:,:,20]  = 0 # Setting mask tokens to zero
 
-        px0         = rfo.get_xyz()[:,:14]
+        # ipdb.set_trace()
+        # px0         = rfo.get_xyz()[:,:14]
         # px0         = rfo.get_xyz()[:,:23]
-        # print('USING FIRST 23 ATOMS!!!!!!!!!!!!!!!!!!')
+        # px0         = rfo.get_xyz()[:,:NHEAVY]
+        # ipdb.set_trace()
+        print('MODEL RUNNERs LINE 1854')
+        px0         = rfo.get_xyz()[:,:self.inf_conf.num_atoms_modeled]
         logits      = rfo.get_seq_logits()
         seq_decoded = [rf2aa.chemical.num2aa[s] for s in rfi.seq[0]]
 
         logits = logits.float()
         px0    = px0.float()
+        # Modify logits if we want to use polymer masks:
+        if self._conf.inference['mask_seq_by_polymer']:
+            logit_penalty = 1e7
+            logits = logits - logit_penalty*(torch.ones_like(self.polymer_mask)-self.polymer_mask)
+
 
         if self.seq_diffuser is None:
             # Default method of decoding sequence
@@ -1709,6 +1875,7 @@ class NRBStyleSelfCond(Sampler):
             pseq_0[~self.is_diffused] = seq_init[~self.is_diffused].to(self.device) # [L,22]
         else:
             # Sequence Diffusion
+            assert 0, "IF WE DOING IT THIS WAY, NEED TO CHANGE TO ACCOMODATE NA TOKENS"
             pseq_0 = logits.squeeze()
             pseq_0 = pseq_0[:,:20]
 
@@ -1755,8 +1922,25 @@ class NRBStyleSelfCond(Sampler):
                 pass
 
         if t > self._conf.inference.final_step:
+            # ipdb.set_trace()
+            # x_t_1, seq_t_1, tors_t_1, px0, cur_rigid_tmplt = self.denoiser.get_next_pose(
+            #     xt=rfi.xyz[0,:,:14].cpu(),
+            #     px0=px0,
+            #     t=t,
+            #     diffusion_mask=~self.is_diffused,
+            #     seq_diffusion_mask=~self.is_diffused,
+            #     seq_t=seq_t,
+            #     pseq0=pseq_0,
+            #     diffuse_sidechains=self.preprocess_conf.sidechain_input,
+            #     align_motif=self.inf_conf.align_motif,
+            #     include_motif_sidechains=self.preprocess_conf.motif_sidechain_input,
+            #     rigid_symm_motif_kwargs=rigid_symm_motif_kwargs,
+            #     rigid_repeat_motif_kwargs=rigid_repeat_motif_kwargs,
+            #     origin_before_update=self._conf.inference.origin_before_update,
+            #     rfmotif=rfmotif,
+            # )
             x_t_1, seq_t_1, tors_t_1, px0, cur_rigid_tmplt = self.denoiser.get_next_pose(
-                xt=rfi.xyz[0,:,:14].cpu(),
+                xt=rfi.xyz[0,:,:self._conf.inference.num_atoms_modeled].cpu(),
                 px0=px0,
                 t=t,
                 diffusion_mask=~self.is_diffused,
@@ -1769,10 +1953,29 @@ class NRBStyleSelfCond(Sampler):
                 rigid_symm_motif_kwargs=rigid_symm_motif_kwargs,
                 rigid_repeat_motif_kwargs=rigid_repeat_motif_kwargs,
                 origin_before_update=self._conf.inference.origin_before_update,
+                num_atoms_modeled=self._conf.inference.num_atoms_modeled,
                 rfmotif=rfmotif,
             )
+            # x_t_1, seq_t_1, tors_t_1, px0, cur_rigid_tmplt = self.denoiser.get_next_pose(
+            #     xt=rfi.xyz[0,:,:NHEAVY].cpu(),
+            #     px0=px0,
+            #     t=t,
+            #     diffusion_mask=~self.is_diffused,
+            #     seq_diffusion_mask=~self.is_diffused,
+            #     seq_t=seq_t,
+            #     pseq0=pseq_0,
+            #     diffuse_sidechains=self.preprocess_conf.sidechain_input,
+            #     align_motif=self.inf_conf.align_motif,
+            #     include_motif_sidechains=self.preprocess_conf.motif_sidechain_input,
+            #     rigid_symm_motif_kwargs=rigid_symm_motif_kwargs,
+            #     rigid_repeat_motif_kwargs=rigid_repeat_motif_kwargs,
+            #     origin_before_update=self._conf.inference.origin_before_update,
+            #     num_atoms_modeled=self._conf.inference.num_atoms_modeled,
+            #     rfmotif=rfmotif,
+            # )
             self.cur_rigid_tmplt = cur_rigid_tmplt
         else:
+            # ipdb.set_trace()
             px0 = px0.cpu()
             px0[~self.is_diffused] = indep.xyz[~self.is_diffused]
             x_t_1 = torch.clone(px0)
@@ -1780,6 +1983,8 @@ class NRBStyleSelfCond(Sampler):
 
             # Dummy tors_t_1 prediction. Not used in final output.
             tors_t_1 = torch.ones((self.is_diffused.shape[-1], 10, 2))
+            # ipdb.set_trace()
+
 
         if self._conf.inference.internal_sym is not None:
             # Re-symmetrize after stochastic denoising step 
@@ -1801,7 +2006,7 @@ class NRBStyleSelfCond(Sampler):
         if REPORT_MEM:
             print('MEM REPORT END OF MODEL_RUNNERS.SAMPLE_STEP')
             mem_report()
-
+        # ipdb.set_trace()
         return px0, x_t_1, seq_t_1, tors_t_1, None, rfo
 
 def sampler_selector(conf: DictConfig, preloaded_ckpts={}, preloaded_models={}):

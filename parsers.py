@@ -282,3 +282,50 @@ def load_ligand_from_pdb(fn, lig_name=None, remove_H=True):
             atom_names.append(line[12:16])
 
     return mol, xyz_sm, mask_sm, msa_sm, bond_feats_sm, atom_names
+
+
+def read_multichain_template_pdb(Ls, templ_fn, align_conf=1.0, num_seq_classes=32):
+    xyzs = dict()
+    seqs = dict()
+    all_chains = []
+    Lasu = sum(Ls)
+
+    with open(templ_fn) as fp:
+        prior_resNo = None
+        idx = 0
+        for l in fp:
+            if l[:4] != "ATOM":
+                continue
+            
+            chn, resNo, atom, aa = l[21], int(l[22:26]), l[12:16], l[17:20]
+
+            if prior_resNo is not None:
+                if resNo != prior_resNo: idx += 1
+            if (chn not in all_chains and (idx == 0 or idx == Lasu)):
+                idx = 0
+                xyzs[chn] = torch.full((Lasu, 27, 3), np.nan).float()
+                seqs[chn] = torch.full((Lasu,), 20).long()
+                all_chains.append(chn)
+
+            chn = all_chains[-1]
+            aa_idx = util.aa2num[aa] if aa in util.aa2num.keys() else 20
+
+            for i_atm, tgtatm in enumerate(util.aa2long[aa_idx][:3]):
+                if tgtatm == atom:
+                    xyzs[chn][idx,i_atm,:] = torch.tensor([float(l[30:38]), float(l[38:46]), float(l[46:54])])
+                    break
+            else:
+                continue
+            seqs[chn][idx] = aa_idx
+            prior_resNo = resNo
+
+    xyzs = torch.stack([xyzs[i] for i in all_chains]) # (N,Lasu,27,3)
+    seqs = torch.stack([seqs[i] for i in all_chains]) # (N,Lasu)
+
+    mask_t = torch.logical_not(torch.isnan(xyzs[...,0]))
+    mask = mask_t[:,:,:3].all(dim=-1) 
+    conf = torch.where(mask, torch.tensor(align_conf).float(), torch.zeros((len(all_chains),Lasu), dtype=xyzs.dtype))
+    seqs = torch.nn.functional.one_hot(seqs, num_classes=num_seq_classes).float()
+    t1d = torch.cat((seqs, conf[:,:,None]), -1)
+
+    return xyzs, mask_t, t1d, seqs 
