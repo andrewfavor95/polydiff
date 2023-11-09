@@ -810,16 +810,17 @@ class Model:
 
         num_backbone_atoms_protein = 3 # we can make this variable later if we want
         num_backbone_atoms_nucleic = self.conf['preprocess']['num_atoms_na']
-        atom_trim_range = self.conf['inference']['num_atoms_modeled']
-        if self.conf['inference']['num_atoms_modeled']>=num_backbone_atoms_nucleic :
-            atom_trim_range = self.conf['inference']['num_atoms_modeled']
-        else:
-            atom_trim_range = NHEAVY
+        # atom_trim_range = self.conf['inference']['num_atoms_modeled']
+        # if self.conf['inference']['num_atoms_modeled']>=num_backbone_atoms_nucleic :
+        #     atom_trim_range = self.conf['inference']['num_atoms_modeled']
+        # else:
+        #     atom_trim_range = NHEAVY
         # num_backbone_atoms_nucleic = 3
         ### xyz_t ###
         #############
         if self.conf.preprocess.sidechain_input:
             raise Exception('not implemented')
+            assert 0, "NEED TO CHANGE THIS TO ADD NA TOKENS!"
             xyz_t[torch.where(seq_one_hot == 21, True, False),3:,:] = float('nan')
         else:
 
@@ -847,8 +848,8 @@ class Model:
             
             # atom_trim_range = self.conf['preprocess']['num_atoms_input'] # AF: default to 14, but can control how many
 
-            xyz_t = xyz_t.squeeze()[:,:atom_trim_range,:]
-            # xyz_t = xyz_t.squeeze()[:,:14,:]
+            # xyz_t = xyz_t.squeeze()[:,:atom_trim_range,:]
+            xyz_t = xyz_t.squeeze()[:,:14,:]
             # xyz_t = xyz_t.squeeze()[:,:NHEAVY,:]
             # ipdb.set_trace()
             # xyz_t = xyz_t.squeeze()[:,:NHEAVY,:]

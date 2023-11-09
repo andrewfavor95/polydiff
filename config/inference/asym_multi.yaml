@@ -3,7 +3,7 @@ defaults:
   - aa
 
 inference:
-  ckpt_path: /projects/ml/afavor/RFD/models/train_session2023-08-09_1691609548.1971881/BFF_3.pt
+  ckpt_path: /home/afavor/git/RFD_AF/models/afavs/nucleic_full/BFF_1.20.pt
   str_self_cond: True
   model_runner: NRBStyleSelfCond
   two_template: True

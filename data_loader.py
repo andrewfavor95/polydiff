@@ -2017,6 +2017,8 @@ def loader_dna_rna_diff(item, params, random_noise=5.0, pick_top=True, native_NA
     init = INIT_NA_CRDS.reshape(1,1,NTOTAL,3).repeat(NMDLS,L,1,1)
     mask = torch.full((NMDLS, L, NTOTAL), False)
     xyz = torch.where(mask[...,None], xyz, init).contiguous()
+
+
     
     if (len(pdb_ids)==2):
         #fd this can happen in rna/dna hybrids
@@ -2028,7 +2030,6 @@ def loader_dna_rna_diff(item, params, random_noise=5.0, pick_top=True, native_NA
     else:
         xyz[:,:,:23] = pdbA['xyz']
         mask[:,:,:23] = pdbA['mask']
-
 
     # other features
     idx = torch.arange(L)
@@ -2600,31 +2601,20 @@ class DistilledDataset(data.Dataset):
             # ic(indep.xyz[-1,:,0])
 
             indep_diffused_tp1_t, t_list = aa_model.diffuse(self.conf, self.diffuser, indep, is_diffused, t)
-            # ipdb.set_trace()
+
+
+            
+
             # Compute all strictly dependent model inputs from the independent inputs.
             rfi_tp1_t = []
+            score_frames = True # Default behavior, but can possibly switch to False based on next code block
             for indep_diffused, t in zip(indep_diffused_tp1_t, t_list):
-
-                # # Either randomize frames or set them to eye:
-                # if self.preprocess_param['p_randomize_frames'] > 0.0:
-                #     P_eye = 1.0 - self.preprocess_param['p_randomize_frames']
-
-                #     if np.random.rand() < P_eye: # if rand sample is less than prob of identity, set to the identity
-                #         # print('SETTING FRAMES TO IDENTITY')
-                #         indep_diffused.xyz = aa_model.eye_frames2(indep_diffused.xyz)
-                #         # ic(indep_diffused.xyz[-1,:,0])
-                        
-                #     else: # otherwise we randomize frames
-                #         # print('RANDOMIZING FRAMES')
-                #         indep_diffused.xyz = aa_model.randomly_rotate_frames(indep_diffused.xyz)
-                #         # ic(indep_diffused.xyz[-1,:,0])
-
                 # Either randomize frames or set them to eye:
                 if self.preprocess_param['p_keep_frames'] < 1.0:
                     P_change_frames = 1.0 - self.preprocess_param['p_keep_frames']
 
                     if np.random.rand() < P_change_frames: # if rand sample is less than prob of identity, set to the identity
-                        # ipdb.set_trace()
+                        score_frames = False
                         if self.preprocess_param['randomize_frames']:
                             assert not self.preprocess_param['eye_frames']
                             indep_diffused.xyz = aa_model.randomly_rotate_frames(indep_diffused.xyz)
@@ -2634,17 +2624,7 @@ class DistilledDataset(data.Dataset):
                             assert not self.preprocess_param['randomize_frames']
                             indep_diffused.xyz = aa_model.eye_frames2(indep_diffused.xyz)
 
-                # else:
 
-                #     if self.preprocess_param['randomize_frames']:
-                #         assert not self.preprocess_param['eye_frames']
-                #         indep_diffused.xyz = aa_model.randomly_rotate_frames(indep_diffused.xyz)
-                    
-                #     if self.preprocess_param['eye_frames']:
-                #         assert not self.preprocess_param['randomize_frames']
-                #         indep_diffused.xyz = aa_model.eye_frames2(indep_diffused.xyz)
-
-                # ic(indep_diffused.xyz[-1,:,0])
                 
 
                 # masks the sequence of indep 
@@ -2733,8 +2713,8 @@ class DistilledDataset(data.Dataset):
                         else: 
                             # no NaNs in Ca 
                             assert not torch.isnan(v.squeeze(0)[:,1:2,:]).any(), f'nan in {k}'
-            # ipdb.set_trace()
-            return indep, rfi_tp1_t, chosen_dataset, sel_item, t, is_diffused, task, atomizer, masks_1d, item_context
+
+            return indep, rfi_tp1_t, chosen_dataset, sel_item, t, is_diffused, task, atomizer, masks_1d, item_context, score_frames
 
 
 class DistributedWeightedSampler(data.Sampler):

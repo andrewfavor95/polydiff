@@ -197,6 +197,7 @@ class Trainer():
         self.valid_param['MINTPLT'] = 1
         self.valid_param['SEQID'] = 150.0
         self.loss_param = loss_param
+        self.loss_param_ref = loss_param.copy() # keeping reference copy in case we conditionally change loss weights
         ic(self.loss_param)
         self.ACCUM_STEP = accum_step
         self.batch_size = batch_size
@@ -373,7 +374,6 @@ class Trainer():
 
         gpu = pred_in.device
 
-
         #NB t is 1-indexed
         t_idx = t-1
  
@@ -496,7 +496,10 @@ class Trainer():
                 # Discrete Diffusion 
 
                 # Reshape logit_aa_s from [B,21,L] to [B,L,20]. 20 aa since seq diffusion cannot handle gap character
-                p_logit_aa_s = logit_aa_s[:,:20].transpose(1,2) # [B,L,21]
+                # 
+                # p_logit_aa_s = logit_aa_s[:,:20].transpose(1,2) # [B,L,21]
+                print('TRYING TO ADD MORE TOKENS!')
+                p_logit_aa_s = logit_aa_s[:,:32].transpose(1,2) # [B,L,21]
 
                 intseq_t = torch.argmax(seq_t, dim=-1)
                 loss, loss_aux, loss_vb = self.seq_diffuser.loss(x_t=intseq_t, x_0=seq, p_logit_x_0=p_logit_aa_s, t=t, diffusion_mask=seq_diffusion_mask)
@@ -685,7 +688,7 @@ class Trainer():
         is_protein_motif[is_atom] = False # protein only motif
         is_not_protein_motif = ~is_protein_motif
         is_not_protein_motif[is_atom] = False # protein only non-motif 
-
+        
         motif_rmsd      = calc_discontiguous_motif_rmsd(pred.detach(), true.detach(), is_protein_motif)
         non_motif_rmsd  = calc_discontiguous_motif_rmsd(pred.detach(), true.detach(), ~is_protein_motif)
         ligand_rmsd     = calc_discontiguous_motif_rmsd(pred.detach(), true.detach(), is_atom.to(is_protein_motif.device))
@@ -1223,6 +1226,7 @@ class Trainer():
         optimizer.zero_grad()
 
         start_time = time.time()
+
         
         counter = 0
         
@@ -1230,9 +1234,8 @@ class Trainer():
         for loader_out in train_loader:
             
 
-            indep, rfi_tp1_t, chosen_dataset, item, little_t, is_diffused, chosen_task, atomizer, masks_1d, item_context = loader_out
+            indep, rfi_tp1_t, chosen_dataset, item, little_t, is_diffused, chosen_task, atomizer, masks_1d, item_context, score_frames = loader_out
             context_msg = f'rank: {rank}: {item_context}'
-            # ipdb.set_trace()
             
             if indep.seq.shape[0] <= 3:
                 # skip SM examples w/ too few atoms
@@ -1302,20 +1305,19 @@ class Trainer():
                     with torch.no_grad():
                         with ddp_model.no_sync():
                             with torch.cuda.amp.autocast(enabled=USE_AMP):
-                                # ipdb.set_trace()
                                 rfo = aa_model.forward(
                                         ddp_model,
                                         rfi_tp1,
                                         use_checkpoint=False,
                                         return_raw=False
                                         )
-                                # ipdb.set_trace()
+
                                 rfi_t = aa_model.self_cond(indep, rfi_t, rfo,
                                                         twotemplate=self.preprocess_param['twotemplate'], 
                                                         threetemplate=self.preprocess_param['threetemplate'],
                                         )
                                 # xyz_prev_orig = rfi_t.xyz[0,:,:14].clone()
-                                # ipdb.set_trace()
+
                                 xyz_prev_orig = rfi_t.xyz[0,:,:rf2aa.chemical.NHEAVY].clone()
                 if DEBUG:
                     # torch.save(rfi_t, 'rfi_t_bugfixed.pt')
@@ -1331,6 +1333,7 @@ class Trainer():
                     if counter%self.ACCUM_STEP != 0:
                         stack.enter_context(ddp_model.no_sync())
                     with torch.cuda.amp.autocast(enabled=USE_AMP):
+
                         rfo = aa_model.forward(
                                         ddp_model,
                                         rfi_t,
@@ -1339,6 +1342,7 @@ class Trainer():
                                         **({model_input_logger.LOG_ONLY_KEY: {'t':int(little_t), 'item': item}} if self.log_inputs else {}))
 
                         logit_s, logit_aa_s, logits_pae, logits_pde, p_bind, pred_crds, alphas, px0_allatom, pred_lddts, _, _, _, _ = rfo.unsafe_astuple()
+
                         is_diffused = is_diffused.to(gpu)
                         indep.seq = indep.seq.to(gpu)
                         indep.is_sm = indep.is_sm.to(gpu)
@@ -1407,6 +1411,16 @@ class Trainer():
                         true_crds[:,indep.is_na,rf2aa.chemical.NHEAVYNUC:] = 0
                         xyz_t[:] = 0
                         seq_t[:] = 0
+
+                        
+                        # conditional modification of loss param dict:
+                        # loss_param_in = self.loss_param.clone()
+                        
+                        if score_frames:
+                            self.loss_param['w_frame_dist'] = self.loss_param_ref['w_frame_dist']
+                        else:
+                            self.loss_param['w_frame_dist'] = 0
+
 
                         # get atomized frames for general FAPE computation in calc_loss
                         loss, loss_dict, loss_weights = self.calc_loss(
@@ -1561,9 +1575,9 @@ class Trainer():
                     rf2aa.tensor_util.to_device(indep, 'cpu')
 
                     pred_xyz = xyz_prev_orig.clone()
-                    # ipdb.set_trace()
+
                     pred_xyz[:,:3] = pred_crds[-1, 0]
-                    # ipdb.set_trace()
+
 
                     for suffix, xyz in [
                         ('input', xyz_prev_orig),
