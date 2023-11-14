@@ -359,9 +359,11 @@ def get_diffusion_mask_chunked(indep, atom_mask, low_prop, high_prop, broken_pro
     # if torch.logical_and((indep.is_dna, indep.is_rna)).any(): # IF we have nucleic acids, we can choose to process differently
     if indep.is_na.any(): # IF we have nucleic acids, we can choose to process differently
         mask2d, is_motif = _get_diffusion_mask_chunked_na(indep.xyz, indep.is_na, low_prop, high_prop, broken_prop,
-                                                            max_motif_chunks=max_motif_chunks,
-                                                            na_fixed_intra=indep.na_fixed_intra,
-                                                            na_fixed_inter=indep.na_fixed_inter)
+                                                            max_motif_chunks=max_motif_chunks)
+        # mask2d, is_motif = _get_diffusion_mask_chunked_na(indep.xyz, indep.is_na, low_prop, high_prop, broken_prop,
+        #                                                     max_motif_chunks=max_motif_chunks,
+        #                                                     na_fixed_intra=indep.na_fixed_intra,
+        #                                                     na_fixed_inter=indep.na_fixed_inter)
 
     else:
         mask2d, is_motif = _get_diffusion_mask_chunked(indep.xyz, low_prop, high_prop, max_motif_chunks)
@@ -820,9 +822,10 @@ def get_triple_contact_3template(indep,
     assert indep.is_sm.sum() == 0, 'small molecules not yet supported'
 
     if indep.is_na.any(): # IF we have nucleic acids, we can choose to process differently
-        mask2d, is_motif = _get_triple_contact_3template_na(indep.xyz, indep.is_na, low_prop, high_prop, broken_prop,
-                                                    na_fixed_intra=indep.na_fixed_intra,
-                                                    na_fixed_inter=indep.na_fixed_inter)
+        mask2d, is_motif = _get_triple_contact_3template_na(indep.xyz, indep.is_na, low_prop, high_prop, broken_prop)
+        # mask2d, is_motif = _get_triple_contact_3template_na(indep.xyz, indep.is_na, low_prop, high_prop, broken_prop,
+        #                                             na_fixed_intra=indep.na_fixed_intra,
+        #                                             na_fixed_inter=indep.na_fixed_inter)
 
     else:
         mask2d, is_motif = _get_triple_contact_3template(indep.xyz, low_prop, high_prop)
@@ -1680,8 +1683,8 @@ def generate_masks(indep, task, loader_params, chosen_dataset, full_chain=None, 
 
         mask_fns = list( loader_params['DIFF_MASK_PROBS'].keys() )
 
-        indep.na_fixed_inter=loader_params["NA_FIXED_INTER"]
-        indep.na_fixed_intra=loader_params["NA_FIXED_INTRA"]
+        # indep.na_fixed_inter=loader_params["NA_FIXED_INTER"]
+        # indep.na_fixed_intra=loader_params["NA_FIXED_INTRA"]
         indep.is_na = get_nucleic_acid_residues(indep.seq)
 
         # if len(indep.seq)>12:

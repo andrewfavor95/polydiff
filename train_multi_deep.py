@@ -366,7 +366,9 @@ class Trainer():
                   w_ax_ang=0.0, w_frame_dist=0.0, eps=1e-6, w_motif_fape=0.0,
                   w_nonmotif_fape=0.0, norm_fape=10.0, clamp_fape=10.0,
                   backprop_non_displacement_on_given=False, masks_1d={},
-                  atom_frames=None, w_ligand_intra_fape=1.0, w_prot_lig_inter_fape=1.0):
+                  atom_frames=None, w_ligand_intra_fape=1.0, w_prot_lig_inter_fape=1.0,
+                  fape_scale_vec=None, scale_prot_fape=1.0, scale_dna_fape=1.0, scale_rna_fape=1.0,
+                  ):
         
         # assuming all bad crds have been popped
         assert not torch.isnan(pred_in).any()
@@ -553,7 +555,7 @@ class Trainer():
         #######################
 
         # Structural loss
-        tot_str, str_loss = calc_str_loss(pred, true, mask_2d, same_chain, negative=negative,
+        tot_str, str_loss = calc_str_loss(pred, true, mask_2d, same_chain, negative=negative, fape_scale_vec=None,
                                               A=10.0, d_clamp=None if unclamp else 10.0, gamma=1.0)
     
         
@@ -563,17 +565,17 @@ class Trainer():
         # mask out all (i,j) pairs where i or j is a small molecule
         t2d_is_revealed_protein_only[is_sm,:] = False 
         t2d_is_revealed_protein_only[:,is_sm] = False
-        
         if is_prot_motif.sum() > 0:
             had_prot_motif = True
-            tot_motif_fape, _ = calc_str_loss(pred, true, t2d_is_revealed_protein_only.to(device=pred.device), same_chain, negative=negative,
+            tot_motif_fape, _ = calc_str_loss(pred, true, t2d_is_revealed_protein_only.to(device=pred.device), same_chain, negative=negative, fape_scale_vec=None,
                                                 A=norm_fape/2, d_clamp=None if unclamp else clamp_fape/2, gamma=1.0)
         else: 
             had_prot_motif = False
             tot_motif_fape = float('nan')
         
         # FAPE on non-motif residues
-        tot_nonmotif_fape, _ = calc_str_loss(pred, true, ~t2d_is_revealed.to(device=pred.device), same_chain, negative=negative,
+        # use of fape_scale_vec: only scale NONMOTIF fape for diff polymer types.
+        tot_nonmotif_fape, _ = calc_str_loss(pred, true, ~t2d_is_revealed.to(device=pred.device), same_chain, negative=negative, fape_scale_vec=fape_scale_vec,
                                              A=norm_fape, d_clamp=None if unclamp else clamp_fape, gamma=1.0)
         
         ### Ligand Intra FAPE ###
@@ -1248,8 +1250,18 @@ class Trainer():
                 if not passes_content_check:
                     continue
 
+            if any([self.loss_param[f'scale_{polymer}_fape']<1.0 for polymer in ['prot','dna','rna']]):
+                fape_scale_vec = torch.ones_like(is_diffused).float()
+                fape_scale_vec[indep.is_protein] = self.loss_param['scale_prot_fape']
+                fape_scale_vec[indep.is_dna] = self.loss_param['scale_dna_fape']
+                fape_scale_vec[indep.is_rna] = self.loss_param['scale_rna_fape']
+                fape_scale_vec = fape_scale_vec.to(gpu)
 
+            else:
+                # fape_scale_vec = torch.ones_like(is_diffused).float()
+                fape_scale_vec = None
 
+            
 
             with error.context(context_msg):
                 rfi_tp1, rfi_t = rfi_tp1_t
@@ -1287,6 +1299,16 @@ class Trainer():
                 diffusion_mask     = ~is_diffused
 
                 unroll_performed = False
+
+
+                # # save block adjacency to re-add to the t2d with self conditioning
+                # if self.preprocess_param['provide_ss']:
+                #     adj = t2d[...,44:47]
+                # if self.preprocess_param['provide_disulphides']:
+                #     cys = t2d[...,47:48]
+                # assert(( self.preprocess_param['prob_self_cond'] == 0 ) ^ \
+                #        ( self.preprocess_param['str_self_cond'] or self.preprocess_param['seq_self_cond'] )), \
+                #       'prob_self_cond must be > 0 for str_self_cond or seq_self_cond to be active'
 
                 # Some percentage of the time, provide the model with the model's prediction of x_0 | x_t+1
                 # When little_t == T should not unroll as we cannot go back further in time.
@@ -1451,6 +1473,7 @@ class Trainer():
                                 t=int(little_t), 
                                 masks_1d=masks_1d,
                                 atom_frames=rfi_t.atom_frames,
+                                fape_scale_vec=fape_scale_vec,
                                 **self.loss_param)
 
 

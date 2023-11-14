@@ -87,6 +87,29 @@ def parse_a3m(filename):
 
     return msa,ins
 
+def parse_dssr(filename, return_seq=False, ignore_symbols=None):
+    """
+    For getting RNA secondary structure preds
+    """
+    
+    with open(filename, "r") as handle:
+        lines = [line.rstrip() for line in handle]
+        assert len(lines[1])==len(lines[2]), "sec struct string length doesnt match seq length"
+        seq = lines[1]
+        sstr = lines[2]
+
+    if ignore_symbols:
+
+        for sym in ignore_symbols:
+            sstr = sstr.replace(sym,'.')
+
+    
+    if return_seq:
+        return sstr, seq
+    
+    else:
+        return sstr
+        
 
 # read and extract xyz coords of N,Ca,C atoms
 # from a PDB file

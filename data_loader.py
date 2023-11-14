@@ -14,7 +14,7 @@ import csv
 import ast
 from dateutil import parser
 import numpy as np
-from parsers import parse_a3m, parse_pdb
+from parsers import parse_a3m, parse_pdb, parse_dssr
 from chemical import INIT_CRDS
 from kinematics import xyz_to_t2d
 import sys
@@ -41,7 +41,7 @@ import pickle
 import random
 from apply_masks import mask_inputs
 import util
-from util import mask_sequence_chunks
+from util import mask_sequence_chunks, sstr_to_matrix
 import math
 from functools import partial
 import pandas as pd
@@ -63,6 +63,7 @@ fb_dir = "/projects/ml/TrRosetta/fb_af"
 cn_dir = "/home/jwatson3/torch/cn_ideal"
 na_dir = "/home/dimaio/TrRosetta/nucleic"
 sm_compl_dir = "/projects/ml/RF2_allatom"
+eterna_dir = "/home/afavor/data/distil/eterna_p90"
 if not os.path.exists(base_dir):
     # training on AWS
     base_dir = "/data/databases/PDB-2021AUG02"
@@ -81,6 +82,7 @@ def set_data_loader_params(args):
         #"PDB_LIST"    : "/gscratch2/list_2021AUG02.csv",
         "FB_LIST"    : "%s/list_b1-3.csv"%fb_dir,
         "DNA_DISTIL_LIST"  : "/projects/ml/prot_dna/prot_na_distill.csv",
+        "ETERNA_DISTIL_LIST"  : "%s/list_eterna_distill.csv"%eterna_dir,
         "VAL_PDB"    : "%s/val/xaa"%base_dir,
         #"VAL_PDB"   : "/gscratch2/PDB_val/xaa",
         "VAL_COMPL"  : "%s/val_lists/xaa"%compl_dir,
@@ -101,6 +103,7 @@ def set_data_loader_params(args):
         "CN_DIR"     : cn_dir,
         "CN_DICT"    : os.path.join(cn_dir, 'cn_ideal_train_test.pt'),
         "COMPL_DIR"  : compl_dir,
+        "ETERNA_DIR" : eterna_dir,
         "TF_DIR"     : "/projects/ml/prot_dna",
         "MINTPLT" : 0,
         "MAXTPLT" : 5,
@@ -152,6 +155,7 @@ def set_data_loader_params(args):
         "SM_ONLY": args.sm_only,
         "NA_FIXED_INTRA": args.na_fixed_intra,
         "NA_FIXED_INTER": args.na_fixed_inter,
+        "USE_NUCLEIC_SS":False,
     }
     for param in PARAMS:
         if hasattr(args, param.lower()):
@@ -2084,6 +2088,117 @@ def loader_dna_rna_diff(item, params, random_noise=5.0, pick_top=True, native_NA
 
 
 
+def loader_eterna_distil_diff(item, params, random_noise=5.0, pick_top=True, native_NA_frac=0.05, negative=False, fixbb=False):
+
+    pdb_ids = item['PRED_ID']
+    Ls = item['LEN']
+    HASH = item['HASH']
+
+    #################################################
+    # Load and prepare secondary structure stuff    #
+    #################################################
+
+
+    pdb_path = params['ETERNA_DIR']+'/refined_pdbs/'+pdb_ids+'.pdb'
+    fasta_path = params['ETERNA_DIR']+'/refined_fastas/'+pdb_ids+'.fa'
+    dbns_path = params['ETERNA_DIR']+'/refined_dbns/'+pdb_ids+'-2ndstrs.dbn'
+
+    # dssr = parse_dssr(dbns_path)
+    # ss_matrix = sstr_to_matrix(dssr)
+    # nmer = 1 + len([_ for _ in dssr if _=='&'])
+
+    xyz, mask, _, pdbseq = rf2aa.parsers.parse_pdb(pdb_path,seq=True,lddtmask=False,rosetta_na_alphabet=True)
+
+    xyz = torch.from_numpy(xyz).unsqueeze(0)
+    mask = torch.from_numpy(mask).unsqueeze(0)
+    pdbseq = torch.from_numpy(pdbseq).unsqueeze(0)
+
+
+    # rna_alpha2num = {'A':27 , 'C' :28 , 'G' :29 , 'U' :30 , 
+    #                 'RA':27 , 'RC':28 , 'RG':29 , 'RU':30 ,
+    #                  'X':31 , 'RX': 31 }
+
+    # dssr = parse_dssr(dbns_path,ignore_symbols=['&'])
+    # dssr_dbn, dssr_seq = parse_dssr(dbns_path,ignore_symbols=['&'],return_seq=True)
+    # ss_matrix = sstr_to_matrix(dssr_dbn, only_basepairs=True)
+    # nmer = 1
+
+    ##################################
+    # Load and prepare sequence data #
+    ##################################
+    # get MSA features
+    msa, ins = rf2aa.parsers.parse_fasta(fasta_path)
+    msa = torch.from_numpy(msa)
+    ins = torch.from_numpy(ins)
+    assert  msa.shape[-1]==pdbseq.shape[-1], "CANNOT FIX MSA WITH RNA SEQ, DIFFERENT SIZES FROM FASTA AND DSSR FILES"
+    msa[0] = pdbseq[0]
+    # for i in range(msa.shape[0]):
+    #     for j, resi_j in enumerate(list(dssr_seq)):
+    #         msa[i,j] = rna_alpha2num[resi_j]
+
+    msa = msa.long()
+    ins = ins.long()
+    
+    # featurize_single_chain
+    seq, msa_seed_orig, msa_seed, msa_extra, mask_msa = rf2aa.data_loader.MSAFeaturize(msa, ins, params, L_s=Ls, fixbb=fixbb)
+    
+    ###################################
+    # Load and prepare structure data #
+    ###################################
+    # load predicted structure as "truth"
+
+    # read template info (no template)
+    # NOTE: use templates?
+    L = sum(Ls)
+    ntempl = 0
+    tpltA = {'ids':[]} # a fake tpltA
+    xyz_t, f1d_t, mask_t = rf2aa.data_loader.TemplFeaturize(tpltA, sum(Ls), params, offset=0, npick=ntempl, pick_top=pick_top, random_noise=random_noise) 
+
+    # other features
+    idx = idx_from_Ls(Ls)
+    same_chain = same_chain_2d_from_Ls(Ls)
+    bond_feats = bond_feats_from_Ls(Ls).long()
+    ch_label = torch.cat([torch.full((L_,), i) for i,L_ in enumerate(Ls)]).long()
+
+    ###############
+    # Do cropping #
+    ###############
+    if sum(Ls) > params['CROP']:
+    # if True: # always crop!
+        cropref = np.random.randint(xyz.shape[0])
+        sel = get_na_crop(seq[0], xyz[cropref], mask[cropref], torch.arange(sum(Ls)), Ls, params, negative)
+        seq = seq[:,sel]
+        msa_seed_orig = msa_seed_orig[:,:,sel]
+        msa_seed = msa_seed[:,:,sel]
+        msa_extra = msa_extra[:,:,sel]
+        mask_msa = mask_msa[:,:,sel]
+        xyz = xyz[:,sel]
+        mask = mask[:,sel]
+        xyz_t = xyz_t[:,sel]
+        f1d_t = f1d_t[:,sel]
+        mask_t = mask_t[:,sel]
+        idx = idx[sel]
+        same_chain = same_chain[sel][:,sel]
+        bond_feats = bond_feats[sel][:,sel]
+        ch_label = ch_label[sel]
+
+
+    xyz_prev, mask_prev = rf2aa.data_loader.generate_xyz_prev(xyz_t, mask_t, params)
+    
+    chirals = torch.Tensor()
+    ch_label[Ls[0]:] = 1
+    dist_matrix = rf2aa.data_loader.get_bond_distances(bond_feats)
+
+    return seq.long(), msa_seed_orig.long(), msa_seed.float(), msa_extra.float(), mask_msa,\
+           xyz.float(), mask, idx.long(), \
+           xyz_t.float(), f1d_t.float(), mask_t, \
+           xyz_prev.float(), mask_prev, \
+           same_chain, False, False, torch.zeros(seq.shape), bond_feats, dist_matrix, chirals, ch_label, 'C1', "eterna", item, [Ls,[]]
+
+
+
+
+
 
 @dataclass
 class WeightedDataset:
@@ -2131,9 +2246,6 @@ def default_dataset_configs(loader_param, debug=False):
         'diff':         rf2aa.data_loader.loader_pdb},
         weights_dict["pdb"])
 
-    # def pdb_aa_loader_fixbb(item, *args, **kwargs):
-    #     return sm_compl_loader_fixbb(item + [()], *args, **kwargs)
-
     pdb_aa_config = WeightedDataset(train_ID_dict["pdb"], train_dict["pdb"], {
         'seq2str':      rf2aa.data_loader.loader_pdb,
         'str2seq':      rf2aa.data_loader.loader_pdb, 
@@ -2163,25 +2275,6 @@ def default_dataset_configs(loader_param, debug=False):
         weights_dict["na_compl"]
     )
     
-    # distill_config = WeightedDataset(train_ID_dict["dna_distil"], train_dict["dna_distil"], {
-    #     'seq2str':      rf2aa.data_loader.loader_na_complex,
-    #     'str2seq':      rf2aa.data_loader.loader_na_complex, 
-    #     'str2seq_full': rf2aa.data_loader.loader_na_complex, 
-    #     'hal':          rf2aa.data_loader.loader_na_complex, 
-    #     'hal_ar':       rf2aa.data_loader.loader_na_complex,
-    #     'diff':         loader_dna_distil},
-    #     weights_dict["dna_distil"]
-    # )
-
-    # tf_distill_config = WeightedDataset(train_ID_dict["distil_tf"], train_dict["distil_tf"], {
-    #     'seq2str':      rf2aa.data_loader.loader_na_complex,
-    #     'str2seq':      rf2aa.data_loader.loader_na_complex, 
-    #     'str2seq_full': rf2aa.data_loader.loader_na_complex, 
-    #     'hal':          rf2aa.data_loader.loader_na_complex, 
-    #     'hal_ar':       rf2aa.data_loader.loader_na_complex,
-    #     'diff':         loader_dna_distil},
-    #     weights_dict["distil_tf"]
-    # )
     tf_distill_config = WeightedDataset(train_ID_dict["distil_tf"], train_dict["distil_tf"], {
         'seq2str':      rf2aa.data_loader.loader_na_complex,
         'str2seq':      rf2aa.data_loader.loader_na_complex, 
@@ -2192,16 +2285,6 @@ def default_dataset_configs(loader_param, debug=False):
         weights_dict["distil_tf"]
     )
 
-    # rna_config = WeightedDataset(train_ID_dict["rna"], train_dict["rna"], {
-    #     'seq2str':      rf2aa.data_loader.loader_rna,
-    #     'str2seq':      rf2aa.data_loader.loader_rna, 
-    #     'str2seq_full': rf2aa.data_loader.loader_rna, 
-    #     'hal':          rf2aa.data_loader.loader_rna, 
-    #     'hal_ar':       rf2aa.data_loader.loader_rna,
-    #     'diff':         loader_rna_diff},
-    #     weights_dict["rna"]
-    # )
-
     rna_config = WeightedDataset(train_ID_dict["rna"], train_dict["rna"], {
         'seq2str':      rf2aa.data_loader.loader_dna_rna,
         'str2seq':      rf2aa.data_loader.loader_dna_rna, 
@@ -2211,9 +2294,16 @@ def default_dataset_configs(loader_param, debug=False):
         'diff':         loader_dna_rna_diff},
         weights_dict["rna"]
     )
+    eterna_config = WeightedDataset(train_ID_dict["eterna"], train_dict["eterna"], {
+        'seq2str':      loader_eterna_distil_diff,
+        'str2seq':      loader_eterna_distil_diff, 
+        'str2seq_full': loader_eterna_distil_diff, 
+        'hal':          loader_eterna_distil_diff, 
+        'hal_ar':       loader_eterna_distil_diff,
+        'diff':         loader_eterna_distil_diff},
+        weights_dict["eterna"]
+    )
     
-    
-    # neg_config = WeightedDataset(neg_IDs, neg_dict, loader_complex, neg_weights)
     fb_config = WeightedDataset(train_ID_dict["fb"], train_dict["fb"], {
                         'seq2str':      rf2aa.data_loader.loader_fb,
                         'str2seq':      rf2aa.data_loader.loader_fb, 
@@ -2247,7 +2337,8 @@ def default_dataset_configs(loader_param, debug=False):
         'sm_complex': sm_compl_config,
         'na_compl': nacompl_config,
         'tf_distil': tf_distill_config,
-        'rna': rna_config
+        'rna': rna_config,
+        'eterna': eterna_config,
         }), homo
 
 fallback_spoof = {
@@ -2459,6 +2550,10 @@ class DistilledDataset(data.Dataset):
                 out = chosen_loader(sel_item, {**rf2aa.data_loader.default_dataloader_params, **self.params}, fixbb=fixbb)
 
             elif chosen_dataset == 'rna':
+                chosen_loader = dataset_config.task_loaders[task]
+                out = chosen_loader(sel_item, {**rf2aa.data_loader.default_dataloader_params, **self.params}, fixbb=fixbb)
+
+            elif chosen_dataset == 'eterna':
                 chosen_loader = dataset_config.task_loaders[task]
                 out = chosen_loader(sel_item, {**rf2aa.data_loader.default_dataloader_params, **self.params}, fixbb=fixbb)
 
@@ -2690,11 +2785,33 @@ class DistilledDataset(data.Dataset):
                 elif chosen_dataset == 'rna':
                     hotspot_id = make_hotspot_id_distil(out[-1])
                     hotspot = make_hotspot_vector(indep, self.base_hotspot_indices_dict, hotspot_id)
+
+                elif chosen_dataset == 'eterna':
+                    hotspot_id = make_hotspot_id_distil(out[-1])
+                    hotspot = make_hotspot_vector(indep, self.base_hotspot_indices_dict, hotspot_id)
                 else:
                     hotspot = default_hotspot_vector(indep.length())
 
                 rfi_tp1_t[0].t1d = torch.cat((rfi_tp1_t[0].t1d, hotspot), dim=-1)
                 rfi_tp1_t[1].t1d = torch.cat((rfi_tp1_t[1].t1d, hotspot), dim=-1)
+
+
+            if self.params['USE_NUCLEIC_SS']:
+                if chosen_dataset == 'eterna':
+                    pdb_ids = sel_item['PRED_ID']
+                    dbns_path = self.params['ETERNA_DIR']+'/refined_dbns/'+pdb_ids+'-2ndstrs.dbn'
+                    dssr_dbn = parse_dssr(dbns_path,ignore_symbols=['&'],return_seq=False)
+                    ss_matrix = torch.from_numpy(sstr_to_matrix(dssr_dbn, only_basepairs=True))
+                    ss_matrix = ss_matrix.reshape(1,1,ss_matrix.shape[0],ss_matrix.shape[1],1).repeat(1,3,1,1,1)
+
+                else:
+                    # pair_distances = xyz_to_t2d(xyz_t[None,:,:,:3])[:,:,:,:,:37]
+                    ss_matrix = torch.zeros_like(rfi_tp1_t[0].t2d[:,:,:,:,:1])
+
+                rfi_tp1_t[0].t2d = torch.cat((rfi_tp1_t[0].t2d, ss_matrix), dim=-1)
+                rfi_tp1_t[1].t2d = torch.cat((rfi_tp1_t[1].t2d, ss_matrix), dim=-1)
+
+                
 
 
             run_inference.seed_all(mask_gen_seed) # Reseed the RNGs for test stability.

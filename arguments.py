@@ -141,6 +141,13 @@ def get_args(in_args=None):
             help='do we want the internal structure information of all nucleics fixed?')
     data_group.add_argument('-na_fixed_inter', default="False", choices=("True","False"),
             help='do we want the relative orientation of all nucleics fixed?')
+    data_group.add_argument('-binding_distance_cutoff', type=float, default=4.,
+            help='distance to find protein-na interaction residues. Residues with atoms closer than this will be considered binding and the motif of these binding residues will be preserved. ')
+    data_group.add_argument('-backbone_hotspots', action='store_true', default=False, help='Training argument - add hotspot feature for non-base-specific contacts to dna phosphate backbone')
+    data_group.add_argument('-base_specific_hotspots', action='store_true', default=False, help='Training argument - add hotspot feature for base-specific contacts to dna')
+    data_group.add_argument('-use_nucleic_ss', action='store_true', default=False, help='Training argument - add basepair secondary structure to 2d templates')
+
+
     # data_group.add_argument('-contact_cut', type=int, default=8,
     #         help='Distance between protein and non-protein (sm, na) atoms to classify them as in contact')
     # data_group.add_argument('-chunk_size_min', type=int, default=1,
@@ -342,6 +349,12 @@ def get_args(in_args=None):
             help="Weight on motif fape")
     loss_group.add_argument('-w_nonmotif_fape', type=float, default=0.0,
             help="Weight on nonmotif fape")
+    loss_group.add_argument('-scale_prot_fape', type=float, default=1.0,
+            help="Default scale of protein FAPE")
+    loss_group.add_argument('-scale_dna_fape', type=float, default=1.0,
+            help="Default scale of dna FAPE")
+    loss_group.add_argument('-scale_rna_fape', type=float, default=1.0,
+            help="Default scale of dna FAPE")
     loss_group.add_argument('-norm_fape', type=float, default=10.0, 
             help="Divisor for FAPE loss")
     loss_group.add_argument('-clamp_fape', type=float, default=10.0,
@@ -510,7 +523,11 @@ def get_args(in_args=None):
                 'w_motif_fape',
                 'w_nonmotif_fape',
                 'norm_fape',
-                'clamp_fape']:
+                'clamp_fape',
+                'scale_prot_fape',
+                'scale_dna_fape',
+                'scale_rna_fape',
+                ]:
         loss_param[param] = getattr(args, param)
     
     # Collect preprocess_params

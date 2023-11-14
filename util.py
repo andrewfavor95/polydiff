@@ -710,3 +710,69 @@ def get_chain_lengths(pdb_idx, return_dict=False):
     else:
         return chain_length_list
 
+
+
+def sstr_to_matrix(ss_string, only_basepairs=True):
+
+    def find_any_bracket_pairs(s, open_symbol, close_symbol):
+        stack = []
+        pairs = []
+
+        for i, char in enumerate(s):
+            if char == open_symbol:
+                stack.append(i)
+            elif char == close_symbol:
+                if stack:
+                    pairs.append((stack.pop(), i))
+                else:
+                    raise ValueError(f"No matching open parenthesis for closing parenthesis at index {i}")
+
+        if stack:
+            raise ValueError(f"No matching closing parenthesis for open parenthesis at index {stack[0]}")
+
+        return pairs
+
+    def find_loop_bases(s):
+        loop_bases = []
+        for i, char in enumerate(s):
+            if char == '.':
+                loop_bases.append(i)
+                
+        return loop_bases
+    open_symbols  = ['(','[','{','<']
+    close_symbols = [')',']','}','>']
+
+    all_pair_dict = {}
+    for pair_ind, (open_symbol, close_symbol) in enumerate(zip(open_symbols, close_symbols)):
+
+        num_opens = len([ _ for _ in ss_string if _ == open_symbol])
+        num_close = len([ _ for _ in ss_string if _ == close_symbol])
+        assert num_opens==num_close , "number of base pairs must be an even number... must be an error somewhere..."
+        
+        all_pair_dict[pair_ind] = find_any_bracket_pairs(ss_string, open_symbol, close_symbol)
+        
+        
+
+    
+
+    # pairs
+    L = len(ss_string)
+    ss_adj_mat = np.zeros((L,L))
+
+    if not only_basepairs:
+        loop_inds = find_loop_bases(ss_string)
+        for i in loop_inds:
+            ss_adj_mat[i,i] = 1
+        
+    for pair_ind in all_pair_dict.keys():
+        paired_base_list = all_pair_dict[pair_ind]
+        for i,j in paired_base_list:
+            ss_adj_mat[i,j] = pair_ind + 2
+            ss_adj_mat[j,i] = pair_ind + 2
+
+    return ss_adj_mat
+        
+
+
+
+            

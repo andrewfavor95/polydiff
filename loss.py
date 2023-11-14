@@ -316,7 +316,7 @@ def report_gradient_norms(loss_dict,
     return True 
 
 
-def calc_str_loss(pred, true, mask_2d, same_chain, negative=False, d_clamp=10.0, d_clamp_inter=10.0, A=10.0, gamma=0.99, eps=1e-6):
+def calc_str_loss(pred, true, mask_2d, same_chain, negative=False, fape_scale_vec=None, d_clamp=10.0, d_clamp_inter=10.0, A=10.0, gamma=0.99, eps=1e-6):
     '''
     Calculate Backbone FAPE loss
     Input:
@@ -328,8 +328,8 @@ def calc_str_loss(pred, true, mask_2d, same_chain, negative=False, d_clamp=10.0,
     true = true.unsqueeze(0)
     t_tilde_ij = get_t(true[:,:,:,0], true[:,:,:,1], true[:,:,:,2], non_ideal=True)
     t_ij = get_t(pred[:,:,:,0], pred[:,:,:,1], pred[:,:,:,2])
-    
     difference = torch.sqrt(torch.square(t_tilde_ij-t_ij).sum(dim=-1) + eps)
+
     if d_clamp != None:
         clamp = torch.where(same_chain.bool(), d_clamp, d_clamp_inter)
         clamp = clamp[None]
@@ -343,6 +343,12 @@ def calc_str_loss(pred, true, mask_2d, same_chain, negative=False, d_clamp=10.0,
         mask = mask_2d * same_chain
     else:
         mask = mask_2d
+
+    # Allow loss terms to be scaled by different polymer types
+    if fape_scale_vec is not None:
+        mask = mask * torch.sqrt(fape_scale_vec[None,:] * fape_scale_vec[:,None]).unsqueeze(0)
+
+
     # calculate masked loss (ignore missing regions when calculate loss)
     loss = (mask[None]*loss).sum(dim=(1,2,3)) / (mask.sum()+eps) # (I)
 
@@ -350,6 +356,7 @@ def calc_str_loss(pred, true, mask_2d, same_chain, negative=False, d_clamp=10.0,
     w_loss = torch.pow(torch.full((I,), gamma, device=pred.device), torch.arange(I, device=pred.device))
     w_loss = torch.flip(w_loss, (0,))
     w_loss = w_loss / w_loss.sum()
+
 
     tot_loss = (w_loss * loss).sum()
     return tot_loss, loss.detach() 
