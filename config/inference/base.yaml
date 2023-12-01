@@ -201,6 +201,27 @@ preprocess:
   randomize_frames: False
   num_atoms_na: 14
   # num_atoms_input: 14
+
+scaffoldguided:
+  scaffoldguided: False
+  target_pdb: False
+  target_path: null
+  scaffold_list: null
+  scaffold_dir: null
+  sampled_insertion: 0
+  sampled_N: 0
+  sampled_C: 0
+  ss_mask: 0
+  systematic: False
+  contig_crop: null
+  radial_crop: null
+  target_ss: null
+  target_adj: null
+  mask_loops: True
+  target_ss_string: null
+  target_ss_pairs: null
+  ss_cond_ckpt_path: /home/afavor/git/RFD_AF/models/afavs/RNA/ss_cond_eterna_distil/train_session2023-11-19_1700461070.5134563/BFF_1.pt
+
   
 logging:
   inputs: False

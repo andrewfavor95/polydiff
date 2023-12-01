@@ -28,7 +28,7 @@ from rf2aa.kinematics import normQ, Qs2Rs
 import aa_model
 import parsers
 import matplotlib.pyplot as plt
-import ipdb
+from pdb import set_trace
 from icecream import ic 
 ic(util.__file__)
 
@@ -2427,5 +2427,137 @@ def merge_regions(regions1, regions2):
 
 #     return start_stop_tuples, mask_1d_hal
 
+
+
+def sstr_to_matrix(ss_string, only_basepairs=True):
+
+    def find_any_bracket_pairs(s, open_symbol, close_symbol):
+        stack = []
+        pairs = []
+
+        for i, char in enumerate(s):
+            if char == open_symbol:
+                stack.append(i)
+            elif char == close_symbol:
+                if stack:
+                    pairs.append((stack.pop(), i))
+                else:
+                    raise ValueError(f"No matching open parenthesis for closing parenthesis at index {i}")
+
+        if stack:
+            raise ValueError(f"No matching closing parenthesis for open parenthesis at index {stack[0]}")
+
+        return pairs
+
+    def find_loop_bases(s):
+        loop_bases = []
+        for i, char in enumerate(s):
+            if char == '.':
+                loop_bases.append(i)
+                
+        return loop_bases
+    open_symbols  = ['(','[','{','<','5','i','f','b']
+    close_symbols = [')',']','}','>','3','j','t','e']
+
+    all_pair_dict = {}
+    for pair_ind, (open_symbol, close_symbol) in enumerate(zip(open_symbols, close_symbols)):
+
+        num_opens = len([ _ for _ in ss_string if _ == open_symbol])
+        num_close = len([ _ for _ in ss_string if _ == close_symbol])
+        assert num_opens==num_close , "number of base pairs must be an even number... must be an error somewhere..."
+        
+        all_pair_dict[pair_ind] = find_any_bracket_pairs(ss_string, open_symbol, close_symbol)
+        
+
+    # pairs
+    L = len(ss_string)
+    ss_adj_mat = np.zeros((L,L))
+        
+    for pair_ind in all_pair_dict.keys():
+        paired_base_list = all_pair_dict[pair_ind]
+        for i,j in paired_base_list:
+            ss_adj_mat[i,j] = 1
+            ss_adj_mat[j,i] = 1
+
+    
+    return ss_adj_mat
+
+
+
+def ss_pairs_to_matrix(pair_input, contigs):
+
+    alphabet = 'ABCDEFGHIJKLMNOP'
+
+    index_map_dict = {}
+    
+
+    # contig_idx_list = [ np.arange(int(chn_len)) for chn_len in contigs[0].split(' ')]
+    
+    contig_len_list = []
+    for i,contig in enumerate(contigs[0].split(' ')):
+        contig_len_list.append([])
+        for subcontig in contig.split(','):
+            if subcontig[0].isalpha():
+
+                start, stop = subcontig[1:].split('-')
+                contig_len_list[i].append(1+int(stop)-int(start))
+            else:
+                contig_len_list[i].append(int(subcontig))
+
+    
+    # contig_idx_list = []
+    contig_idx_list = [ np.arange(sum(contig_lengths_i)) for contig_lengths_i in contig_len_list]
+    # ipdb.set_trace()
+
+    counter = 0
+    for i in range(len(contig_idx_list)):
+        chn_letter = alphabet[i]
+
+        index_map_dict[chn_letter] = {}
+        for chn_i_resi_j in contig_idx_list[i]:
+            index_map_dict[chn_letter][chn_i_resi_j + 1] = counter
+            counter += 1
+
+    ss_adj_mat = np.zeros((counter, counter))
+
+    for ss_pair_string in pair_input:
+        region_i, region_j = ss_pair_string.split(',')
+
+        chn_i = region_i[0]
+        start_i, stop_i = [index_map_dict[chn_i][int(_)] for _ in region_i[1:].split('-')]
+
+        chn_j = region_j[0]
+        start_j, stop_j = [index_map_dict[chn_j][int(_)] for _ in region_j[1:].split('-')]
+
+        
+        range_i = np.arange(start_i, stop_i+1)
+        range_j = np.arange(start_j, stop_j+1)
+
+
+        for pair_ind_i, pair_ind_j in zip(range_i, range_j[ : :-1]):
+            ss_adj_mat[pair_ind_i, pair_ind_j] = 1
+            ss_adj_mat[pair_ind_j, pair_ind_i] = 1
+
+    # fig, ax = plt.subplots(1,1,figsize=(15,15), dpi=300)
+    # ax.imshow(ss_adj_mat)
+    # plt.tight_layout()
+    # plt.savefig('DNA_prot_ss_cond_BFF_3.00_test03.png', bbox_inches='tight', dpi='figure')
+    # plt.close()
+    # ipdb.set_trace()
+
+    return ss_adj_mat
+
+
+
+
+      
+def ss_matrix_to_t2d_feats(ss_matrix):
+
+    ss_matrix = torch.from_numpy(ss_matrix).long()
+    ss_templ_onehot = torch.nn.functional.one_hot(ss_matrix, num_classes=3)
+    ss_templ_onehot = ss_templ_onehot.reshape(1, 1, *ss_templ_onehot.shape).repeat(1,3,1,1,1)
+
+    return ss_templ_onehot
+    
 
 

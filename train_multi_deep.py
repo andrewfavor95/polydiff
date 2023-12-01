@@ -17,7 +17,7 @@ from contextlib import ExitStack
 import time 
 import torch
 import torch.nn as nn
-import ipdb
+from pdb import set_trace
 from torch.utils import data
 import math 
 
@@ -578,6 +578,7 @@ class Trainer():
         tot_nonmotif_fape, _ = calc_str_loss(pred, true, ~t2d_is_revealed.to(device=pred.device), same_chain, negative=negative, fape_scale_vec=fape_scale_vec,
                                              A=norm_fape, d_clamp=None if unclamp else clamp_fape, gamma=1.0)
         
+
         ### Ligand Intra FAPE ###
         dclamp_sm = 4.0
         Z_sm = 4.0
@@ -932,7 +933,7 @@ class Trainer():
                 m.load_state_dict(new_chk, strict=False)
             else:
                 m.load_state_dict(weight_state, strict=True)
-
+        
         if resume_train and (not rename_model):
             print (' ... loading optimization params')
             loaded_epoch = checkpoint['epoch']

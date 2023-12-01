@@ -11,7 +11,7 @@ import networkx as nx
 from functools import wraps
 import itertools
 import assertpy
-import ipdb
+from pdb import set_trace
 import signal
 
 #####################################

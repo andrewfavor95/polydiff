@@ -40,7 +40,7 @@ from hydra.core.hydra_config import HydraConfig
 import os
 import matplotlib.pyplot as plt 
 from memory import mem_report
-import ipdb
+from pdb import set_trace
 REPORT_MEM=False
 
 import sys
@@ -75,6 +75,8 @@ class Sampler:
         else:
             self.device = torch.device('cpu')
         
+
+
         needs_model_reload = not self.initialized or conf.inference.ckpt_path != self._conf.inference.ckpt_path
 
         # Assign config to Sampler
@@ -82,6 +84,18 @@ class Sampler:
 
         # Initialize inference only helper objects to Sampler
         self.ckpt_path = conf.inference.ckpt_path
+
+
+        
+        if conf.scaffoldguided.scaffoldguided is True:
+            print('USING SS CONDITIONING MODEL: ')
+            # self.ckpt_path = conf.scaffoldguided.ss_cond_ckpt_path
+            self.use_ss_guidance = True
+            self.delta_dim_t2d = 3
+        else:
+            self.use_ss_guidance = False
+            self.delta_dim_t2d = 0
+
 
         if needs_model_reload:
             # Load checkpoint, so that we can assemble the config
@@ -205,6 +219,31 @@ class Sampler:
         # Set up target feature stuffs
         self.target_feats = iu.process_target(self.inf_conf.input_pdb, parse_hetatom=False, center=False, inf_conf=self.inf_conf)
         self.chain_idx = None
+
+
+        # # Set up ss-adj t2d conditioning:
+        # if conf.scaffoldguided.scaffoldguided is True:
+        #     print(f'    using ss-adjacency (basepair) string: {conf.scaffoldguided.target_na_ss}')
+        #     print(f'    setting d_t2d to 72')
+        #     self.full_ss_cond_d_t2d = 72
+            
+        #     if (conf.scaffoldguided.target_na_ss is not None):
+        #         print(f'    using ss-adjacency (basepair) string: {conf.scaffoldguided.target_na_ss}')
+        #         self.target_ss_matrix = torch.from_numpy(iu.sstr_to_matrix(conf.scaffoldguided.target_na_ss, only_basepairs=True)).long()
+
+        #     else:
+        #         ipdb.set_trace()
+        #         print(f'    masking full ss-adjacency matrix')
+        #         self.target_ss_matrix = (2*torch.ones(rfi_tp1_t[0].t2d.shape[2:4])).long()
+
+        # else:
+        #     self.target_ss_matrix = None
+
+        # if conf.scaffoldguided.scaffoldguided is True:
+        #     self.use_ss_guidance = True
+        # else:
+        #     self.use_ss_guidance = False
+
 
         # Set up ppi design stuffs
         if self.inf_conf.ppi_design and self.inf_conf.autogenerate_contigs:
@@ -875,7 +914,7 @@ class Sampler:
         else:
             xyz_t[~self.mask_str.squeeze(),3:,:] = float('nan')
         #xyz_t[:,3:,:] = float('nan')
-        ipdb.set_trace()
+
         assert_that(xyz_t.shape).is_equal_to((L,NHEAVYPROT,3))
         xyz_t=xyz_t[None, None]
         xyz_t = torch.cat((xyz_t, torch.full((1,1,L,NTOTAL-NHEAVYPROT,3), float('nan'))), dim=3)
@@ -1266,7 +1305,6 @@ def get_contig_chunks(contig_map):
 
     # for i,j in contig_chunk_ranges: print(1 + j - i)
     # print(contig_chunk_ranges)
-    # ipdb.set_trace()
 
     return contig_chunk_ranges
 
@@ -1352,7 +1390,6 @@ def get_repeat_t2d_mask(L, con_hal_idx0, contig_map, ij_is_visible, nrepeat, sup
                 mask2d[start_i:end_i+1, start_j:end_j+1] = 1
                 mask2d[start_j:end_j+1, start_i:end_i+1] = 1
 
-    # ipdb.set_trace()
     return mask2d, is_motif
 
 def parse_ij_get_repeat_mask(ij_visible, L, n_repeat, con_hal_idx0, supplied_full_contig, full_complex_idx0):
@@ -1520,7 +1557,6 @@ class NRBStyleSelfCond(Sampler):
                 ij_visible = ij_visible.split('-') # e.g., [abc,de,df,...]
                 ij_visible_int = [tuple([abet2num[a] for a in s]) for s in ij_visible]
                 # mask_t2d, _ = get_repeat_t2d_mask(L, con_hal_idx0, ij_visible_int, 1, supplied_full_contig=True)
-                # ipdb.set_trace()
                 # mask_t2d, _ = get_repeat_t2d_mask(L, con_hal_idx0, ij_visible_int, 1, full_complex_idx0, self.contig_map, supplied_full_contig=True)
                 mask_t2d, _ = get_repeat_t2d_mask(L, con_hal_idx0, self.contig_map, ij_visible_int, 1, supplied_full_contig=True)
 
@@ -1592,7 +1628,6 @@ class NRBStyleSelfCond(Sampler):
         else:
             is_motif, t2d_is_revealed = None,None 
 
-        # ipdb.set_trace()
         if (self.inf_conf.t2d_pic_filename) and (t==self._conf['diffuser']['T']):
             if self.inf_conf.t2d_pic_filename.endswith('.png'):
                 out_pic_name = self.inf_conf.t2d_pic_filename
@@ -1608,6 +1643,40 @@ class NRBStyleSelfCond(Sampler):
 
 
 
+        # Set up ss-adj t2d conditioning:
+        if self.use_ss_guidance:
+
+            # first priority: check for basepair range specifications (best way to specify):
+            if self._conf.scaffoldguided.target_ss_pairs is not None:
+                self.target_ss_matrix = torch.from_numpy(iu.ss_pairs_to_matrix(self._conf.scaffoldguided.target_ss_pairs, self._conf.contigmap.contigs)).long()
+                # assert 0, 'NOT IMPLEMENTED YET! TO DO!'
+
+            # second priority: check for ss-string specification (slightly less precise):
+            elif self._conf.scaffoldguided.target_ss_string is not None:
+                self.target_ss_matrix = torch.from_numpy(iu.sstr_to_matrix(self._conf.scaffoldguided.target_ss_string, only_basepairs=True)).long()
+            
+            # otherwise fall back to masking everything:
+            else:
+                print('    defaulting to fully masked ss matrix')
+                self.target_ss_matrix = (2*torch.ones(indep.same_chain.shape)).long()
+
+            # Save the matrix image if we want:
+            if self._conf.scaffoldguided.save_ss_matrix_png and (t==self._conf.diffuser.T):
+                print('SAVING SS MATRIX PIC!')
+                output_pic_filapath = self._conf.inference.output_prefix+'.png'
+                output_dirpath = os.path.dirname(output_pic_filapath)
+
+                if not (os.path.exists(output_dirpath) and os.path.isdir(output_dirpath)):
+                    os.mkdir(output_dirpath)
+
+                fig, ax = plt.subplots(1,1,figsize=(5,5), dpi=300)
+                ax.imshow(np.array(self.target_ss_matrix))
+                plt.tight_layout()
+                plt.savefig(output_pic_filapath, bbox_inches='tight', dpi='figure')
+                plt.close()
+
+        else:
+            self.target_ss_matrix = None
 
 
         if not self.inf_conf.subsymm_t1d_perfect: 
@@ -1623,6 +1692,7 @@ class NRBStyleSelfCond(Sampler):
                                             polymer_type_masks=self.inf_conf.mask_seq_by_polymer,
                                             rfmotif=rfmotif
                                             )
+                                            # target_ss_matrix=self.target_ss_matrix,
         else:
             # Though they are diffused, the AA being templated in T2d will have 
             # perfect confidence, while all else has 1-t/T
@@ -1637,6 +1707,14 @@ class NRBStyleSelfCond(Sampler):
                                             polymer_type_masks=self.inf_conf.mask_seq_by_polymer,
                                             rfmotif=rfmotif
                                             )
+                                            # target_ss_matrix=self.target_ss_matrix,
+
+        # Now we modify rfi to accomodate the new t2d features
+        # Adding target ss_matrix if that is what we wanna do:
+        if (self.target_ss_matrix is not None) and (twotemplate and threetemplate):
+            ss_adj_templ_onehot = torch.nn.functional.one_hot(self.target_ss_matrix, num_classes=3)
+            ss_adj_templ_onehot = ss_adj_templ_onehot.reshape(1, 1, *ss_adj_templ_onehot.shape).repeat(1,3,1,1,1)
+            rfi.t2d = torch.cat((rfi.t2d, ss_adj_templ_onehot), dim=-1)
 
         rf2aa.tensor_util.to_device(rfi, self.device)
         seq_init = torch.nn.functional.one_hot(indep.seq, num_classes=rf2aa.chemical.NAATOKENS).to(self.device).float()
@@ -1786,6 +1864,10 @@ class NRBStyleSelfCond(Sampler):
                     mem_report() 
                     print('*'*50+'\n\n')
 
+
+                if (twotemplate and threetemplate):
+                    kwargs.update({'ss_adj_conditioned':self.use_ss_guidance})
+
                 # Now we will add rfmotif as an item in the kwarg dict
                 # kwargs.update({'rfmotif':rfmotif})
 
@@ -1806,6 +1888,7 @@ class NRBStyleSelfCond(Sampler):
                 with torch.cuda.amp.autocast(True):
                     # rfo = self.model_adaptor.forward(rfi, N_cycle=N_cycle, rfmotif=rfmotif, return_infer=True, **kwargs)
                     rfo = self.model_adaptor.forward(rfi, N_cycle=N_cycle, return_infer=True, **kwargs)
+
                 print('********* SUCCESSFULL MODEL FORWARD *******')
                 self.cur_symmsub = rfo.symmsub
                 
@@ -1851,7 +1934,7 @@ class NRBStyleSelfCond(Sampler):
         # px0         = rfo.get_xyz()[:,:23]
         # px0         = rfo.get_xyz()[:,:NHEAVY]
         # ipdb.set_trace()
-        print('MODEL RUNNERs LINE 1854')
+        # print('MODEL RUNNERs LINE 1854')
         px0         = rfo.get_xyz()[:,:self.inf_conf.num_atoms_modeled]
         logits      = rfo.get_seq_logits()
         seq_decoded = [rf2aa.chemical.num2aa[s] for s in rfi.seq[0]]

@@ -8,7 +8,7 @@ from scoring import HbHybType
 from icecream import ic
 from diff_util import th_min_angle 
 import time 
-import ipdb
+from pdb import set_trace
 
 torch.autograd.set_detect_anomaly(True)
 
@@ -316,7 +316,8 @@ def report_gradient_norms(loss_dict,
     return True 
 
 
-def calc_str_loss(pred, true, mask_2d, same_chain, negative=False, fape_scale_vec=None, d_clamp=10.0, d_clamp_inter=10.0, A=10.0, gamma=0.99, eps=1e-6):
+# def calc_str_loss(pred, true, mask_2d, same_chain, negative=False, fape_scale_vec=None, d_clamp=10.0, d_clamp_inter=10.0, A=10.0, gamma=0.99, eps=1e-6):
+def calc_str_loss(pred, true, mask_2d, same_chain, negative=False, fape_scale_vec=None, d_clamp=10.0, d_clamp_intra=10.0, d_clamp_inter=30.0, A=10.0, gamma=0.99, eps=1e-6):
     '''
     Calculate Backbone FAPE loss
     Input:
@@ -328,13 +329,27 @@ def calc_str_loss(pred, true, mask_2d, same_chain, negative=False, fape_scale_ve
     true = true.unsqueeze(0)
     t_tilde_ij = get_t(true[:,:,:,0], true[:,:,:,1], true[:,:,:,2], non_ideal=True)
     t_ij = get_t(pred[:,:,:,0], pred[:,:,:,1], pred[:,:,:,2])
-    difference = torch.sqrt(torch.square(t_tilde_ij-t_ij).sum(dim=-1) + eps)
 
-    if d_clamp != None:
-        clamp = torch.where(same_chain.bool(), d_clamp, d_clamp_inter)
-        clamp = clamp[None]
-        difference = torch.clamp(difference, max=clamp)
-    loss = difference / A # (I, B, L, L)
+    # difference = torch.sqrt(torch.square(t_tilde_ij-t_ij).sum(dim=-1) + eps)
+
+    # if d_clamp != None:
+    #     clamp = torch.where(same_chain.bool(), d_clamp, d_clamp_inter)
+    #     clamp = clamp[None]
+    #     difference = torch.clamp(difference, max=clamp)
+    # loss = difference / A # (I, B, L, L)
+
+    # difference = torch.sqrt(torch.square(t_tilde_ij-t_ij).sum(dim=-1) + eps)
+    difference = torch.sqrt(torch.square(t_tilde_ij-t_ij).sum(dim=-1) + eps)
+    clamp = torch.zeros_like(difference)
+    clamp[:,same_chain==1] = d_clamp_intra
+    clamp[:,same_chain==0] = d_clamp_inter
+
+    mixing_factor = 0.9
+    unclamped_difference = difference.clone()
+    clamped_difference = torch.clamp(difference, max=clamp)
+
+    clamped_loss = clamped_difference / A 
+    unclamped_loss = unclamped_difference/A # (I, B, L, L)
 
     # Get a mask information (ignore missing residue + inter-chain residues)
     # for positive cases, mask = mask_2d
@@ -348,17 +363,19 @@ def calc_str_loss(pred, true, mask_2d, same_chain, negative=False, fape_scale_ve
     if fape_scale_vec is not None:
         mask = mask * torch.sqrt(fape_scale_vec[None,:] * fape_scale_vec[:,None]).unsqueeze(0)
 
-
     # calculate masked loss (ignore missing regions when calculate loss)
-    loss = (mask[None]*loss).sum(dim=(1,2,3)) / (mask.sum()+eps) # (I)
+    # loss = (mask[None]*loss).sum(dim=(1,2,3)) / (mask.sum()+eps) # (I)
+    clamped_loss = (mask[None]*clamped_loss).sum(dim=(1,2,3)) / (mask.sum()+eps) # (I)
+    unclamped_loss = (mask[None]*unclamped_loss).sum(dim=(1,2,3)) / (mask.sum()+eps) # (I)
+    loss = mixing_factor *clamped_loss + (1-mixing_factor)*unclamped_loss
 
     # weighting loss
     w_loss = torch.pow(torch.full((I,), gamma, device=pred.device), torch.arange(I, device=pred.device))
     w_loss = torch.flip(w_loss, (0,))
     w_loss = w_loss / w_loss.sum()
 
-
     tot_loss = (w_loss * loss).sum()
+
     return tot_loss, loss.detach() 
 
 def weighted_decay_sum(losses, gamma=0.99):

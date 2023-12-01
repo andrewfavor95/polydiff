@@ -10,7 +10,7 @@ from rf2aa.scoring import *
 
 import rf2aa.kinematics
 import rf2aa.util
-import ipdb
+from pdb import set_trace
 
 def generate_Cbeta(N,Ca,C):
     # recreate Cb given N,Ca,C
@@ -739,8 +739,8 @@ def sstr_to_matrix(ss_string, only_basepairs=True):
                 loop_bases.append(i)
                 
         return loop_bases
-    open_symbols  = ['(','[','{','<']
-    close_symbols = [')',']','}','>']
+    open_symbols  = ['(','[','{','<','5','i','f','b']
+    close_symbols = [')',']','}','>','3','j','t','e']
 
     all_pair_dict = {}
     for pair_ind, (open_symbol, close_symbol) in enumerate(zip(open_symbols, close_symbols)):
@@ -759,20 +759,31 @@ def sstr_to_matrix(ss_string, only_basepairs=True):
     L = len(ss_string)
     ss_adj_mat = np.zeros((L,L))
 
-    if not only_basepairs:
-        loop_inds = find_loop_bases(ss_string)
-        for i in loop_inds:
-            ss_adj_mat[i,i] = 1
+    # if not only_basepairs:
+    #     loop_inds = find_loop_bases(ss_string)
+    #     for i in loop_inds:
+    #         ss_adj_mat[i,i] = 1
         
     for pair_ind in all_pair_dict.keys():
         paired_base_list = all_pair_dict[pair_ind]
         for i,j in paired_base_list:
-            ss_adj_mat[i,j] = pair_ind + 2
-            ss_adj_mat[j,i] = pair_ind + 2
-
+            ss_adj_mat[i,j] = 1
+            ss_adj_mat[j,i] = 1
+            # ss_adj_mat[i,j] = pair_ind + 1
+            # ss_adj_mat[j,i] = pair_ind + 1
+            # # ss_adj_mat[i,j] = pair_ind + 2
+            # # ss_adj_mat[j,i] = pair_ind + 2
+            
     return ss_adj_mat
         
 
+def ss_matrix_to_t2d_feats(ss_matrix):
 
+    ss_matrix = torch.from_numpy(ss_matrix).long()
+    ss_templ_onehot = torch.nn.functional.one_hot(ss_matrix, num_classes=3)
+    ss_templ_onehot = ss_templ_onehot.reshape(1, 1, *ss_templ_onehot.shape).repeat(1,3,1,1,1)
+
+    return ss_templ_onehot
+    
 
             

@@ -29,7 +29,7 @@ import rf2aa.chemical
 import guide_posts as gp
 from rf2aa.chemical import INIT_CRDS, INIT_NA_CRDS, NAATOKENS, MASKINDEX, UNKINDEX, \
     NTOTAL, NBTYPES, CHAIN_GAP, num2aa, METAL_RES_NAMES, aa2num, atomnum2atomtype
-import ipdb
+from pdb import set_trace
 import dataclasses
 
 import matplotlib.pyplot as plt 
@@ -1749,12 +1749,15 @@ def loader_na_complex_diff(item, params, native_NA_frac=0.25, negative=False, pi
     chirals = torch.Tensor()
     dist_matrix = rf2aa.data_loader.get_bond_distances(bond_feats)
 
+    # TEMPORARILY NONE: IMPLEMENT LATER
+    ss_matrix = None
+
     return seq.long(), msa_seed_orig.long(), msa_seed.float(), msa_extra.float(), mask_msa,\
            xyz.float(), mask, idx.long(), \
            xyz_t.float(), f1d_t.float(), mask_t, \
            xyz_prev.float(), mask_prev, \
-           same_chain, False, negative, torch.zeros(seq.shape), bond_feats, dist_matrix, chirals, ch_label, 'C1', "na_compl", item, [Ls,[]]
-           # same_chain, False, negative, torch.zeros(seq.shape), bond_feats, dist_matrix, chirals, ch_label, 'C1', "na_compl", item, [[Ls],[]]
+           same_chain, False, negative, torch.zeros(seq.shape), bond_feats, dist_matrix, chirals, ch_label, 'C1', "na_compl", item, [[Ls],[]]
+           # same_chain, False, negative, torch.zeros(seq.shape), bond_feats, dist_matrix, chirals, ch_label, 'C1', ss_matrix, "na_compl", item, [Ls,[]]
 
 
 def loader_distil_tf_diff(item, params, random_noise=5.0, pick_top=True, native_NA_frac=0.05, negative=False, fixbb=False):
@@ -1844,7 +1847,7 @@ def loader_distil_tf_diff(item, params, random_noise=5.0, pick_top=True, native_
     if sum(Ls) > params['CROP']:
     # if True: # always crop!
         cropref = np.random.randint(xyz.shape[0])
-        sel = get_na_crop(seq[0], xyz[cropref], mask[cropref], torch.arange(sum(Ls)), Ls, params, negative)
+        sel = rf2aa.data_loader.get_na_crop(seq[0], xyz[cropref], mask[cropref], torch.arange(sum(Ls)), Ls, params, negative)
         # sel = rf2aa.data_loader.get_na_crop(seq[0], xyz[0], mask[0], torch.arange(sum(Ls)), Ls, params, negative=False, incl_protein=True)
         
         seq = seq[:,sel]
@@ -1866,112 +1869,117 @@ def loader_distil_tf_diff(item, params, random_noise=5.0, pick_top=True, native_
     chirals = torch.Tensor()
     dist_matrix = rf2aa.data_loader.get_bond_distances(bond_feats)
     xyz_prev, mask_prev = rf2aa.data_loader.generate_xyz_prev(xyz_t, mask_t, params)
+
+    # TEMPORARILY NONE: IMPLEMENT LATER
+    ss_matrix = None
+
     return seq.long(), msa_seed_orig.long(), msa_seed.float(), msa_extra.float(), mask_msa,\
            xyz.float(), mask, idx.long(), \
            xyz_t.float(), f1d_t.float(), mask_t, \
            xyz_prev.float(), mask_prev, \
            same_chain, False, False, \
            torch.zeros(seq.shape), bond_feats, dist_matrix, chirals, \
-           ch_label, 'C1', "distil_tf", item, [Ls,[]]
-           # ch_label, 'C1', "distil_tf", item, [[Ls],[]]
+           ch_label, 'C1', "distil_tf", item, [[Ls],[]]
+           # ch_label, 'C1', ss_matrix ,"distil_tf", item, [Ls,[]], ss_matrix
+           
 
 
 
-def loader_rna_diff(item, params, random_noise=5.0, pick_top=True, native_NA_frac=0.05, negative=False, fixbb=False):
-    # read PDBs
-    pdb_ids = item['CHAINID'].split(':')
-    Ls = item['LEN']
+# def loader_rna_diff(item, params, random_noise=5.0, pick_top=True, native_NA_frac=0.05, negative=False, fixbb=False):
+#     # read PDBs
+#     pdb_ids = item['CHAINID'].split(':')
+#     Ls = item['LEN']
 
-    pdbA = torch.load(params['NA_DIR']+'/torch/'+pdb_ids[0][1:3]+'/'+pdb_ids[0]+'.pt')
-    pdbB = None
-    if (len(pdb_ids)==2):
-        pdbB = torch.load(params['NA_DIR']+'/torch/'+pdb_ids[1][1:3]+'/'+pdb_ids[1]+'.pt')
+#     pdbA = torch.load(params['NA_DIR']+'/torch/'+pdb_ids[0][1:3]+'/'+pdb_ids[0]+'.pt')
+#     pdbB = None
+#     if (len(pdb_ids)==2):
+#         pdbB = torch.load(params['NA_DIR']+'/torch/'+pdb_ids[1][1:3]+'/'+pdb_ids[1]+'.pt')
 
-    # msa for NA is sequence only
-    msaA,insA = rf2aa.data_loader.parse_fasta_if_exists(pdbA['seq'], params['NA_DIR']+'/torch/'+pdb_ids[0][1:3]+'/'+pdb_ids[0]+'.afa', rmsa_alphabet=True)
-    a3m = {'msa':torch.from_numpy(msaA), 'ins':torch.from_numpy(insA)}
-    if (len(pdb_ids)==2):
-        msaB,insB = rf2aa.data_loader.parse_fasta_if_exists(pdbB['seq'], params['NA_DIR']+'/torch/'+pdb_ids[1][1:3]+'/'+pdb_ids[1]+'.afa', rmsa_alphabet=True)
-        a3mB = {'msa':torch.from_numpy(msaB), 'ins':torch.from_numpy(insB)}
-        a3m = rf2aa.data_loader.merge_a3m_hetero(a3m, a3mB, Ls)
+#     # msa for NA is sequence only
+#     msaA,insA = rf2aa.data_loader.parse_fasta_if_exists(pdbA['seq'], params['NA_DIR']+'/torch/'+pdb_ids[0][1:3]+'/'+pdb_ids[0]+'.afa', rmsa_alphabet=True)
+#     a3m = {'msa':torch.from_numpy(msaA), 'ins':torch.from_numpy(insA)}
+#     if (len(pdb_ids)==2):
+#         msaB,insB = rf2aa.data_loader.parse_fasta_if_exists(pdbB['seq'], params['NA_DIR']+'/torch/'+pdb_ids[1][1:3]+'/'+pdb_ids[1]+'.afa', rmsa_alphabet=True)
+#         a3mB = {'msa':torch.from_numpy(msaB), 'ins':torch.from_numpy(insB)}
+#         a3m = rf2aa.data_loader.merge_a3m_hetero(a3m, a3mB, Ls)
 
-    # get template features -- None
-    L = sum(Ls)
-    xyz_t = INIT_NA_CRDS.reshape(1,1,NTOTAL,3).repeat(1,L,1,1) + torch.rand(1,L,1,3)*random_noise
-    f1d_t = torch.nn.functional.one_hot(torch.full((1, L), 20).long(), num_classes=NAATOKENS-1).float() # all gaps
-    mask_t = torch.full((1,L,NTOTAL), False)
-    conf = torch.zeros((1,L,1)).float() # zero confidence
-    f1d_t = torch.cat((f1d_t, conf), -1)
+#     # get template features -- None
+#     L = sum(Ls)
+#     xyz_t = INIT_NA_CRDS.reshape(1,1,NTOTAL,3).repeat(1,L,1,1) + torch.rand(1,L,1,3)*random_noise
+#     f1d_t = torch.nn.functional.one_hot(torch.full((1, L), 20).long(), num_classes=NAATOKENS-1).float() # all gaps
+#     mask_t = torch.full((1,L,NTOTAL), False)
+#     conf = torch.zeros((1,L,1)).float() # zero confidence
+#     f1d_t = torch.cat((f1d_t, conf), -1)
 
-    NMDLS = pdbA['xyz'].shape[0]
-    # get MSA features
-    msa = a3m['msa'].long()
-    ins = a3m['ins'].long()
-    seq, msa_seed_orig, msa_seed, msa_extra, mask_msa = rf2aa.data_loader.MSAFeaturize(msa, ins, params, L_s=Ls)
+#     NMDLS = pdbA['xyz'].shape[0]
+#     # get MSA features
+#     msa = a3m['msa'].long()
+#     ins = a3m['ins'].long()
+#     seq, msa_seed_orig, msa_seed, msa_extra, mask_msa = rf2aa.data_loader.MSAFeaturize(msa, ins, params, L_s=Ls)
 
 
-    # ######################   OLD BLOCK   ################################################
-    # xyz = torch.full((NMDLS, L, NTOTAL, 3), np.nan).float()
-    # mask = torch.full((NMDLS, L, NTOTAL), False)
-    # if (len(pdb_ids)==2):
-    #     xyz[:,:,:23] = torch.cat((pdbA['xyz'], pdbB['xyz']), dim=1)
-    #     mask[:,:,:23] = torch.cat((pdbA['mask'], pdbB['mask']), dim=1)
-    # else:
-    #     xyz[:,:,:23] = pdbA['xyz']
-    #     mask[:,:,:23] = pdbA['mask']
-    # xyz = torch.nan_to_num(xyz)
-    # #####################################################################################
-    ######################   NEW BLOCK   ################################################
+#     # ######################   OLD BLOCK   ################################################
+#     # xyz = torch.full((NMDLS, L, NTOTAL, 3), np.nan).float()
+#     # mask = torch.full((NMDLS, L, NTOTAL), False)
+#     # if (len(pdb_ids)==2):
+#     #     xyz[:,:,:23] = torch.cat((pdbA['xyz'], pdbB['xyz']), dim=1)
+#     #     mask[:,:,:23] = torch.cat((pdbA['mask'], pdbB['mask']), dim=1)
+#     # else:
+#     #     xyz[:,:,:23] = pdbA['xyz']
+#     #     mask[:,:,:23] = pdbA['mask']
+#     # xyz = torch.nan_to_num(xyz)
+#     # #####################################################################################
+#     ######################   NEW BLOCK   ################################################
 
-    xyz = INIT_NA_CRDS.reshape(1,1,NTOTAL,3).repeat(NMDLS,L,1,1) + torch.rand(NMDLS,L,1,3)*random_noise
-    mask = torch.full((NMDLS, L, NTOTAL), False)
-    if (len(pdb_ids)==2):
-        xyz[:,:,:23] = torch.cat((pdbA['xyz'], pdbB['xyz']), dim=1)
-        mask[:,:,:23] = torch.cat((pdbA['mask'], pdbB['mask']), dim=1)
-    else:
-        xyz[:,:,:23] = pdbA['xyz']
-        mask[:,:,:23] = pdbA['mask']
-    #####################################################################################
+#     xyz = INIT_NA_CRDS.reshape(1,1,NTOTAL,3).repeat(NMDLS,L,1,1) + torch.rand(NMDLS,L,1,3)*random_noise
+#     mask = torch.full((NMDLS, L, NTOTAL), False)
+#     if (len(pdb_ids)==2):
+#         xyz[:,:,:23] = torch.cat((pdbA['xyz'], pdbB['xyz']), dim=1)
+#         mask[:,:,:23] = torch.cat((pdbA['mask'], pdbB['mask']), dim=1)
+#     else:
+#         xyz[:,:,:23] = pdbA['xyz']
+#         mask[:,:,:23] = pdbA['mask']
+#     #####################################################################################
 
-    # other features
-    idx = torch.arange(L)
-    if (len(pdb_ids)==2):
-        idx[Ls[0]:] += CHAIN_GAP
-    same_chain = same_chain_2d_from_Ls(Ls)
-    bond_feats = bond_feats_from_Ls(Ls).long()
+#     # other features
+#     idx = torch.arange(L)
+#     if (len(pdb_ids)==2):
+#         idx[Ls[0]:] += CHAIN_GAP
+#     same_chain = same_chain_2d_from_Ls(Ls)
+#     bond_feats = bond_feats_from_Ls(Ls).long()
 
-    # Do cropping
-    if sum(Ls) > params['CROP']:
-        cropref = np.random.randint(xyz.shape[0])
-        sel = get_na_crop(seq[0], xyz[cropref], mask[cropref], torch.arange(L), Ls, params, incl_protein=False)
+#     # Do cropping
+#     if sum(Ls) > params['CROP']:
+#         cropref = np.random.randint(xyz.shape[0])
+#         sel = get_na_crop(seq[0], xyz[cropref], mask[cropref], torch.arange(L), Ls, params, incl_protein=False)
 
-        seq = seq[:,sel]
-        msa_seed_orig = msa_seed_orig[:,:,sel]
-        msa_seed = msa_seed[:,:,sel]
-        msa_extra = msa_extra[:,:,sel]
-        mask_msa = mask_msa[:,:,sel]
-        xyz = xyz[:,sel]
-        mask = mask[:,sel]
-        xyz_t = xyz_t[:,sel]
-        f1d_t = f1d_t[:,sel]
-        mask_t = mask_t[:,sel]
-        #
-        idx = idx[sel]
-        same_chain = same_chain[sel][:,sel]
-        bond_feats = bond_feats[sel][:, sel]
+#         seq = seq[:,sel]
+#         msa_seed_orig = msa_seed_orig[:,:,sel]
+#         msa_seed = msa_seed[:,:,sel]
+#         msa_extra = msa_extra[:,:,sel]
+#         mask_msa = mask_msa[:,:,sel]
+#         xyz = xyz[:,sel]
+#         mask = mask[:,sel]
+#         xyz_t = xyz_t[:,sel]
+#         f1d_t = f1d_t[:,sel]
+#         mask_t = mask_t[:,sel]
+#         #
+#         idx = idx[sel]
+#         same_chain = same_chain[sel][:,sel]
+#         bond_feats = bond_feats[sel][:, sel]
 
-    xyz_prev = xyz_t[0].clone()
-    mask_prev = mask_t[0].clone()   
-    chirals = torch.Tensor()
-    ch_label = torch.zeros((L,)).long()
-    ch_label[Ls[0]:] = 1
-    dist_matrix = rf2aa.data_loader.get_bond_distances(bond_feats)
+#     xyz_prev = xyz_t[0].clone()
+#     mask_prev = mask_t[0].clone()   
+#     chirals = torch.Tensor()
+#     ch_label = torch.zeros((L,)).long()
+#     ch_label[Ls[0]:] = 1
+#     dist_matrix = rf2aa.data_loader.get_bond_distances(bond_feats)
 
-    return seq.long(), msa_seed_orig.long(), msa_seed.float(), msa_extra.float(), mask_msa,\
-           xyz.float(), mask, idx.long(), \
-           xyz_t.float(), f1d_t.float(), mask_t, \
-           xyz_prev.float(), mask_prev, \
-           same_chain, False, False, torch.zeros(seq.shape), bond_feats, dist_matrix, chirals, ch_label, 'C1', "rna", item, [Ls,[]]
+#     return seq.long(), msa_seed_orig.long(), msa_seed.float(), msa_extra.float(), mask_msa,\
+#            xyz.float(), mask, idx.long(), \
+#            xyz_t.float(), f1d_t.float(), mask_t, \
+#            xyz_prev.float(), mask_prev, \
+#            same_chain, False, False, torch.zeros(seq.shape), bond_feats, dist_matrix, chirals, ch_label, 'C1', "rna", item, [Ls,[]]
 
 
 def loader_dna_rna_diff(item, params, random_noise=5.0, pick_top=True, native_NA_frac=0.05, negative=False, fixbb=False):
@@ -2080,13 +2088,374 @@ def loader_dna_rna_diff(item, params, random_noise=5.0, pick_top=True, native_NA
     ch_label[Ls[0]:] = 1
     dist_matrix = rf2aa.data_loader.get_bond_distances(bond_feats)
 
+    # TEMPORARILY NONE: IMPLEMENT LATER
+    ss_matrix = None
+
     return seq.long(), msa_seed_orig.long(), msa_seed.float(), msa_extra.float(), mask_msa,\
            xyz.float(), mask, idx.long(), \
            xyz_t.float(), f1d_t.float(), mask_t, \
            xyz_prev.float(), mask_prev, \
            same_chain, False, False, torch.zeros(seq.shape), bond_feats, dist_matrix, chirals, ch_label, 'C1', "rna", item, [Ls,[]]
+           # same_chain, False, False, torch.zeros(seq.shape), bond_feats, dist_matrix, chirals, ch_label, 'C1', ss_matrix, "rna", item, [Ls,[]]
 
 
+def get_pair_ss_partners(seq, xyz, mask, sel, len_s, 
+                        negative=False, incl_protein=True, cutoff=12.0, bp_cutoff=4.0, eps=1e-6,
+                        seq_cutoff=2, use_base_angles=False, base_angle_cutoff=0.5234, compute_aa_contacts=False, use_repatom=False):
+
+
+
+
+
+
+    # cond = torch.logical_and(cond, ~seq_neighbors)
+
+
+    #########################. BEGIN ANDREW STUFF: ################################################
+
+
+    # Donors:
+    # D A : N6.    (  20  )
+    # D C : N4     (  16  )
+    # D G : N1, N2 (  15*, 20  )
+    # D T : N3     (  14*  )
+    # R A : N6.    (  18 )
+    # R C : N4     (  17  )
+    # R G : N1, N2 (  12*, 14  )
+    # R U : N3     (  15*  )
+
+    # Acceptors:
+    # D A : N1     ( 15* ) 
+    # D C : O2, N3 ( 13, 14*  )
+    # D G : O6     ( 21   )
+    # D T : O4     ( 16   )
+    # R A : N1     ( 12* )
+    # R C : O2, N3 ( 14, 15*  )
+    # R G : O6     ( 19  )
+    # R U : O4     ( 17   )
+
+    # FOR HOODSTEIN:
+    # donors at:
+    # DC: N3 : 14
+    # DT:
+
+    # acceptors at:
+    # DA: N7 : 18
+    # DG: N7 : 18
+    # DT: 
+    # RA: 
+
+
+    # # donor_atoms    = torch.zeros((sum(len_s),2), dtype=torch.long, device=xyz.device)
+    # donor_atoms    = torch.zeros((len_s,2), dtype=torch.long, device=xyz.device)
+    # donor_atoms[seq==22] = torch.tensor([20,20])
+    # donor_atoms[seq==23] = torch.tensor([16,16])
+    # donor_atoms[seq==24] = torch.tensor([15,20])
+    # donor_atoms[seq==25] = torch.tensor([14,14])
+    # donor_atoms[seq==27] = torch.tensor([18,18])
+    # donor_atoms[seq==28] = torch.tensor([17,17])
+    # donor_atoms[seq==29] = torch.tensor([12,14])
+    # donor_atoms[seq==30] = torch.tensor([15,15])
+
+    # # acceptor_atoms = torch.zeros((sum(len_s),2), dtype=torch.long, device=xyz.device)
+    # acceptor_atoms = torch.zeros((len_s,2), dtype=torch.long, device=xyz.device)
+    # acceptor_atoms[seq==22] = torch.tensor([15,15])
+    # acceptor_atoms[seq==23] = torch.tensor([13,14])
+    # acceptor_atoms[seq==24] = torch.tensor([21,21])
+    # acceptor_atoms[seq==25] = torch.tensor([16,16])
+    # acceptor_atoms[seq==27] = torch.tensor([12,12])
+    # acceptor_atoms[seq==28] = torch.tensor([14,15])
+    # acceptor_atoms[seq==29] = torch.tensor([19,19])
+    # acceptor_atoms[seq==30] = torch.tensor([17,17])
+
+    # donor_xyz = torch.gather(xyz, 1, donor_atoms[:,:,None].repeat(1,1,3)).squeeze(1)
+    # acceptor_xyz = torch.gather(xyz, 1, acceptor_atoms[:,:,None].repeat(1,1,3)).squeeze(1)
+
+    # all_hbond_dists, _ = torch.min(torch.cat((torch.cdist(donor_xyz[:,0,:], acceptor_xyz[:,0,:]).unsqueeze(-1),torch.cdist(donor_xyz[:,1,:], acceptor_xyz[:,1,:]).unsqueeze(-1)),dim=-1),dim=-1)
+    # cond_new = all_hbond_dists < bp_cutoff
+
+    # # cond_new = torch.logical_or(cond_new, torch.transpose(cond_new))
+    # cond_new = torch.logical_or(cond_new, cond_new.t())
+    
+    #0  ala.  # ALA: CB:  4
+    #1  arg.  # ARG: CZ:  8
+    #2  asn.  # 6 (accept)  7 (donor)
+    #3  asp.  # ASP: OD1: 6: 
+    #4  cys.  # CYS: S:   5 (donor and accept)
+    #5  gln.  # Gln: NE2: 8 (donor) # Gln: OE2: 7 (accept)
+    #6  glu.  # GLU: OE2: 8 (accept)
+    #7  gly.  # GLY: CA:  1 
+    #8  his.  # HIS: CE1: 8 
+    #9  ile.  # ILE: C  7 (donor and accept)
+    #10 leu.  # LEU: C  7 (donor and accept)
+    #11 lys.  # Lys: NZ: 8 (donor)
+    #12 met.  # MET: CE:  7 (donot and accept)
+    #13 phe.  # PHE: CZ: 10 (donor and accept)
+    #14 pro.  # PRO: CD: 6
+    #15 ser.  # SER: O : 5 (accept)
+    #16 thr.  # THR: O : 5 (donot)
+    #17 trp.  # TRPL C  11 (donor and accept)
+    #18 tyr.  # TYR: OH: 11 (donor)
+    #19 val.  # VAL: CB: 4
+    seq_neighbors = torch.le(torch.abs(sel[:,None]-sel[None,:]), seq_cutoff)
+    is_protein = torch.logical_and((0 <= seq),(seq <= 21))
+    is_dna = torch.logical_and((22 <= seq),(seq <= 26))
+    is_rna = torch.logical_and((27 <= seq),(seq <= 31))
+    cond_num = 2*torch.ones((len_s,len_s), dtype=torch.long, device=xyz.device)
+    # # get base pairing NA bases
+    if use_repatom:
+        repatom = torch.zeros(len_s, dtype=torch.long, device=xyz.device)
+        repatom[seq==22] = 15 # DA - N1
+        repatom[seq==23] = 14 # DC - N3
+        repatom[seq==24] = 15 # DG - N1
+        repatom[seq==25] = 14 # DT - N3
+        repatom[seq==27] = 12 # A - N1
+        repatom[seq==28] = 15 # C - N3
+        repatom[seq==29] = 12 # G - N1
+        repatom[seq==30] = 15 # U - N3
+
+        if compute_aa_contacts:
+            repatom[seq==0 ] = 4
+            repatom[seq==1 ] = 8
+            repatom[seq==2 ] = 7
+            repatom[seq==3 ] = 6
+            repatom[seq==4 ] = 5
+            repatom[seq==5 ] = 6
+            repatom[seq==6 ] = 6
+            repatom[seq==7 ] = 1
+            repatom[seq==8 ] = 8
+            repatom[seq==9 ] = 7
+            repatom[seq==10] = 7
+            repatom[seq==11] = 8
+            repatom[seq==12] = 7
+            repatom[seq==13] = 10
+            repatom[seq==14] = 6
+            repatom[seq==15] = 5
+            repatom[seq==16] = 5
+            repatom[seq==17] = 11
+            repatom[seq==18] = 11
+            repatom[seq==19] = 4
+
+
+        xyz_na_rep = torch.gather(xyz, 1, repatom[:,None,None].repeat(1,1,3)).squeeze(1)
+        # cond = torch.cdist(xyz_na_rep, xyz_na_rep) < bp_cutoff
+        # mask_na_rep = torch.gather(mask, 1, repatom[:,None]).squeeze(1)
+        # cond = torch.logical_and(cond, mask_na_rep[:,None]*mask_na_rep[None,:])
+        contact_dist = torch.cdist(xyz_na_rep, xyz_na_rep) < bp_cutoff
+
+    else:
+
+        donor_atoms    = torch.ones((len_s,1), dtype=torch.long, device=xyz.device)
+        donor_atoms[seq==22] = torch.tensor([20])
+        donor_atoms[seq==23] = torch.tensor([16])
+        donor_atoms[seq==24] = torch.tensor([15])
+        donor_atoms[seq==25] = torch.tensor([14])
+        donor_atoms[seq==27] = torch.tensor([18])
+        donor_atoms[seq==28] = torch.tensor([17])
+        donor_atoms[seq==29] = torch.tensor([12])
+        donor_atoms[seq==30] = torch.tensor([15])
+
+        acceptor_atoms = torch.ones((len_s,1), dtype=torch.long, device=xyz.device)
+        acceptor_atoms[seq==22] = torch.tensor([15])
+        acceptor_atoms[seq==23] = torch.tensor([14])
+        acceptor_atoms[seq==24] = torch.tensor([21])
+        acceptor_atoms[seq==25] = torch.tensor([16])
+        acceptor_atoms[seq==27] = torch.tensor([12])
+        acceptor_atoms[seq==28] = torch.tensor([15])
+        acceptor_atoms[seq==29] = torch.tensor([19])
+        acceptor_atoms[seq==30] = torch.tensor([17])
+
+        donor_xyz = torch.gather(xyz, 1, donor_atoms[:,:,None].repeat(1,1,3)).squeeze(1)
+        acceptor_xyz = torch.gather(xyz, 1, acceptor_atoms[:,:,None].repeat(1,1,3)).squeeze(1)
+
+        contact_dist = torch.cdist(donor_xyz, acceptor_xyz) < bp_cutoff
+
+
+    cond = torch.logical_and(contact_dist, ~seq_neighbors)
+
+    
+
+    
+
+    #########################. END ANDREW STUFF: ################################################
+
+
+
+    if use_base_angles:
+
+        len_s_na = (~is_protein).sum()
+
+        base_atom_xyz = torch.zeros((len_s_na,11,3), dtype=torch.float, device=xyz.device)
+        mask_na = mask[~is_protein].unsqueeze(-1).repeat(1,1,3)
+
+        # base_xyz_masked = torch.where(mask.unsqueeze(-1)[~is_protein], xyz[~is_protein], torch.nan)
+        base_xyz_masked = torch.where(mask_na, xyz[~is_protein], torch.nan)
+
+        base_atom_xyz[is_dna[~is_protein],:,:] = base_xyz_masked[is_dna[~is_protein],11:22,:] 
+        base_atom_xyz[is_rna[~is_protein],:,:] = base_xyz_masked[is_rna[~is_protein],12:23,:] 
+
+        # Compute the centroid of the points
+        centroid = torch.nanmean(base_atom_xyz, dim=1, keepdim=True)
+
+        # Center the points
+        centered_points = base_atom_xyz - centroid
+        centered_nan_mask = ~torch.isnan(centered_points)
+        centered_zero_nan = torch.where(centered_nan_mask, centered_points, 0.0)
+
+        # Compute the covariance matrix
+        covariance_matrix_unscaled = torch.matmul(centered_zero_nan.transpose(-1, -2), centered_zero_nan)
+        denom = ( centered_nan_mask.sum(-2) - 1 ).unsqueeze(-1).repeat((1,1,3))
+        covariance_matrix = covariance_matrix_unscaled / (denom + eps)
+
+        # Compute the eigenvectors and eigenvalues
+        eigenvalues, eigenvectors = torch.linalg.eig(covariance_matrix)
+
+        # The normal to the plane is the eigenvector associated with the smallest eigenvalue
+        base_normals = torch.real(eigenvectors)[torch.arange(eigenvectors.shape[0]), torch.argmin(torch.real(eigenvalues),dim=-1)]
+        cosines = torch.clamp(torch.einsum('ni,mi->nm', base_normals, base_normals), -1, 1)
+        angle_differences = torch.acos(cosines)
+        bases_in_plane = (angle_differences <= base_angle_cutoff)
+
+        # cond_num[~is_protein,:][:,~is_protein] = torch.logical_and(cond[~is_protein,:][:,~is_protein], bases_in_plane).long()
+        cond[~is_protein,:][:,~is_protein] = torch.logical_and(cond[~is_protein,:][:,~is_protein], bases_in_plane)
+
+    cond = torch.logical_or(cond, cond.t())
+    cond_num[:,:] = cond[:,:].long()
+
+
+    return cond_num
+
+# def get_pair_ss_partners(seq, xyz, mask, sel, len_s, 
+#                         negative=False, incl_protein=True, cutoff=12.0, bp_cutoff=4.0, eps=1e-6,
+#                         seq_cutoff=2, use_base_angles=False, base_angle_cutoff=0.5234):
+#     device = xyz.device
+
+#     # get base pairing NA bases
+#     repatom = torch.zeros(sum(len_s), dtype=torch.long, device=xyz.device)
+#     repatom[seq==22] = 15 # DA - N1
+#     repatom[seq==23] = 14 # DC - N3
+#     repatom[seq==24] = 15 # DG - N1
+#     repatom[seq==25] = 14 # DT - N3
+#     repatom[seq==27] = 12 # A - N1
+#     repatom[seq==28] = 15 # C - N3
+#     repatom[seq==29] = 12 # G - N1
+#     repatom[seq==30] = 15 # U - N3
+
+#     if not incl_protein: # either 1 or 2 NA chains
+#         if len(len_s)==2:
+#             # 2 RNA chains
+#             xyz_na1_rep = torch.gather(xyz[:len_s[0]], 1, repatom[:len_s[0],None,None].repeat(1,1,3)).squeeze(1)
+#             xyz_na2_rep = torch.gather(xyz[len_s[0]:], 1, repatom[len_s[0]:,None,None].repeat(1,1,3)).squeeze(1)
+#             cond = torch.cdist(xyz_na1_rep, xyz_na2_rep) < bp_cutoff
+
+#             mask_na1_rep = torch.gather(mask[:len_s[0]], 1, repatom[:len_s[0],None]).squeeze(1)
+#             mask_na2_rep = torch.gather(mask[len_s[0]:], 1, repatom[len_s[0]:,None]).squeeze(1)
+#             cond = torch.logical_and(cond, mask_na1_rep[:,None]*mask_na2_rep[None,:]) 
+#         else:
+#             # 1 RNA chains
+#             xyz_na_rep = torch.gather(xyz, 1, repatom[:,None,None].repeat(1,1,3)).squeeze(1)
+#             cond = torch.cdist(xyz_na_rep, xyz_na_rep) < bp_cutoff
+#             mask_na_rep = torch.gather(mask, 1, repatom[:,None]).squeeze(1)
+#             cond = torch.logical_and(cond, mask_na_rep[:,None]*mask_na_rep[None,:])
+
+#         if (torch.sum(cond)==0):
+#             i= np.random.randint(len_s[0]-1)
+#             while (not mask[i,1] or not mask[i+1,1]):
+#                 i = np.random.randint(len_s[0])
+#             cond[i,i+1] = True
+
+#     else: # either 1prot+1NA, 1prot+2NA or 2prot+2NA
+#         # find NA:NA basepairs
+#         if len(len_s)>=3:
+#             if len(len_s)==3:
+#                 na1s, na2s = len_s[0], len_s[0]+len_s[1]
+#             else:
+#                 na1s, na2s = len_s[0]+len_s[1], len_s[0]+len_s[1]+len_s[2]
+
+#             xyz_na1_rep = torch.gather(xyz[na1s:na2s], 1, repatom[na1s:na2s,None,None].repeat(1,1,3)).squeeze(1)
+#             xyz_na2_rep = torch.gather(xyz[na2s:], 1, repatom[na2s:,None,None].repeat(1,1,3)).squeeze(1)
+#             cond_bp = torch.cdist(xyz_na1_rep, xyz_na2_rep) < bp_cutoff
+
+#             mask_na1_rep = torch.gather(mask[na1s:na2s], 1, repatom[na1s:na2s,None]).squeeze(1)
+#             mask_na2_rep = torch.gather(mask[na2s:], 1, repatom[na2s:,None]).squeeze(1)
+#             cond_bp = torch.logical_and(cond_bp, mask_na1_rep[:,None]*mask_na2_rep[None,:])
+
+#         # find NA:prot contacts
+#         if (not negative):
+#             # get interface residues
+#             #   interface defined as chain 1 versus all other chains
+#             if len(len_s)==4:
+#                 first_na = len_s[0]+len_s[1]
+#             else:
+#                 first_na = len_s[0]
+
+#             xyz_na_rep = torch.gather(xyz[first_na:], 1, repatom[first_na:,None,None].repeat(1,1,3)).squeeze(1)
+#             cond = torch.cdist(xyz[:first_na,1], xyz_na_rep) < cutoff
+#             mask_na_rep = torch.gather(mask[first_na:], 1, repatom[first_na:,None]).squeeze(1)
+#             cond = torch.logical_and(
+#                 cond, 
+#                 mask[:first_na,None,1] * mask_na_rep[None,:]
+#             )
+
+#         # # random NA:prot contact for negatives
+#         # if (negative or torch.sum(cond)==0):
+#         #     if len(len_s)==4:
+#         #         nprot,nna = len_s[0]+len_s[1], sum(len_s[2:])
+#         #     else:
+#         #         nprot,nna = len_s[0], sum(len_s[1:])
+
+#         #     # pick a random pair of residues
+#         #     cond = torch.zeros( (nprot, nna), dtype=torch.bool )
+#         #     i,j = np.random.randint(nprot), np.random.randint(nna)
+#         #     while (not mask[i,1]):
+#         #         i = np.random.randint(nprot)
+#         #     while (not mask[nprot+j,1]):
+#         #         j = np.random.randint(nna)
+#         #     cond[i,j] = True
+
+
+#     ipdb.set_trace()
+
+
+    # if use_base_angles:
+
+    #     base_atoms = torch.zeros((sum(len_s),11,3), dtype=torch.float, device=xyz.device)
+    #     xyz_masked = torch.where(mask.unsqueeze(-1), xyz, torch.nan)
+        
+    #     base_atoms[seq==22,:,:] = xyz_masked[seq==22,11:22,:] 
+    #     base_atoms[seq==23,:,:] = xyz_masked[seq==23,11:22,:] 
+    #     base_atoms[seq==24,:,:] = xyz_masked[seq==24,11:22,:] 
+    #     base_atoms[seq==25,:,:] = xyz_masked[seq==25,11:22,:] 
+    #     base_atoms[seq==27,:,:] = xyz_masked[seq==27,12:23,:] 
+    #     base_atoms[seq==28,:,:] = xyz_masked[seq==28,12:23,:] 
+    #     base_atoms[seq==29,:,:] = xyz_masked[seq==29,12:23,:] 
+    #     base_atoms[seq==30,:,:] = xyz_masked[seq==30,12:23,:] 
+
+    #     # Compute the centroid of the points
+    #     centroid = torch.nanmean(base_atoms, dim=1, keepdim=True)
+
+    #     # Center the points
+    #     centered_points = base_atoms - centroid
+    #     centered_nan_mask = ~torch.isnan(centered_points)
+    #     centered_zero_nan = torch.where(centered_nan_mask, centered_points, 0.0)
+
+    #     # Compute the covariance matrix
+    #     covariance_matrix_unscaled = torch.matmul(centered_zero_nan.transpose(-1, -2), centered_zero_nan)
+    #     denom = ( centered_nan_mask.sum(-2) - 1 ).unsqueeze(-1).repeat((1,1,3))
+    #     covariance_matrix = covariance_matrix_unscaled / denom
+
+    #     # Compute the eigenvectors and eigenvalues
+    #     eigenvalues, eigenvectors = torch.linalg.eig(covariance_matrix)
+
+    #     # The normal to the plane is the eigenvector associated with the smallest eigenvalue
+    #     base_normals = torch.real(eigenvectors)[torch.arange(eigenvectors.shape[0]), torch.argmin(torch.real(eigenvalues),dim=-1)]
+    #     cosines = torch.clamp(torch.einsum('ni,mi->nm', base_normals, base_normals), -1, 1)
+    #     angle_differences = torch.acos(cosines)
+    #     bases_in_plane = (angle_differences <= base_angle_cutoff)
+
+    #     cond = cond * bases_in_plane
+
+    return cond
 
 def loader_eterna_distil_diff(item, params, random_noise=5.0, pick_top=True, native_NA_frac=0.05, negative=False, fixbb=False):
 
@@ -2160,13 +2529,16 @@ def loader_eterna_distil_diff(item, params, random_noise=5.0, pick_top=True, nat
     bond_feats = bond_feats_from_Ls(Ls).long()
     ch_label = torch.cat([torch.full((L_,), i) for i,L_ in enumerate(Ls)]).long()
 
+    # ipdb.set_trace()
+    # ss_matrix = get_pair_ss_partners(seq[0], xyz[0], mask[0], torch.arange(sum(Ls)), Ls, params)
+    # sel = rf2aa.data_loader.get_na_crop(seq[0], xyz[cropref], mask[cropref], torch.arange(sum(Ls)), Ls, params, negative)
     ###############
     # Do cropping #
     ###############
     if sum(Ls) > params['CROP']:
     # if True: # always crop!
         cropref = np.random.randint(xyz.shape[0])
-        sel = get_na_crop(seq[0], xyz[cropref], mask[cropref], torch.arange(sum(Ls)), Ls, params, negative)
+        sel = rf2aa.data_loader.get_na_crop(seq[0], xyz[cropref], mask[cropref], torch.arange(sum(Ls)), Ls, params, negative)
         seq = seq[:,sel]
         msa_seed_orig = msa_seed_orig[:,:,sel]
         msa_seed = msa_seed[:,:,sel]
@@ -2189,11 +2561,13 @@ def loader_eterna_distil_diff(item, params, random_noise=5.0, pick_top=True, nat
     ch_label[Ls[0]:] = 1
     dist_matrix = rf2aa.data_loader.get_bond_distances(bond_feats)
 
+
     return seq.long(), msa_seed_orig.long(), msa_seed.float(), msa_extra.float(), mask_msa,\
            xyz.float(), mask, idx.long(), \
            xyz_t.float(), f1d_t.float(), mask_t, \
            xyz_prev.float(), mask_prev, \
            same_chain, False, False, torch.zeros(seq.shape), bond_feats, dist_matrix, chirals, ch_label, 'C1', "eterna", item, [Ls,[]]
+           # same_chain, False, False, torch.zeros(seq.shape), bond_feats, dist_matrix, chirals, ch_label, 'C1', ss_matrix, "eterna", item, [Ls,[]]
 
 
 
@@ -2720,8 +3094,6 @@ class DistilledDataset(data.Dataset):
                             indep_diffused.xyz = aa_model.eye_frames2(indep_diffused.xyz)
 
 
-                
-
                 # masks the sequence of indep 
                 if self.preprocess_param['p_show_motif_seq'] > 0.0:
                     # sometimes mask the sequence
@@ -2775,6 +3147,7 @@ class DistilledDataset(data.Dataset):
                 if chosen_dataset == 'na_compl':
                     hotspot_id = make_hotspot_id(out[-1])
                     hotspot = make_hotspot_vector(indep, self.base_hotspot_indices_dict, hotspot_id)
+
                 # elif chosen_dataset == 'dna_distil':
                 #     hotspot_id = make_hotspot_id_distil(out[-1])
                 #     hotspot = make_hotspot_vector(indep, self.base_hotspot_indices_distil_dict, hotspot_id)
@@ -2797,27 +3170,87 @@ class DistilledDataset(data.Dataset):
 
 
             if self.params['USE_NUCLEIC_SS']:
-                if chosen_dataset == 'eterna':
-                    pdb_ids = sel_item['PRED_ID']
-                    dbns_path = self.params['ETERNA_DIR']+'/refined_dbns/'+pdb_ids+'-2ndstrs.dbn'
-                    dssr_dbn = parse_dssr(dbns_path,ignore_symbols=['&'],return_seq=False)
-                    ss_matrix = torch.from_numpy(sstr_to_matrix(dssr_dbn, only_basepairs=True))
-                    ss_matrix = ss_matrix.reshape(1,1,ss_matrix.shape[0],ss_matrix.shape[1],1).repeat(1,3,1,1,1)
+                # show_ss_cond = (chosen_dataset in ['eterna','rna','tf_distil','na_compl']) and (self.preprocess_param['p_show_ss'] > 0.0)
+                rand_choice_show_ss = (np.random.rand() < self.preprocess_param['p_show_ss'])
+                # ipdb.set_trace()
+                relevant_Ls = indep.seq.shape[0]
+                use_ss_condit = rand_choice_show_ss and (indep.xyz.shape[0]==relevant_Ls)
+
+                if use_ss_condit:
+                    try:
+                        # ss_matrix = get_pair_ss_partners(indep.seq, 
+                        #                                  indep.xyz, 
+                        #                                  indep.maskstack[0,:,:23], 
+                        #                                  torch.arange(relevant_Ls), 
+                        #                                  relevant_Ls,
+                        #                                  bp_cutoff=4.0,
+                        #                                  use_base_angles=True, base_angle_cutoff=1.5708,
+                        #                                  )
+                        ss_matrix = get_pair_ss_partners(indep.seq, 
+                                                         indep.xyz, 
+                                                         indep.maskstack[0,:,:23], 
+                                                         torch.arange(relevant_Ls), 
+                                                         relevant_Ls,
+                                                         bp_cutoff=4.6,
+                                                         use_base_angles=True, 
+                                                         base_angle_cutoff=1.5708,
+                                                         compute_aa_contacts=True, 
+                                                         use_repatom=True,
+                                                         )
+
+                        
+                    except:
+                        ss_matrix = (2*torch.ones(rfi_tp1_t[0].t2d.shape[2:4])).long()
+
+
+                    # """
+                    # UNCOMMENT LATER!
+                    # """
+                    # if chosen_dataset in ['eterna']:
+
+                    #     pdb_ids = sel_item['PRED_ID']
+                    #     dbns_path = self.params['ETERNA_DIR']+'/refined_dbns/'+pdb_ids+'-2ndstrs.dbn'
+                    #     dssr_dbn = parse_dssr(dbns_path,ignore_symbols=['&'],return_seq=False)
+                    #     ss_matrix_prev = torch.from_numpy(sstr_to_matrix(dssr_dbn, only_basepairs=True)).long()
+
+                    #     png_filename = f'/home/afavor/git/RFD_AF/3template_na/pngs_training/{chosen_dataset}__{sel_item["PRED_ID"]}.png'
+                    #     fig, ax = plt.subplots(nrows=1,ncols=2,figsize=(15,30))
+                    #     ax[0].imshow(ss_matrix_prev.cpu().numpy())
+                    #     ax[0].set_title('Precomputed SS matrix')
+
+                    #     ax[1].imshow((1*ss_matrix).cpu().numpy())
+                    #     ax[1].set_title('Frank SS matrix')
+                    #     plt.savefig(png_filename)
+                    #     plt.close(fig)
+
+                    # # elif chosen_dataset in ['rna','tf_distil','na_compl']:
+                    # else:
+                    #     if "CHAINID" in sel_item.keys():
+                    #         item_id_for_fig = sel_item["CHAINID"]
+                    #     else:
+                    #         item_id_for_fig = np.random.randint(200)
+                        
+                    #     png_filename = f'/home/afavor/git/RFD_AF/3template_na/pngs_training/{chosen_dataset}__{item_id_for_fig}.png'
+                    #     fig, ax = plt.subplots(nrows=1,ncols=1,figsize=(15,15))
+                    #     ax.imshow(ss_matrix.cpu().numpy())
+                    #     ax.set_title('new SS matrix')
+                    #     plt.savefig(png_filename)
+                    #     plt.close(fig)
 
                 else:
-                    # pair_distances = xyz_to_t2d(xyz_t[None,:,:,:3])[:,:,:,:,:37]
-                    ss_matrix = torch.zeros_like(rfi_tp1_t[0].t2d[:,:,:,:,:1])
+                    ss_matrix = (2*torch.ones(rfi_tp1_t[0].t2d.shape[2:4])).long()
 
-                rfi_tp1_t[0].t2d = torch.cat((rfi_tp1_t[0].t2d, ss_matrix), dim=-1)
-                rfi_tp1_t[1].t2d = torch.cat((rfi_tp1_t[1].t2d, ss_matrix), dim=-1)
+                ss_templ_onehot = F.one_hot(ss_matrix, num_classes=3)
+                ss_templ_onehot = ss_templ_onehot.reshape(1, 1, *ss_templ_onehot.shape).repeat(1,3,1,1,1)
 
-                
+                rfi_tp1_t[0].t2d = torch.cat((rfi_tp1_t[0].t2d, ss_templ_onehot), dim=-1)
+                rfi_tp1_t[1].t2d = torch.cat((rfi_tp1_t[1].t2d, ss_templ_onehot), dim=-1)
 
 
             run_inference.seed_all(mask_gen_seed) # Reseed the RNGs for test stability.
             # ic(rfi_tp1_t[0].seq)
             # ic(rfi_tp1_t[1].seq)
-
+            # ipdb.set_trace()
 
             
             # assert not nans in rfis 

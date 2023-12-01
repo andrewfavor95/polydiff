@@ -16,7 +16,7 @@ from willutil.homog.hgeom import hcross, hxform, hrot, hconstruct
 from willutil.homog.thgeom import t_rot
 from willutil.search.slidedock import slide_dock_oligomer
 from willutil.motif.motif_placer import place_motif_dme_fast
-import ipdb
+from pdb import set_trace
 
 def create_motif_manager(conf, device='cuda'):
     rfmotif = MotifManager(conf, device)

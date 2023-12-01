@@ -226,6 +226,8 @@ def get_args(in_args=None):
             help='If true, assigns different type of masking token per polymer (protein, dna, rna)')
     diff_group.add_argument('-p_keep_frames', default=1.0, type=float, 
             help='fraction of time that we leave frames to be noised/denoised normally, rather than randomizing or setting to identity')
+    diff_group.add_argument('-p_show_ss', default=0.5, type=float, 
+            help='fraction of time that we leave show the secondary structure (base pairing).')
 
 
     # Trunk module properties
@@ -552,6 +554,7 @@ def get_args(in_args=None):
                   'num_atoms_na',
                   'twotemplate',
                   'threetemplate',
+                  'p_show_ss',
                   ]:
         preprocess_param[param] = getattr(args, param)
     if not preprocess_param['sequence_decode']:

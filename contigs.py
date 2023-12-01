@@ -3,7 +3,7 @@ import numpy as np
 import random
 from icecream import ic
 from collections import OrderedDict
-import ipdb
+from pdb import set_trace
 class ContigMap():
     '''
     New class for doing mapping.

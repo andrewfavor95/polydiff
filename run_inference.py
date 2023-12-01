@@ -45,7 +45,7 @@ import aa_model
 import util
 from icecream import ic 
 import json 
-import ipdb
+from pdb import set_trace
 # ic.configureOutput(includeContext=True)
 
 def make_deterministic(seed=0):

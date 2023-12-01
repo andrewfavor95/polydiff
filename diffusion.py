@@ -27,7 +27,7 @@ import time
 from icecream import ic  
 
 import rf2aa.chemical
-import ipdb
+from pdb import set_trace
 torch.set_printoptions(sci_mode=False)
 
 def cosine_interp(T, eta_max, eta_min):

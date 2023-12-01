@@ -33,7 +33,7 @@ import atomize
 import sys 
 import mask_generator
 from rf2aa.util_module import XYZConverter
-import ipdb
+from pdb import set_trace
 
 NINDEL=1
 NTERMINUS=2
@@ -71,6 +71,9 @@ class Indep:
     is_protein: torch.Tensor
     is_dna: torch.Tensor
     is_rna: torch.Tensor
+
+    # SS conditioning
+    # ss_matrix: torch.Tensor
     
     # # DJ new - introduced for refinement model
     # metadata: dict
@@ -336,6 +339,9 @@ def make_indep(pdb, ligand=None):
     # Now check where diff polymer types are:
     is_protein, is_dna, is_rna  = mask_generator.get_polymer_type_masks(seq)
 
+    # # Temporary:
+    # ss_matrix = None
+
     indep = Indep(
         seq,
         xyz,
@@ -355,6 +361,8 @@ def make_indep(pdb, ligand=None):
         is_protein,
         is_dna,
         is_rna,
+        # # SS condit
+        # ss_matrix,
         )
     return indep
 
@@ -503,6 +511,12 @@ class Model:
         print('WARNING: in insert_contig(),ASSUMING NO SMALL MOLECULE, BUT CHANGE LATER!')
         print('Just modify o.Ls[-1] after computing sm stuff')
         o.Ls.append(0)
+
+
+        # print('SERIOUS TODO IN aa_model indert_contig')
+        # print(' put the ss_matrix in if basepairs are given as arguments, and have them stored in contig object.')
+        # ss_matrix = None
+        # o.ss_matrix = ss_matrix
 
 
         # Insert small mol into contig_map
@@ -694,6 +708,8 @@ class Model:
                 is_motif=None, 
                 polymer_type_masks=None,
                 rfmotif=None):
+                # target_ss_matrix=None,
+
         """
         Function to prepare inputs to diffusion model
         
@@ -1155,7 +1171,22 @@ class Model:
             cattable_is_motif = torch.tile(is_motif[None,None,:,None], (1,3,1,1)).to(device=t1d.device, dtype=t1d.dtype)
             cattable_is_motif[:,:-1,...] = -1  # first two templates get -1 for the motif feature 
             t1d = torch.cat((t1d, cattable_is_motif), dim=-1) 
-        # ipdb.set_trace()
+
+
+        # # Adding target ss_matrix if that is what we wanna do:
+        # if (target_ss_matrix is not None) and (twotemplate and threetemplate):
+        #     # assert t2d.shape[-1]==69, "before adding target ss matrix t2d feats (dim=3), must have initial t2d dim of 69, in order to have a final dim of 72."
+
+        #     # ipdb.set_trace()
+        #     # ss_matrix = torch.from_numpy(target_ss_matrix).long()
+        #     ss_templ_onehot = torch.nn.functional.one_hot(torch.from_numpy(target_ss_matrix).long(), num_classes=3)
+        #     ss_templ_onehot = ss_templ_onehot.reshape(1, 1, *ss_templ_onehot.shape).repeat(1,3,1,1,1)
+
+        #     t2d = torch.cat((t2d, ss_templ_onehot), dim=-1)
+
+
+
+
         # Note: should be batched
         rfi = RFI(
             msa_masked,
@@ -1242,6 +1273,9 @@ def adaptor_fix_bb_indep(out):
     (seq, msa, msa_masked, msa_full, mask_msa, true_crds, atom_mask, idx_pdb, xyz_t, t1d, mask_t, xyz_prev,
         mask_prev, same_chain, unclamp, negative, atom_frames, bond_feats, dist_matrix, chirals, ch_label, symm_group,
          dataset_name, item, Ls) = out
+    # (seq, msa, msa_masked, msa_full, mask_msa, true_crds, atom_mask, idx_pdb, xyz_t, t1d, mask_t, xyz_prev,
+    #     mask_prev, same_chain, unclamp, negative, atom_frames, bond_feats, dist_matrix, chirals, ch_label, symm_group,
+    #     ss_matrix, dataset_name, item, Ls) = out
     assert symm_group=="C1", f"example with {symm_group} found, symmetric training not set up for aa-diffusion"
     
 
@@ -1289,6 +1323,8 @@ def adaptor_fix_bb_indep(out):
         is_protein,
         is_dna,
         is_rna,
+        # # SS conditioning
+        # ss_matrix,
         )
     
     return indep, atom_mask, dataset_name
@@ -1324,6 +1360,7 @@ def pop_mask(indep, pop):
     indep.is_protein    = indep.is_protein[pop]
     indep.is_dna        = indep.is_dna[pop]
     indep.is_rna        = indep.is_rna[pop]
+    # indep.ss_matrix     = indep.ss_matrix[pop2d].reshape(N,N)
 
     if indep.chirals.numel():
         n_shift = (~pop).cumsum(dim=0)
@@ -1542,7 +1579,8 @@ def self_cond(indep, rfi, rfo, twotemplate, threetemplate):
         # Insert the previous px0 into the SECOND template spot (index 1)
         # This spot has -1 confidence in t1d, marking it as SC template
         rfi_sc.xyz_t[0,1] = xyz_t[0,0,:,1]
-        rfi_sc.t2d[0,1] = t2d[0,0]
+        # rfi_sc.t2d[0,1] = t2d[0,0]
+        rfi_sc.t2d[0, 1, :, :, :t2d.shape[-1]] = t2d[0, 0]
 
     elif twotemplate and threetemplate:
         rfi_sc.xyz_t[0,1] = xyz_t[0,0,:,1]
@@ -1550,8 +1588,9 @@ def self_cond(indep, rfi, rfo, twotemplate, threetemplate):
         # add 69th feature to t2d (accomodation for 3-template version)
         blank = (torch.ones((1,1,L,L,1))*-1).to(rfi.xyz.device)
         t2d = torch.cat((t2d, blank), dim=-1)
-        rfi_sc.t2d[0, 1] = t2d[0, 0]
-    
+        # rfi_sc.t2d[0, 1] = t2d[0, 0]
+        rfi_sc.t2d[0, 1, :, :, :t2d.shape[-1]] = t2d[0, 0]
+
     else:
         raise RuntimeError('Unsure what should happen here - re-evaluate when hit. -DJ')
 
