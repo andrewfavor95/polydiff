@@ -197,7 +197,7 @@ class Trainer():
         self.valid_param['MINTPLT'] = 1
         self.valid_param['SEQID'] = 150.0
         self.loss_param = loss_param
-        self.loss_param_ref = loss_param.copy() # keeping reference copy in case we conditionally change loss weights
+        # self.loss_param_ref = loss_param.copy() # keeping reference copy in case we conditionally change loss weights
         ic(self.loss_param)
         self.ACCUM_STEP = accum_step
         self.batch_size = batch_size
@@ -366,10 +366,24 @@ class Trainer():
                   w_ax_ang=0.0, w_frame_dist=0.0, eps=1e-6, w_motif_fape=0.0,
                   w_nonmotif_fape=0.0, norm_fape=10.0, clamp_fape=10.0,
                   backprop_non_displacement_on_given=False, masks_1d={},
-                  atom_frames=None, w_ligand_intra_fape=1.0, w_prot_lig_inter_fape=1.0,
+                  atom_frames=None, w_ligand_intra_fape=1.0, w_prot_lig_inter_fape=1.0, score_frames=False,
                   fape_scale_vec=None, scale_prot_fape=1.0, scale_dna_fape=1.0, scale_rna_fape=1.0,
                   ):
-        
+    # def calc_loss(self, logit_s, label_s,
+    #           logit_aa_s, label_aa_s, mask_aa_s, logit_exp,
+    #           pred_in, pred_tors, true, mask_crds, mask_BB, mask_2d, same_chain,
+    #           pred_lddt, idx, dataset, chosen_task, t, xyz_in, diffusion_mask,
+    #           seq_diffusion_mask, seq_t, is_sm, unclamp=False, negative=False,
+    #           w_dist=1.0, w_aa=1.0, w_str=1.0, w_all=0.5, w_exp=1.0,
+    #           w_lddt=1.0, w_blen=1.0, w_bang=1.0, w_lj=0.0, w_hb=0.0,
+    #           lj_lin=0.75, use_H=False, w_disp=0.0, w_motif_disp=0.0, 
+    #           w_ax_ang=0.0, w_frame_dist=0.0, eps=1e-6, w_motif_fape=0.0,
+    #           w_nonmotif_fape=0.0, norm_fape=10.0, clamp_fape=10.0,
+    #           backprop_non_displacement_on_given=False, masks_1d={},
+    #           atom_frames=None, w_ligand_intra_fape=1.0, w_prot_lig_inter_fape=1.0, score_frames=False,
+    #           fape_scale_vec=None,
+    #           ):
+    
         # assuming all bad crds have been popped
         assert not torch.isnan(pred_in).any()
         assert not torch.isnan(true).any()
@@ -420,6 +434,14 @@ class Trainer():
             'ligand_intra_fape'         : w_ligand_intra_fape*disp_tscale,
             'prot_lig_inter_fape'       : w_prot_lig_inter_fape*disp_tscale,
         }
+
+        if not score_frames:
+            loss_weights['frame_sqL2'] = loss_weights['frame_sqL2']*0.0
+
+        # loss_weights['frame_sqL2'] = loss_weights['frame_sqL2'] * score_frames # only apply frame_sqL2 loss if score_frames is True
+        ic(loss_weights['frame_sqL2'])
+
+
 
         for i in range(4):
             loss_weights[f'c6d_{i}'] = w_dist*c6d_tscale
@@ -706,7 +728,6 @@ class Trainer():
         loss_weights['motif_rmsd']      = 0.0
         loss_weights['non_motif_rmsd']  = 0.0
         loss_weights['ligand_rmsd']     = 0.0
-        
         
         tot_loss = rf2aa.util.resolve_loss_summation(tot_loss, 
                                                      loss_dict, 
@@ -1235,11 +1256,14 @@ class Trainer():
         
         print('About to enter train loader loop')
         for loader_out in train_loader:
+
+
             
 
             indep, rfi_tp1_t, chosen_dataset, item, little_t, is_diffused, chosen_task, atomizer, masks_1d, item_context, score_frames = loader_out
             context_msg = f'rank: {rank}: {item_context}'
-            
+            score_frames = masks_1d['score_frames'] # bool, whether to score frames or not
+
             if indep.seq.shape[0] <= 3:
                 # skip SM examples w/ too few atoms
                 continue 
@@ -1379,6 +1403,7 @@ class Trainer():
                         # true_crds[0,:,:14,:] = indep.xyz[:,:14,:]
                         true_crds[0,:,:rf2aa.chemical.NHEAVY,:] = indep.xyz[:,:rf2aa.chemical.NHEAVY,:]
                         mask_crds = ~torch.isnan(true_crds).any(dim=-1)
+                        
                         if all([len(a) > 0 for a in indep.Ls]): 
                             # we have prot and sm
                             true_crds, mask_crds = resolve_equiv_natives_asmb(pred_crds[-1], 
@@ -1391,8 +1416,6 @@ class Trainer():
                             true_crds, mask_crds = resolve_equiv_natives(pred_crds[-1], 
                                                                          indep.natstack[None], 
                                                                          indep.maskstack[None])
-
-                        
 
                         # mask_crds[:,~is_diffused,:] = False
                         assert not (~is_diffused).any(), 'There is a non-diffused token but assumption is motif_only_2d'
@@ -1439,10 +1462,10 @@ class Trainer():
                         # conditional modification of loss param dict:
                         # loss_param_in = self.loss_param.clone()
                         
-                        if score_frames:
-                            self.loss_param['w_frame_dist'] = self.loss_param_ref['w_frame_dist']
-                        else:
-                            self.loss_param['w_frame_dist'] = 0
+                        # if score_frames:
+                        #     self.loss_param['w_frame_dist'] = self.loss_param_ref['w_frame_dist']
+                        # else:
+                        #     self.loss_param['w_frame_dist'] = 0
 
 
                         # get atomized frames for general FAPE computation in calc_loss
@@ -1474,6 +1497,7 @@ class Trainer():
                                 t=int(little_t), 
                                 masks_1d=masks_1d,
                                 atom_frames=rfi_t.atom_frames,
+                                score_frames=score_frames,
                                 fape_scale_vec=fape_scale_vec,
                                 **self.loss_param)
 
@@ -1496,7 +1520,10 @@ class Trainer():
                     if gpu != 'cpu':
                         print(f'DEBUG: {rank=} {gpu=} {counter=} size: {indep.xyz.shape[0]} {torch.cuda.max_memory_reserved(gpu) / 1024**3:.2f} GB reserved {torch.cuda.max_memory_allocated(gpu) / 1024**3:.2f} GB allocated {torch.cuda.get_device_properties(gpu).total_memory / 1024**3:.2f} GB total')
                     if not torch.isnan(loss):
-                        with torch.autograd.set_detect_anomaly(True):
+                        if DEBUG:
+                            with torch.autograd.set_detect_anomaly(True):
+                                scaler.scale(loss).backward()
+                        else:
                             scaler.scale(loss).backward()
                     else:
                         msg = f'NaN loss encountered, skipping: {context_msg}'
@@ -1580,7 +1607,7 @@ class Trainer():
                 
                 torch.cuda.reset_peak_memory_stats()
                 torch.cuda.empty_cache()
-		# TODO: Use these when writing output PDBs
+                # TODO: Use these when writing output PDBs
                 # logits_argsort = torch.argsort(logit_aa_s, dim=1, descending=True)
                 # top1_sequence = (logits_argsort[:, :1])
                 # top1_sequence = torch.clamp(top1_sequence, 0,19)

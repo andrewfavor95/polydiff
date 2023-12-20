@@ -13,6 +13,8 @@ import itertools
 import assertpy
 from pdb import set_trace
 import signal
+import matplotlib.pyplot as plt
+from util import get_pair_ss_partners, get_start_stop_inds
 
 #####################################
 # Misc functions for mask generation
@@ -369,6 +371,145 @@ def get_diffusion_mask_chunked(indep, atom_mask, low_prop, high_prop, broken_pro
         mask2d, is_motif = _get_diffusion_mask_chunked(indep.xyz, low_prop, high_prop, max_motif_chunks)
     
     # spoofing a return of two items: "diffusion_mask, is_atom_motif"
+    return (mask2d, is_motif), None
+
+
+
+
+def _get_diffusion_mask_bridge(xyz, prop_low, prop_high, in_chain_mask, mode, max_abs_offset=4, top_k_str_dists=6, ij_visi_prob=0.25):
+    """
+    Bridging task to make model see situations where you have to bridge the max distance
+    """
+
+    def find_first_last_ones(tensor):
+        # Find all indices where the value is 1
+        ones_indices = torch.nonzero(tensor == 1, as_tuple=False).view(-1)
+
+        # Extract the first and last index if any 1s are found
+        if ones_indices.nelement() == 0:
+            return None, None
+        else:
+            first_index = ones_indices[0].item()
+            last_index = ones_indices[-1].item()
+            return first_index, last_index
+
+
+    L = xyz.shape[0]
+
+    mask = torch.zeros(L, L)
+    is_motif = torch.zeros(L)
+
+
+    chn_start, chn_stop = find_first_last_ones(in_chain_mask)
+    chn_len = 1 + chn_stop - chn_start
+    num_resis_low  = max(2, int(prop_low*chn_len//2))
+    num_resis_high = max(4, int(prop_high*chn_len//2))
+
+    # num_resis_choice = max(3,np.random.randint(num_resis_low, num_resis_high))
+    num_resis_choice = np.random.randint(num_resis_low, num_resis_high)
+
+    if num_resis_choice > 4:
+        start_delta = np.random.randint(2, num_resis_choice - 2)
+
+    elif num_resis_choice == 4:
+        start_delta = 2
+
+    else:
+        start_delta = 1
+
+
+    stop_delta = num_resis_choice - start_delta
+
+    start_delta = max(1,start_delta)
+    stop_delta = max(1,stop_delta)
+
+
+    if mode in ['str', 'structure', 'struct']: # Else we assume basic seq distance
+
+        top_inds_k = min(top_k_str_dists, L//3)
+
+        dmat = torch.cdist(xyz[:,1,:], xyz[:,1,:], p=2)
+        dmat_masked = torch.zeros(L, L)
+        dmat_masked[chn_start:chn_stop,chn_start:chn_stop] = dmat[chn_start:chn_stop,chn_start:chn_stop]
+
+        # Finding the indices of the top-k values
+        values, indices = torch.topk(dmat_masked.view(-1), top_inds_k)
+
+        # Converting the flat indices to 2D indices
+        rows = indices // L
+        cols = indices % L
+
+
+        # Combine rows and cols into a single tensor of 2D indices
+        top_indices = torch.stack((rows, cols), dim=1)
+
+        chosen_ind = np.random.randint(top_inds_k)
+        resi_i, resi_j = top_indices[chosen_ind,:]
+        offset_i = np.random.randint(-max_abs_offset,max_abs_offset)
+        offset_j = np.random.randint(-max_abs_offset,max_abs_offset)
+
+        from_i = max(0,int(offset_i+resi_i-(start_delta//2)))
+        to_i   = min(L,int(offset_i+resi_i+(start_delta//2)))
+
+        from_j = max(0,int(offset_j+resi_j-(start_delta//2)))
+        to_j   = min(L,int(offset_j+resi_j+(start_delta//2)))
+
+        first_range = (from_i, to_i)
+        last_range  = (from_j, to_j)
+
+    else: # Else we assume basic seq distance
+        # set_trace()
+        first_range = ( chn_start,chn_start + start_delta )
+        last_range  = (chn_stop - stop_delta,  chn_stop)
+
+    mask[first_range[0]:first_range[1], first_range[0]:first_range[1]] = 1
+    is_motif[first_range[0]:first_range[1]] = 1
+
+    mask[last_range[0]:last_range[1], last_range[0]:last_range[1]] = 1
+    is_motif[last_range[0]:last_range[1]] = 1
+
+    # If we choose this, then we mask the off diag
+    if np.random.rand() < ij_visi_prob:
+        mask[first_range[0]:first_range[1], last_range[0]:last_range[1]] = 1
+        mask[last_range[0]:last_range[1], first_range[0]:first_range[1]] = 1
+
+    return mask.bool(), is_motif.bool()
+
+
+def get_diffusion_mask_bridge(indep, atom_mask, low_prop, high_prop, broken_prop, seq_str_prob=0.5, ij_visi_prob=0.334):
+    """
+    sew_str_prob controls whether we choose to bridge over long seq distance or long struct dist
+    """
+    L = indep.xyz.shape[0]
+
+    # Not worth doing this shit if too small.
+    if L<=5:
+        return get_unconditional_3template(indep, atom_mask, low_prop, high_prop, broken_prop)
+
+    in_chain_mask = indep.same_chain[np.random.randint(L)]
+
+    # wrapper to accomodate indep/atom mask input 
+    assert indep.is_sm.sum() == 0, 'small molecules not supported currently for this masking'
+
+    
+    # Choose whether bridge is over long seq or long struct separation:
+    if np.random.rand() <= seq_str_prob: 
+        mask_mode = 'seq' # Do seq distance
+    else: 
+        mask_mode = 'str' # do struct dist
+
+
+    mask2d, is_motif = _get_diffusion_mask_bridge(indep.xyz, low_prop, high_prop, in_chain_mask, mask_mode, ij_visi_prob=ij_visi_prob)
+
+
+    # png_filename = f'/home/afavor/git/RFD_AF/3template_na/pngs_training/bridge_tasks/{mask_mode}__{np.random.randint(5000)}.png'
+    # fig, ax = plt.subplots(nrows=1,ncols=1,figsize=(15,30))
+    # ax.imshow(mask2d.cpu().numpy())
+    # ax.set_title('Precomputed SS matrix')
+    # plt.savefig(png_filename)
+    # plt.close(fig)
+
+
     return (mask2d, is_motif), None
 
 
@@ -771,7 +912,7 @@ def _get_multi_triple_contact_3template(xyz,
                                          xyz_less_than=6,
                                          seq_dist_greater_than=10,
                                          len_low=1,
-                                         len_high=7):
+                                         len_high=7,):
     """
     Gets 2d mask + 1d is motif for multiple triple contacts. 
     """
@@ -787,6 +928,7 @@ def _get_multi_triple_contact_3template(xyz,
     n_triples = random.randint(1, max_triples)
     for i in range(n_triples): 
         indices = find_third_contact(contacts)
+        
         if indices is None:
             print('***returning simple diffusion mask')
             return _get_diffusion_mask_chunked(xyz, low_prop, high_prop, max_motif_chunks=6)
@@ -1100,7 +1242,7 @@ def get_unconditional_3template(indep, atom_mask, low_prop, high_prop, broken_pr
     L = indep.length()
     is_motif = torch.zeros(L).bool()
     is_motif_2d = is_motif[:, None] * is_motif[None, :]
-
+    
     return (is_motif_2d, is_motif), None
 
 
@@ -1177,8 +1319,59 @@ def get_diffusion_mask_na(
         max_num_chunks=4,
         na_fixed_intra=False,
         na_fixed_inter=False,
+        prob_add_bp_partners=0.0,
         ):
 
+
+    # Function to check if the current stretch is contiguous and of length > n
+    def find_contiguous_stretches(ss_matrix, n):
+        # Initialize variables
+
+        bp_inds = torch.nonzero(ss_matrix)
+
+
+        current_stretch = []
+        stretches = []
+        stretch_ranges = []
+        pair_dict = {}
+
+        # Function to check if the current stretch is contiguous and of length > n
+        def check_and_add_stretch(stretch):
+            if len(stretch) > n:
+                stretches.append(stretch)
+
+        # Function to check if the next pair is a continuation of the current stretch
+        def is_continuation(curr, next):
+            return (next - curr == torch.tensor([1, -1])).all() or (next - curr == torch.tensor([-1, 1])).all()
+
+        # Iterate over the pairs in bp_inds
+        for i in range(bp_inds.size(0)):
+            if i == 0 or not is_continuation(bp_inds[i - 1], bp_inds[i]):
+                # New stretch starts here
+                check_and_add_stretch(current_stretch)
+                current_stretch = [bp_inds[i].tolist()]
+            else:
+                # Continuation of the current stretch
+                current_stretch.append(bp_inds[i].tolist())
+
+        # Check for the last stretch
+        check_and_add_stretch(current_stretch)
+
+        # contiguous_stretches = find_contiguous_stretches(bp_inds, 3)
+        for i,stretch_i in enumerate(stretches):
+            stretch_ranges.append(((stretch_i[0][0],stretch_i[-1][0]), (stretch_i[-1][-1],stretch_i[0][-1])))
+
+            for pair_ij in stretch_i:
+                pair_dict[pair_ij[0]] = pair_ij[-1]
+
+        
+
+
+        return stretches, stretch_ranges, pair_dict
+
+    """
+    Basically same as function above, with optional ability to pass more polymer-specific arguments
+    """
 
     mask_probs = list(diff_mask_probs.items())
     masks = [m for m, _ in mask_probs]
@@ -1190,14 +1383,85 @@ def get_diffusion_mask_na(
     # if not indep.is_sm.any():
     #     get_mask = sm_mask_fallback.get(get_mask, get_mask)
 
-    # if indep.is_sm.any() and get_nucleic_acid_residues(indep.seq).any():
-    #     sys.exit(f'small molecule and nucleic training not currently supported for {task} task!')
-
     if indep.is_sm.any(): 
         get_mask = get_sm_contact_mask
 
+    diffusion_mask, is_atom_motif = get_mask(indep, atom_mask, low_prop=low_prop, high_prop=high_prop, broken_prop=broken_prop)
+    (t2d_is_revealed, diffusion_mask) = diffusion_mask 
 
-    return get_mask(indep, atom_mask, low_prop=low_prop, high_prop=high_prop, broken_prop=broken_prop)
+
+    # Now we do the additional NA modification shit:
+    # (1) We can sample rand vs prob_add_bp_partners and add bp partners:
+
+    add_bp_partners_cond_A = (np.random.rand() <= prob_add_bp_partners)
+    add_bp_partners_cond_B = ((~diffusion_mask).sum() > 3)
+
+    if (add_bp_partners_cond_A and add_bp_partners_cond_B):
+        relevant_Ls = indep.seq.shape[0]
+
+        ss_matrix = get_pair_ss_partners(indep.seq, 
+                                         indep.xyz, 
+                                         indep.maskstack[0,:,:23], 
+                                         torch.arange(relevant_Ls), 
+                                         relevant_Ls,
+                                         bp_cutoff=4.6,
+                                         use_base_angles=True, 
+                                         base_angle_cutoff=1.5708,
+                                         compute_aa_contacts=False, 
+                                         use_repatom=True,
+                                         canonical_partner_filter=True # Always filter by canonical basepairs here
+                                         )
+
+
+        diff_mask_inds, diff_mask_vals = get_start_stop_inds(diffusion_mask )
+        diffused_ranges =  [diff_mask_inds[i] for i,val_i in enumerate(diff_mask_vals) if not val_i]
+        motif_ranges =  [diff_mask_inds[i] for i,val_i in enumerate(diff_mask_vals) if val_i]
+        
+        # bp_partners_canon = torch.zeros((len_s, len_s), dtype=torch.bool, device=xyz.device)
+
+        contiguous_stretches, stretch_ranges, pair_dict = find_contiguous_stretches(ss_matrix, 3)
+        t2d_is_revealed_new = t2d_is_revealed.clone()
+        diffusion_mask_new = diffusion_mask.clone()
+        # strand_i_
+        # for i in range(relevant_Ls):
+        #     for j in range(relevanc_Ls):
+        for i in pair_dict.keys():
+
+            if diffusion_mask[i]:
+                diffusion_mask_new[pair_dict[i]] = True
+
+            for j in pair_dict.keys():
+
+                if t2d_is_revealed[i,j]:
+                    t2d_is_revealed_new[pair_dict[i],pair_dict[j]] = True
+
+
+        # # set_trace()
+        # png_filename = f'/home/afavor/git/RFD_AF/3template_na/pngs_training/test_show_bp_partners_{np.random.randint(500)}.png'
+        # fig, ax = plt.subplots(nrows=1,ncols=3,figsize=(15,45))
+        # ax[0].imshow((1*t2d_is_revealed).cpu().numpy())
+        # ax[0].set_title('Orig mask chunks')
+
+        # ax[1].imshow((1*ss_matrix).cpu().numpy())
+        # ax[1].set_title('ss matrix')
+
+        # ax[2].imshow((1*t2d_is_revealed_new).cpu().numpy())
+        # ax[2].set_title('mask chunks with base pair mirroring ')
+
+
+        # plt.savefig(png_filename)
+        # plt.close(fig)
+
+        return (t2d_is_revealed_new, diffusion_mask_new), is_atom_motif
+
+        # set_trace()
+
+    # (2) We can modify mask to always show relative ori of nucleic stuffs
+
+
+    
+    return (t2d_is_revealed, diffusion_mask), is_atom_motif
+    # return get_mask(indep, atom_mask, low_prop=low_prop, high_prop=high_prop, broken_prop=broken_prop)
 
     # return get_mask(indep, atom_mask, 
     #             low_prop=low_prop, 
@@ -1639,7 +1903,7 @@ def generate_masks(indep, task, loader_params, chosen_dataset, full_chain=None, 
         #loss_str_mask_2d = seq2_str_mask[None, :] * seq2str_str_mask[:, None]
 
     # dj - only perform diffusion hal on pdb and fb for now 
-    elif task == 'diff' and chosen_dataset not in ['complex','negative','na_compl','tf_distil','rna']:
+    elif task == 'diff' and chosen_dataset not in ['complex','negative','na_compl','tf_distil','rna','eterna']:
     # elif task == 'diff' and chosen_dataset not in ['complex','negative']:
         """
         Hal task but created for the diffusion-based training. 
@@ -1657,7 +1921,9 @@ def generate_masks(indep, task, loader_params, chosen_dataset, full_chain=None, 
             ) 
 
         # 3 template stuff
-        cond_A = ((get_diffusion_mask_chunked in mask_fns) or (get_triple_contact in mask_fns))
+        # cond_A = ((get_diffusion_mask_chunked in mask_fns) or (get_triple_contact in mask_fns))
+        # cond_A = ((get_diffusion_mask_chunked in mask_fns) or (get_triple_contact in mask_fns) or (get_unconditional_3template in mask_fns))
+        cond_A = ((get_diffusion_mask_chunked in mask_fns) or (get_triple_contact in mask_fns) or (get_unconditional_3template in mask_fns) or (get_diffusion_mask_bridge in mask_fns))
         cond_B = (type(diffusion_mask) == tuple)
         if  (cond_A and cond_B):
             # this means a mask generator which is aware of 3template diffusion was used 
@@ -1679,26 +1945,33 @@ def generate_masks(indep, task, loader_params, chosen_dataset, full_chain=None, 
         loss_seq_mask[diffusion_mask] = False  # Dont score where diffusion mask is True (i.e., where things are not diffused)
 
     # AF: making proper masking for nucleic datasets
-    elif task == 'diff' and chosen_dataset in ['na_compl','tf_distil','rna']:
+    elif task == 'diff' and chosen_dataset in ['na_compl','tf_distil','rna','eterna']:
 
         mask_fns = list( loader_params['DIFF_MASK_PROBS'].keys() )
 
         # indep.na_fixed_inter=loader_params["NA_FIXED_INTER"]
         # indep.na_fixed_intra=loader_params["NA_FIXED_INTRA"]
         indep.is_na = get_nucleic_acid_residues(indep.seq)
-
+        
         # if len(indep.seq)>12:
-        diffusion_mask, is_atom_motif = get_diffusion_mask(
+        diffusion_mask, is_atom_motif = get_diffusion_mask_na(
                 indep,
                 atom_mask,
                 low_prop=loader_params['MASK_MIN_PROPORTION'],
                 high_prop=loader_params['MASK_MAX_PROPORTION'],
                 broken_prop=loader_params['MASK_BROKEN_PROPORTION'],
                 diff_mask_probs=loader_params['DIFF_MASK_PROBS'],
+                na_fixed_intra=loader_params["NA_FIXED_INTER"],
+                na_fixed_inter=loader_params["NA_FIXED_INTRA"],
+                prob_add_bp_partners=loader_params['P_ADD_BP_PARTNERS'],
             )
 
         # 3 template stuff
-        cond_A = ((get_diffusion_mask_chunked in mask_fns) or (get_triple_contact in mask_fns))
+        # cond_A = ((get_diffusion_mask_chunked in mask_fns) or (get_triple_contact in mask_fns))
+        # cond_A = ((get_diffusion_mask_chunked in mask_fns) or (get_triple_contact in mask_fns))
+        
+
+        cond_A = ((get_diffusion_mask_chunked in mask_fns) or (get_triple_contact in mask_fns) or (get_unconditional_3template in mask_fns) or (get_diffusion_mask_bridge in mask_fns))
         cond_B = (type(diffusion_mask) == tuple)
         if  (cond_A and cond_B):
             # this means a mask generator which is aware of 3template diffusion was used 
@@ -1709,8 +1982,10 @@ def generate_masks(indep, task, loader_params, chosen_dataset, full_chain=None, 
         # ic(is_atom_motif)
         # sys.exit('Exiting early for debugging')
 
+
         # ic(is_atom_motif, torch.nonzero(diffusion_mask), diffusion_mask.sum())
         input_str_mask = diffusion_mask.clone()
+
         input_seq_mask = diffusion_mask.clone()
         # t1dconf scaling will be taken care of by diffuser, so just leave those at 1 here 
         input_t1d_str_conf_mask = torch.ones(L)
@@ -1718,12 +1993,6 @@ def generate_masks(indep, task, loader_params, chosen_dataset, full_chain=None, 
 
         ## loss masks 
         loss_seq_mask[diffusion_mask] = False  # Dont score where diffusion mask is True (i.e., where things are not diffused)
-        # else:
-        #     input_str_mask = torch.clone(full_chain)
-        #     input_seq_mask = torch.clone(input_str_mask)
-
-        #     input_t1d_str_conf_mask = torch.ones(L)
-        #     input_t1d_seq_conf_mask = torch.ones(L)
 
     elif task == 'diff' and chosen_dataset == 'complex':
         '''
@@ -1930,86 +2199,12 @@ def generate_masks(indep, task, loader_params, chosen_dataset, full_chain=None, 
         loss_str_mask_2d[:,~loss_str_mask] = False
         
 
-    # # elif task == 'diff' and chosen_dataset in ['complex','negative','na_compl','tf_distil']:
-    # elif task == 'diff' and chosen_dataset == 'na_compl':
-    #     """
-    #     The plan:
-    #         provide sequence and structure of binding residues
-    #         provide structure and masked sequence motif residues
-    #     Make an initial diffusion mask over the protein (True where given, false where diffused)
-
-    #     legal diffusion positions (True where diffusable, False where not diffusable)
-
-    #     diffusion mask is ~(~simple diff mask AND legal diffusion position)
-
-    #     Make a sequence_mask that converts sequence to mask token at specific residues. 
-
-    #     """
-    #     seq = seq.squeeze()
-    #     xyz = xyz.squeeze()
-    #     ic(seq.shape)
-    #     ic(xyz.shape)
-    #     is_nucleic_acid = get_nucleic_acid_residues(seq)
-    #     L = len(is_nucleic_acid) - is_nucleic_acid.sum() # length of protein sequence is L
-
-    #     if random.uniform(0,1) < loader_params['P_UNCOND']:
-    #         diffusion_mask = torch.zeros(L).bool()
-        
-    #     else:
-    #         mask_fn = get_diff_mask_fn(loader_params['DIFF_MASK_PROBS'])
-    #         diffusion_mask = mask_fn(L, loader_params)
-
-    #         ## loss masks 
-    #         # loss_seq_mask[diffusion_mask] = False
-        
-    #     # find binding contacts
-    #     if random.uniform(0,1) > loader_params['P_FREE']:
-
-    #         contact_residue_indices = get_na_contacts(seq, xyz, loader_params, is_nucleic_acid)
-
-    #         if len(contact_residue_indices) == 0:
-    #             legal_diffusion_positions = torch.ones(L).bool()
-    #             provide_sequence = diffusion_mask
-    #         else:
-    #         # find binding motifs
-    #             motif_blocks_residue_indices = get_motif_block(contact_residue_indices, L, loader_params)
-
-    #             legal_diffusion_positions = torch.ones(L).bool()
-    #             legal_diffusion_positions[motif_blocks_residue_indices] = False # can't diffuse the motif blocks
-
-    #             # making the sequence mask. We want to put a mask token at all the residues in the binding motif but not the contact itself. 
-    #             provide_sequence = diffusion_mask
-    #             provide_sequence[motif_blocks_residue_indices] = False # don't provide sequence in the motif
-    #             provide_sequence[contact_residue_indices] = True # but provide the sequence in the actual binding locations
-
-
-    #         diffusion_mask = ~torch.logical_and(~diffusion_mask,legal_diffusion_positions)
-
-    #     else:
-    #         provide_sequence = diffusion_mask
-
-    #     # need to now extend both to cover the NAs as well
-    #     len_NA = sum(is_nucleic_acid)
-    #     NA_diffusion_mask = torch.ones(len_NA).bool() # don't diffuse any NA positions
-    #     NA_provide_sequence = torch.ones(len_NA).bool() # provide all the sequence
-
-    #     diffusion_mask = torch.cat((diffusion_mask, NA_diffusion_mask))
-    #     provide_sequence = torch.cat((provide_sequence, NA_provide_sequence))
-        
-    #     is_atomize_example = False
-    #     input_seq_mask = provide_sequence
-    #     input_str_mask = diffusion_mask
-    #     loss_seq_mask[diffusion_mask] = False
-    #     input_t1d_str_conf_mask = torch.ones(len(input_seq_mask))
-    #     input_t1d_seq_conf_mask = torch.ones(len(input_seq_mask))
-
-
-
     else:
         sys.exit(f'Masks cannot be generated for the {task} task!')
-    
-    if (task != 'seq2str') and (not loader_params['SM_ONLY']):
-       assert torch.sum(~input_seq_mask) > 0, f'Task = {task}, dataset = {chosen_dataset}, full chain = {full_chain}'
+
+    # set_trace()
+    # if (task != 'seq2str') and (not loader_params['SM_ONLY']):
+    #    assert torch.sum(~input_seq_mask) > 0, f'Task = {task}, dataset = {chosen_dataset}, full chain = {full_chain}'
 
     mask_dict = {'input_seq_mask':input_seq_mask,
                 'input_str_mask':input_str_mask,

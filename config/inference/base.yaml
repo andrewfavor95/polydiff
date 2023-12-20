@@ -69,6 +69,7 @@ inference:
   t2d_pic_filename: null
   num_atoms_modeled: 14
   num_atoms_saved: 23
+  save_rna_oneletter: False
   # ema: True
 
 contigmap:
@@ -193,6 +194,7 @@ preprocess:
   sequence_decode: True
   d_t1d: 22
   d_t2d: 44
+  show_poly: False
   prob_self_cond: 0.0
   str_self_cond: False
   seq_self_cond: False
@@ -200,6 +202,7 @@ preprocess:
   eye_frames: False 
   randomize_frames: False
   num_atoms_na: 14
+  motif_only_2d: False
   # num_atoms_input: 14
 
 scaffoldguided:
@@ -220,6 +223,9 @@ scaffoldguided:
   mask_loops: True
   target_ss_string: null
   target_ss_pairs: null
+  target_ss_pair_ori: null
+  force_loops_list: null
+  force_multi_contacts: null
   ss_cond_ckpt_path: /home/afavor/git/RFD_AF/models/afavs/RNA/ss_cond_eterna_distil/train_session2023-11-19_1700461070.5134563/BFF_1.pt
 
   

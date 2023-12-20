@@ -146,8 +146,9 @@ def get_args(in_args=None):
     data_group.add_argument('-backbone_hotspots', action='store_true', default=False, help='Training argument - add hotspot feature for non-base-specific contacts to dna phosphate backbone')
     data_group.add_argument('-base_specific_hotspots', action='store_true', default=False, help='Training argument - add hotspot feature for base-specific contacts to dna')
     data_group.add_argument('-use_nucleic_ss', action='store_true', default=False, help='Training argument - add basepair secondary structure to 2d templates')
-
-
+    data_group.add_argument('-p_add_bp_partners',type=float, default=0.0, help='When generating masks, do we want to find basepair partners and apply same behavior between them?')
+    data_group.add_argument('-p_canonical_bp_filter',type=float, default=0.0, help='When generating sec struct estimation, how often do we want to use canonical basepair filter?')
+    data_group.add_argument('-prop_ss_mask', default=0.5, type=float,  help='fraction of the 2d sec struct template that gets masked.')
     # data_group.add_argument('-contact_cut', type=int, default=8,
     #         help='Distance between protein and non-protein (sm, na) atoms to classify them as in contact')
     # data_group.add_argument('-chunk_size_min', type=int, default=1,
@@ -220,14 +221,25 @@ def get_args(in_args=None):
             help='If true, randomize all frames at each step')
     diff_group.add_argument('-eye_frames',  default=False, action='store_true',
             help='If true, ensure all frames are identity at each step')
+    diff_group.add_argument('-p_reveal_frames', default=1.0, type=float,
+            help='If doing eye frames, probability that it will occur')
     diff_group.add_argument('-p_show_motif_seq', default=1.0, type=float, 
             help='Fraction of the time to show the motif sequence during training')
+    diff_group.add_argument('-p_score_frames', default=0.0, type=float, 
+            help='Fraction of the time to score the frames during training')
+    diff_group.add_argument('-supply_frames_under_t', default=-1, type=int, 
+            help='Only supply frames below this t. Default -1 (never supply/ always eye)')
+    diff_group.add_argument('-score_frames_under_t', default=-1, type=int,
+            help='Only score frames below this t. Default -1 (never score)')
     diff_group.add_argument('-mask_by_polymer_type',  default=False, action='store_true',
             help='If true, assigns different type of masking token per polymer (protein, dna, rna)')
+    diff_group.add_argument('-show_polymer_type_t1d',  default=False, action='store_true',
+            help='Do we want to add a onehot encoding of polymer type to the t1d? (protein, dna, rna)')
     diff_group.add_argument('-p_keep_frames', default=1.0, type=float, 
             help='fraction of time that we leave frames to be noised/denoised normally, rather than randomizing or setting to identity')
     diff_group.add_argument('-p_show_ss', default=0.5, type=float, 
             help='fraction of time that we leave show the secondary structure (base pairing).')
+
 
 
     # Trunk module properties
@@ -547,14 +559,20 @@ def get_args(in_args=None):
                   'new_self_cond',
                   'randomize_frames',
                   'eye_frames',
+                  'p_reveal_frames',
+                  'p_score_frames',
+                  'supply_frames_under_t',
+                  'score_frames_under_t',
                   'p_keep_frames',
                   'motif_only_2d',
                   'p_show_motif_seq',
                   'mask_by_polymer_type',
+                  'show_polymer_type_t1d',
                   'num_atoms_na',
                   'twotemplate',
                   'threetemplate',
                   'p_show_ss',
+                  'prop_ss_mask',
                   ]:
         preprocess_param[param] = getattr(args, param)
     if not preprocess_param['sequence_decode']:

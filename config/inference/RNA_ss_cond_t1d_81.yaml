@@ -1,0 +1,13 @@
+# Base inference Configuration.
+defaults:
+  - multi_polymer
+
+inference:
+  ckpt_path: /projects/ml/afavor/RFD/models/RNA_ss_cond/train_session2023-11-21_1700601321.4267492_BFF_4.pt
+  # ckpt_path: /home/afavor/git/RFD_AF/3template_na/rf_diffusion/train_session2023-12-06_1701932728.1632702/models/BFF_5.pt
+
+
+preprocess:
+  show_poly: False
+  d_t1d: 81
+

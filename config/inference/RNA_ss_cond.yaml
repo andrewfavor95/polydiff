@@ -1,9 +1,0 @@
-# Base inference Configuration.
-defaults:
-  - multi_polymer_ss_cond
-
-inference:
-  ckpt_path: /projects/ml/afavor/RFD/models/RNA_ss_cond/train_session2023-11-21_1700601321.4267492_BFF_4.pt
-
-
-  

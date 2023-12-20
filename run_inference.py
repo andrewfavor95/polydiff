@@ -412,7 +412,12 @@ def save_outputs(sampler, out_prefix, indep, denoised_xyz_stack, px0_xyz_stack, 
     # pX0 last step
     out = f'{out_prefix}.pdb'
     # aa_model.write_traj(out, denoised_xyz_stack[0:1], final_seq, indep.bond_feats, chain_Ls=chain_Ls)
-    aa_model.write_traj(out, denoised_xyz_stack[0:1], final_seq, indep.bond_feats, chain_Ls=chain_Ls, natoms=sampler.num_atoms_saved )
+
+    
+    aa_model.write_traj(out, denoised_xyz_stack[0:1], final_seq, indep.bond_feats, 
+                        chain_Ls=chain_Ls, 
+                        natoms=sampler.num_atoms_saved, 
+                        rna_oneletter=sampler.inf_conf.save_rna_oneletter)
 
     
     des_path = os.path.abspath(out)

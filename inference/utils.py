@@ -1,6 +1,7 @@
 import numpy as np
 import os
 import sys
+from itertools import combinations
 from omegaconf import DictConfig
 from kinematics import xyz_to_t2d
 import torch
@@ -2367,6 +2368,160 @@ def merge_regions(regions1, regions2):
     return regions_full
 
 
+def get_contig_chunks(contig_map):
+
+    
+    # contig_chunk_ranges = []
+    all_chunk_ranges = []
+    is_motif_chunk = []
+    last_idx = 0
+    for contig_i in contig_map.sampled_mask:
+        for subcontig_ij in contig_i.split(','):
+            if subcontig_ij[0].isalpha(): # if it is a template region:
+                chain_ij = subcontig_ij[0]
+                start_resi_ij, stop_resi_ij = [int(idx) for idx in subcontig_ij[1:].split('-')]
+                
+                len_ij = stop_resi_ij - start_resi_ij
+                new_idx = last_idx + len_ij
+
+                # contig_chunk_ranges.append((last_idx , new_idx))
+                is_motif_chunk.append(1)
+                all_chunk_ranges.append((last_idx , new_idx))
+
+                last_idx = new_idx + 1
+
+            else: # if it is a diffused region:
+                len_ij = int(subcontig_ij.split('-')[0])
+                new_idx = last_idx + len_ij
+
+                is_motif_chunk.append(0)
+                all_chunk_ranges.append((last_idx, new_idx - 1))
+
+                last_idx = new_idx
+
+
+
+    contig_chunk_ranges = [con_tup for con_tup,is_mot in zip(all_chunk_ranges,is_motif_chunk) if is_mot]
+
+    return contig_chunk_ranges
+
+
+
+def get_repeat_t2d_mask(L, con_hal_idx0, contig_map, ij_is_visible, nrepeat, supplied_full_contig):
+    """
+    Given contig map and motif chunks that can see each other, create t2d mask
+    defining which motif chunks can see each other. 
+
+    Parameters:
+    -----------
+    L (int): total length of protein being modelled
+    
+    con_ref_idx0 (torch.tensor): tensor containing zero-indexed indices of where motif chunks are 
+                                 going to be placed in the output protein.
+
+    ij_is_visible (list): List of tuples, each tuple defines a set of motif chunks that can see each other.
+
+    nrepeat (int): Number of repeat units in repeat protein being modelled 
+    """
+    assert all([type(x) == tuple for x in ij_is_visible]), 'ij_is_visible must be list of tuples'
+    assert L%nrepeat == 0
+    Lasu = L // nrepeat
+
+    # # (1) Define matrix where each row/col is a motif chunk, entries are 1 if motif chunks can see each other
+    # #     and 0 otherwise.
+
+    # # AF : break regions into the start stop indices based on both template breaks and chain breaks
+    # # this just gets the breaks by mask regions between motifs
+    # mask_breaks = get_breaks(con_hal_idx0)
+    # templ_range_inds = find_template_ranges(con_hal_idx0, return_inds=False)
+
+    # # add the breaks from the chain jumps
+    # if full_complex_idx0 is not None:
+    #     chain_breaks = get_breaks(full_complex_idx0)
+    #     chain_range_inds = find_template_ranges(full_complex_idx0, return_inds=True)
+    #     # merge these into a list of sub-chunk tuples for template region locations
+    #     chunk_range_inds = merge_regions(templ_range_inds, chain_range_inds)
+    # else:
+    #     chunk_range_inds = templ_range_inds
+
+
+    chunk_range_inds = get_contig_chunks(contig_map)
+    # now we have the complete con_hal_idx0 including templates that are separated by chain breaks!
+    true_con_hal_idx0 = torch.tensor([ind for start,end in chunk_range_inds for ind in range(start,end+1)])
+
+    nchunk = len(chunk_range_inds)
+    nchunk_total = nchunk * nrepeat
+
+    # initially empty
+    chunk_ij_visible = torch.eye(nchunk_total)
+    # fill in user-defined visibility
+    for S in ij_is_visible:
+        for i in S:
+            for j in S: 
+                if i == j:
+                    continue # already visible bc eye 
+                chunk_ij_visible[i,j] = 1
+                chunk_ij_visible[j,i] = 1
+
+    # chunk_range_inds_hal, mask_1d_hal = iu.get_hal_contig_ranges(contig_map.contigs, contig_map.inpaint_hal)
+    # (2) Fill in LxL matrix with coarse mask info
+    con_hal_idx0_full = torch.cat([true_con_hal_idx0 + i*Lasu for i in range(nrepeat)])
+    chunk_range_inds_full = [(R[0] + i*Lasu, R[1] + i*Lasu) for i in range(nrepeat) for R in chunk_range_inds]
+    
+
+    mask2d = torch.zeros(L, L)
+    
+    # make 1D array designating which chunks are motif
+    is_motif = torch.zeros(L)
+    is_motif[con_hal_idx0_full] = 1 
+
+    # fill in 2d mask
+    for i in range(len(chunk_range_inds_full)):
+        for j in range(len(chunk_range_inds_full)):
+
+            visible = chunk_ij_visible[i,j] 
+
+            if visible: 
+                start_i, end_i = chunk_range_inds_full[i]
+                start_j, end_j = chunk_range_inds_full[j]
+                mask2d[start_i:end_i+1, start_j:end_j+1] = 1
+                mask2d[start_j:end_j+1, start_i:end_i+1] = 1
+
+    return mask2d, is_motif
+
+def parse_ij_get_repeat_mask(ij_visible, L, n_repeat, con_hal_idx0, supplied_full_contig, full_complex_idx0):
+    """
+    Helper function for getting repeat protein mask 2d info
+    """
+
+    abet = 'abcdefghijklmnopqrstuvwxyz'
+    abet = [a for a in abet]
+    abet2num = {a:i for i,a in enumerate(abet)}
+
+    # ij_visible = self._conf.inference.ij_visible # which chunks can see each other 
+    assert ij_visible is not None
+    ij_visible = ij_visible.split('-') # e.g., [abc,de,df,...]
+    ij_visible_int = [tuple([abet2num[a] for a in s]) for s in ij_visible]
+
+    assert L%n_repeat == 0, 'L must be a multiple of n_repeat'
+    Lasu = L//n_repeat 
+
+    ## check that the user-specified ij_visible is valid
+    unique_letters      = set([a for a in ''.join(ij_visible)] )
+    max_letter          = max([abet2num[a] for a in unique_letters]) # e.g., 5 for abcde
+    contig_motif_breaks = get_breaks(con_hal_idx0, cut=1)
+    nbreaks             = len(contig_motif_breaks)
+    n_motif_contig      = (nbreaks+1)*n_repeat # total number of motif chunks 
+    # cannot have more user specified motif chunks than exist in contigs 
+    assert max_letter <= n_motif_contig, 'user specified number of motif chunks > number calculated from contigs using {} repeats'.format(n_repeat)
+
+
+    # create a mask of which chunks are visible to each other compatible with contigs/con_hal_idx0
+    mask_t2d, _ = get_repeat_t2d_mask(L, con_hal_idx0, ij_visible_int, n_repeat, full_complex_idx0, supplied_full_contig)
+
+    return mask_t2d
+
+
 
 # def get_pdb_contig_ranges(contig_conf, pdb_idx_spec):
 
@@ -2483,9 +2638,7 @@ def sstr_to_matrix(ss_string, only_basepairs=True):
     return ss_adj_mat
 
 
-
-def ss_pairs_to_matrix(pair_input, contigs):
-
+def get_index_map_dict(contigs):
     alphabet = 'ABCDEFGHIJKLMNOP'
 
     index_map_dict = {}
@@ -2507,7 +2660,6 @@ def ss_pairs_to_matrix(pair_input, contigs):
     
     # contig_idx_list = []
     contig_idx_list = [ np.arange(sum(contig_lengths_i)) for contig_lengths_i in contig_len_list]
-    # ipdb.set_trace()
 
     counter = 0
     for i in range(len(contig_idx_list)):
@@ -2518,38 +2670,88 @@ def ss_pairs_to_matrix(pair_input, contigs):
             index_map_dict[chn_letter][chn_i_resi_j + 1] = counter
             counter += 1
 
-    ss_adj_mat = np.zeros((counter, counter))
+    return index_map_dict, counter
 
-    for ss_pair_string in pair_input:
+
+
+def ss_pairs_to_matrix(pair_input, index_map_dict, ss_adj_mat,  ss_pair_ori_list=None,):
+
+
+
+    
+    if not ss_pair_ori_list: # without user spec, assume antiparallel for each strand contact.
+        ss_pair_ori_list = ['A' for _ in range(len(pair_input))]
+
+    for ss_pair_ori, ss_pair_string in zip(ss_pair_ori_list,pair_input):
+    # for ss_pair_string in pair_input:
         region_i, region_j = ss_pair_string.split(',')
 
         chn_i = region_i[0]
-        start_i, stop_i = [index_map_dict[chn_i][int(_)] for _ in region_i[1:].split('-')]
+        bounds_i = [index_map_dict[chn_i][int(_)] for _ in region_i[1:].split('-')]
+        start_i, stop_i = min(bounds_i), max(bounds_i)
+        # start_i, stop_i = [index_map_dict[chn_i][int(_)] for _ in region_i[1:].split('-')]
+
+
 
         chn_j = region_j[0]
-        start_j, stop_j = [index_map_dict[chn_j][int(_)] for _ in region_j[1:].split('-')]
+        bounds_j = [index_map_dict[chn_j][int(_)] for _ in region_j[1:].split('-')]
+        start_j, stop_j = min(bounds_j), max(bounds_j)
+        # start_j, stop_j = [index_map_dict[chn_j][int(_)] for _ in region_j[1:].split('-')]
+
+        # if (bounds_i[0] < bounds_i[1]) and (bounds_j[0] < bounds_j[1]):
+        #     pair_ori = 'P' # Condition for parallel strand
+        # else:
+        #     pair_ori = 'A' # Otherwise default to antiparallel behavior
+        # set_trace()
 
         
-        range_i = np.arange(start_i, stop_i+1)
-        range_j = np.arange(start_j, stop_j+1)
+        range_i = np.arange(start_i, stop_i+1) # Always orient first stretch in fwd direction
+
+        if not ss_pair_ori=='A': # If pair is not antiparallel, keep them both in fwd direction (parallel)
+            range_j = np.arange(start_j, stop_j+1)
+        else: # Otherwise default to antiparallel
+            range_j = np.arange(start_j, stop_j+1)[ : :-1]
+        
 
 
-        for pair_ind_i, pair_ind_j in zip(range_i, range_j[ : :-1]):
+        for pair_ind_i, pair_ind_j in zip(range_i, range_j):
             ss_adj_mat[pair_ind_i, pair_ind_j] = 1
             ss_adj_mat[pair_ind_j, pair_ind_i] = 1
 
-    # fig, ax = plt.subplots(1,1,figsize=(15,15), dpi=300)
-    # ax.imshow(ss_adj_mat)
-    # plt.tight_layout()
-    # plt.savefig('DNA_prot_ss_cond_BFF_3.00_test03.png', bbox_inches='tight', dpi='figure')
-    # plt.close()
-    # ipdb.set_trace()
 
     return ss_adj_mat
 
 
+def force_loops(force_loops_list, index_map_dict, ss_adj_mat):
+
+    # set_trace()
+    for loop_range_string in force_loops_list:
+        # region_i, region_j = loop_range_string.split(',')
+        chn_i = loop_range_string[0]
+        bounds_i = [index_map_dict[chn_i][int(_)] for _ in loop_range_string[1:].split('-')]
+        start_i, stop_i = min(bounds_i), max(bounds_i)
+        range_i = np.arange(start_i, stop_i+1)
+
+        for resi in range_i:
+            ss_adj_mat[resi,:] = 0
+            ss_adj_mat[:,resi] = 0
+
+    return ss_adj_mat
+
+def force_multi_contacts(force_multi_contact_list, index_map_dict, ss_adj_mat):
+
+    for contact_set_string in force_multi_contact_list:
+        contact_set = contact_set_string.split(',')
+        contact_pair_list = [combo for combo in combinations(contact_set,2)]
+        for resi_i, resi_j in contact_pair_list:
+            idx_i = index_map_dict[resi_i[0]][int(resi_i[1:])]
+            idx_j = index_map_dict[resi_j[0]][int(resi_j[1:])]
+
+            ss_adj_mat[idx_i,idx_j] = 1
+            ss_adj_mat[idx_j,idx_i] = 1
 
 
+    return ss_adj_mat
       
 def ss_matrix_to_t2d_feats(ss_matrix):
 
@@ -2559,5 +2761,6 @@ def ss_matrix_to_t2d_feats(ss_matrix):
 
     return ss_templ_onehot
     
+
 
 

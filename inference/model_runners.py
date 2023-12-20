@@ -40,6 +40,7 @@ from hydra.core.hydra_config import HydraConfig
 import os
 import matplotlib.pyplot as plt 
 from memory import mem_report
+# from pdb import set_trace
 from pdb import set_trace
 REPORT_MEM=False
 
@@ -86,15 +87,91 @@ class Sampler:
         self.ckpt_path = conf.inference.ckpt_path
 
 
-        
+        # If we want to use polymer adjacency conditioning 
+        # ("secondary structure" close contacts, following the NA definition)
         if conf.scaffoldguided.scaffoldguided is True:
             print('USING SS CONDITIONING MODEL: ')
-            # self.ckpt_path = conf.scaffoldguided.ss_cond_ckpt_path
             self.use_ss_guidance = True
             self.delta_dim_t2d = 3
         else:
             self.use_ss_guidance = False
             self.delta_dim_t2d = 0
+
+
+        self.index_map_dict, self.length_init = iu.get_index_map_dict(self._conf.contigmap.contigs)
+
+        # Set up ss-adj matrix
+        # This will be used for t2d conditioning:
+        if self.use_ss_guidance:
+
+            # By default fall back to masking everything:
+            # We initialize the ss_matrix as fully masked, then we modify it as we go
+            self.target_ss_matrix = (2*torch.ones((self.length_init,self.length_init))).long()
+
+            # first priority: check for basepair range specifications (best way to specify):
+            if self._conf.scaffoldguided.target_ss_pairs is not None:
+                # Here we add paired regions to the target ss matrix
+                self.target_ss_matrix = iu.ss_pairs_to_matrix(
+                                                    self._conf.scaffoldguided.target_ss_pairs, 
+                                                    self.index_map_dict, 
+                                                    self.target_ss_matrix,
+                                                    ss_pair_ori_list=self._conf.scaffoldguided.target_ss_pair_ori,
+                                                    ).long()
+
+            # second priority: check for ss-string specification (slightly less precise):
+            elif self._conf.scaffoldguided.target_ss_string is not None:
+                # Or just replace it with full ss string
+                self.target_ss_matrix = torch.from_numpy(iu.sstr_to_matrix(self._conf.scaffoldguided.target_ss_string, only_basepairs=True)).long()
+
+            # Now we can add force loops, or triple+ contacts
+            # Force loops:
+            if self._conf.scaffoldguided.force_loops_list is not None:
+                self.target_ss_matrix = iu.force_loops(self._conf.scaffoldguided.force_loops_list, self.index_map_dict, self.target_ss_matrix)
+
+            # Force the multi-contact:
+            if self._conf.scaffoldguided.force_multi_contacts is not None:
+                self.target_ss_matrix = iu.force_multi_contacts(self._conf.scaffoldguided.force_multi_contacts, self.index_map_dict, self.target_ss_matrix)
+
+            
+
+
+
+            # # otherwise fall back to masking everything:
+            # else:
+            #     self.target_ss_matrix = (2*torch.ones(indep.same_chain.shape)).long()
+
+            # Save the matrix image if we want:
+            # if self._conf.scaffoldguided.save_ss_matrix_png and (t==self._conf.diffuser.T):
+            if self._conf.scaffoldguided.save_ss_matrix_png:
+                print('SAVING SS MATRIX PIC!')
+                output_pic_filapath = self._conf.inference.output_prefix+'.png'
+                output_dirpath = os.path.dirname(output_pic_filapath)
+
+                if not (os.path.exists(output_dirpath) and os.path.isdir(output_dirpath)):
+                    os.mkdir(output_dirpath)
+
+                fig, ax = plt.subplots(1,1,figsize=(5,5), dpi=300)
+                ax.imshow(np.array(self.target_ss_matrix))
+                plt.tight_layout()
+                plt.savefig(output_pic_filapath, bbox_inches='tight', dpi='figure')
+                plt.close()
+
+        else:
+            self.target_ss_matrix = None
+
+
+
+
+        # If we want to show which polymer class is at each position
+        # Should really always be true, seriously
+        # TO DO: add a fourth category for small molecules, maybe another for metals or someshit
+        if conf.preprocess.show_poly is True:
+            print('SHOWING POLYMER CLASS: ')
+            self.show_poly_class = True
+            self.delta_dim_t1d = 3
+        else:
+            self.show_poly_class = False
+            self.delta_dim_t1d = 0
 
 
         if needs_model_reload:
@@ -259,6 +336,9 @@ class Sampler:
         # Get recycle schedule    
         recycle_schedule = str(self.inf_conf.recycle_schedule) if self.inf_conf.recycle_schedule is not None else None
         self.recycle_schedule = iu.recycle_schedule(self.T, recycle_schedule, self.inf_conf.num_recycles)
+
+
+
 
 
     def process_target(self, pdb_path):
@@ -997,114 +1077,6 @@ class Sampler:
             t1d=torch.cat((t1d, hotspot_tens[None,None,...,None].to(self.device)), dim=-1)
         
         return msa_masked, msa_full, seq[None], torch.squeeze(xyz_t, dim=0), idx, t1d, t2d, xyz_t, alpha_t
-        
-    # ';'(self, *, t, seq_t, x_t, seq_init, final_step, return_extra=False):
-    #     '''Generate the next pose that the model should be supplied at timestep t-1.
-
-    #     Args:
-    #         t (int): The timestep that has just been predicted
-    #         seq_t (torch.tensor): (L,22) The sequence at the beginning of this timestep
-    #         x_t (torch.tensor): (L,14,3) The residue positions at the beginning of this timestep
-    #         seq_init (torch.tensor): (L,22) The initialized sequence used in updating the sequence.
-            
-    #     Returns:
-    #         px0: (L,14,3) The model's prediction of x0.
-    #         x_t_1: (L,14,3) The updated positions of the next step.
-    #         seq_t_1: (L,22) The updated sequence of the next step.
-    #         tors_t_1: (L, ?) The updated torsion angles of the next  step.
-    #         plddt: (L, 1) Predicted lDDT of x0.
-    #     '''
-    #     out = self._preprocess(seq_t, x_t, t)
-    #     msa_masked, msa_full, seq_in, xt_in, idx_pdb, t1d, t2d, xyz_t, alpha_t = self._preprocess(
-    #         seq_t, x_t, t)
-
-    #     N,L = msa_masked.shape[:2]
-
-    #     if self.symmetry is not None:
-    #         idx_pdb, self.chain_idx = self.symmetry.res_idx_procesing(res_idx=idx_pdb)
-
-    #     # decide whether to recycle information between timesteps or not
-    #     if self.inf_conf.recycle_between and t < self.diffuser_conf.aa_decode_steps:
-    #         msa_prev = self.msa_prev
-    #         pair_prev = self.pair_prev
-    #         state_prev = self.state_prev
-    #     else:
-    #         msa_prev = None
-    #         pair_prev = None
-    #         state_prev = None
-
-    #     with torch.no_grad():
-    #         # So recycling is done a la training
-    #         px0=xt_in
-    #         for _ in range(self.recycle_schedule[t-1]):
-    #             msa_prev, pair_prev, px0, state_prev, alpha, logits, plddt = self.model(msa_masked,
-    #                                 msa_full,
-    #                                 seq_in,
-    #                                 px0,
-    #                                 idx_pdb,
-    #                                 t1d=t1d,
-    #                                 t2d=t2d,
-    #                                 xyz_t=xyz_t,
-    #                                 alpha_t=alpha_t,
-    #                                 msa_prev = msa_prev,
-    #                                 pair_prev = pair_prev,
-    #                                 state_prev = state_prev,
-    #                                 t=torch.tensor(t),
-    #                                 return_infer=True,
-    #                                 motif_mask=self.diffusion_mask.squeeze().to(self.device))
-
-    #     self.msa_prev=msa_prev
-    #     self.pair_prev=pair_prev
-    #     self.state_prev=state_prev
-    #     # prediction of X0 
-    #     _, px0  = self.allatom(torch.argmax(seq_in, dim=-1), px0, alpha)
-    #     px0    = px0.squeeze()[:,:14]
-    #     #sampled_seq = torch.argmax(logits.squeeze(), dim=-1)
-    #     seq_probs   = torch.nn.Softmax(dim=-1)(logits.squeeze()/self.inf_conf.softmax_T)
-    #     sampled_seq = torch.multinomial(seq_probs, 1).squeeze() # sample a single value from each position 
-        
-    #     # grab only the query sequence prediction - adjustment for Seq2StrSampler
-    #     sampled_seq = sampled_seq.reshape(N,L,-1)[0,0]
-
-    #     # Process outputs.
-    #     mask_seq = self.mask_seq
-
-    #     pseq_0 = torch.nn.functional.one_hot(
-    #         sampled_seq, num_classes=22).to(self.device)
-
-    #     pseq_0[mask_seq.squeeze()] = seq_init[
-    #         mask_seq.squeeze()].to(self.device)
-
-    #     seq_t = torch.nn.functional.one_hot(
-    #         seq_t, num_classes=22).to(self.device)
-
-    #     self._log.info(
-    #        f'Timestep {t}, current sequence: { rf2aa.chemical.seq2chars(torch.argmax(pseq_0, dim=-1).tolist())}')
-        
-    #     if t > final_step:
-    #         x_t_1, seq_t_1, tors_t_1, px0 = self.denoiser.get_next_pose(
-    #             xt=x_t,
-    #             px0=px0,
-    #             t=t,
-    #             diffusion_mask=self.mask_str.squeeze(),
-    #             seq_diffusion_mask=self.mask_seq.squeeze(),
-    #             seq_t=seq_t,
-    #             pseq0=pseq_0,
-    #             diffuse_sidechains=self.preprocess_conf.sidechain_input,
-    #             align_motif=self.inf_conf.align_motif,
-    #             include_motif_sidechains=self.preprocess_conf.motif_sidechain_input
-    #         )
-    #     else:
-    #         x_t_1 = torch.clone(px0).to(x_t.device)
-    #         seq_t_1 = torch.clone(pseq_0)
-    #         # Dummy tors_t_1 prediction. Not used in final output.
-    #         tors_t_1 = torch.ones((self.mask_str.shape[-1], 10, 2))
-    #         px0 = px0.to(x_t.device)
-    #     if self.symmetry is not None:
-    #         x_t_1, seq_t_1 = self.symmetry.apply_symmetry(x_t_1, seq_t_1)
-    #     if return_extra:
-    #         return px0, x_t_1, seq_t_1, tors_t_1, plddt, logits
-    #     return px0, x_t_1, seq_t_1, tors_t_1, plddt
 
     def symmetrise_prev_pred(self, px0, seq_in, alpha):
         """
@@ -1114,318 +1086,6 @@ class Sampler:
         px0_sym,_ = self.symmetry.apply_symmetry(px0_aa.to('cpu').squeeze()[:,:14], torch.argmax(seq_in, dim=-1).squeeze().to('cpu'))
         px0_sym = px0_sym[None].to(self.device)
         return px0_sym
-    
-def find_breaks(ix, thresh=1):
-    # finds positions in ix where the jump is greater than thresh
-    breaks = np.where(np.diff(ix) > thresh)[0]
-    return np.array(breaks)+1
-
-
-def get_breaks(a, cut=1):
-    # finds indices where jumps in a occur
-    assert len(a.shape) == 1 # must be 1D array
-
-    if torch.is_tensor(a):
-        diff = torch.abs( torch.diff(a) )
-        breaks = torch.where(diff > cut)[0]
-
-    else:
-        diff = np.abs( np.diff(a) )
-        breaks = np.where(diff > cut)[0]
-
-    return breaks
-
-def find_true_chunks_indices(tensor):
-    # chat gpt algorithm 
-    true_indices = torch.nonzero(tensor).flatten().tolist()
-    chunks = []
-    
-    if not true_indices:
-        return chunks
-    
-    start = true_indices[0]
-    prev = true_indices[0]
-    
-    for idx in true_indices[1:]:
-        if idx != prev + 1:
-            chunks.append((start, prev))
-            start = idx
-        prev = idx
-    
-    chunks.append((start, prev))
-    return chunks
-
-
-def find_template_ranges(input_tensor, return_inds=False):
-    # mostly afav, some gpt guidance
-
-    input_list = input_tensor.tolist()
-
-    if return_inds:
-        regions = []
-        start = 0
-        for i in range(1, len(input_tensor)):
-            if input_tensor[i] != input_tensor[i-1] + 1:
-                regions.append((start, i-1))
-                start = i
-        regions.append((start, len(input_tensor)-1))
-
-    else:
-        regions = []
-        start = 0
-        for i in range(1, len(input_tensor)):
-            if input_tensor[i] != input_tensor[i-1] + 1:
-                regions.append((int(input_tensor[start]), int(input_tensor[i-1])))
-                start = i
-        regions.append((int(input_tensor[start]), int(input_tensor[len(input_tensor)-1])))
-
-    return regions
-
-
-def merge_regions(regions1, regions2):
-    # mostly afav, some gpt guidance
-    regions_full = []
-    for r1_start, r1_end in regions1:
-        for r2_start, r2_end in regions2:
-            if r1_start >= r2_start and r1_end <= r2_end:
-                regions_full.append((r1_start, r1_end))
-            elif r2_start >= r1_start and r2_end <= r1_end:
-                regions_full.append((r2_start, r2_end))
-            else:
-                regions_full.append((r1_start, r1_end))
-                regions_full.append((r2_start, r2_end))
-
-    regions_full = sorted(set(regions_full), key=lambda tup: tup[0])
-
-    return regions_full
-
-# def get_repeat_t2d_mask(L, con_hal_idx0, ij_is_visible, nrepeat, full_complex_idx0, supplied_full_contig):
-#     """
-#     Given contig map and motif chunks that can see each other, create t2d mask
-#     defining which motif chunks can see each other. 
-
-#     Parameters:
-#     -----------
-#     L (int): total length of protein being modelled
-    
-#     con_ref_idx0 (torch.tensor): tensor containing zero-indexed indices of where motif chunks are 
-#                                  going to be placed in the output protein.
-
-#     ij_is_visible (list): List of tuples, each tuple defines a set of motif chunks that can see each other.
-
-#     nrepeat (int): Number of repeat units in repeat protein being modelled 
-#     """
-#     assert all([type(x) == tuple for x in ij_is_visible]), 'ij_is_visible must be list of tuples'
-#     assert L%nrepeat == 0
-#     Lasu = L // nrepeat
-
-#     # (1) Define matrix where each row/col is a motif chunk, entries are 1 if motif chunks can see each other
-#     #     and 0 otherwise.
-#     breaks = get_breaks(con_hal_idx0)
-#     nchunk = len(breaks) + 1
-#     nchunk_total = nchunk * nrepeat
-
-    
-#     # initially empty
-#     chunk_ij_visible = torch.eye(nchunk_total)
-#     # fill in user-defined visibility
-#     for S in ij_is_visible:
-#         for i in S:
-#             for j in S: 
-#                 if i == j:
-#                     continue # already visible bc eye 
-#                 chunk_ij_visible[i,j] = 1
-#                 chunk_ij_visible[j,i] = 1
-
-
-#     # (2) Fill in LxL matrix with coarse mask info
-#     L_contigs = len(con_hal_idx0)
-#     if not supplied_full_contig:
-#         con_hal_idx0_full = torch.cat([con_hal_idx0 + i*Lasu for i in range(nrepeat)])
-#     else: 
-#         con_hal_idx0_full = con_hal_idx0
-
-
-#     mask2d = torch.zeros(L, L)
-
-#     # make 1D array designating which chunks are motif
-#     is_motif = torch.zeros(L)
-#     is_motif[con_hal_idx0_full] = 1 
-#     breaks2 = find_true_chunks_indices(is_motif)
-
-#     # fill in 2d mask
-#     for i in range(len(breaks2)):
-#         for j in range(len(breaks2)):
-
-#             visible = chunk_ij_visible[i,j] 
-
-#             if visible: 
-#                 start_i, end_i = breaks2[i]
-#                 start_j, end_j = breaks2[j]
-#                 mask2d[start_i:end_i+1, start_j:end_j+1] = 1
-#                 mask2d[start_j:end_j+1, start_i:end_i+1] = 1
-
-
-#     return mask2d, is_motif
-
-def get_contig_chunks(contig_map):
-
-    
-    # contig_chunk_ranges = []
-    all_chunk_ranges = []
-    is_motif_chunk = []
-    last_idx = 0
-    for contig_i in contig_map.sampled_mask:
-        for subcontig_ij in contig_i.split(','):
-            if subcontig_ij[0].isalpha(): # if it is a template region:
-                chain_ij = subcontig_ij[0]
-                start_resi_ij, stop_resi_ij = [int(idx) for idx in subcontig_ij[1:].split('-')]
-                
-                len_ij = stop_resi_ij - start_resi_ij
-                new_idx = last_idx + len_ij
-
-                # contig_chunk_ranges.append((last_idx , new_idx))
-                is_motif_chunk.append(1)
-                all_chunk_ranges.append((last_idx , new_idx))
-
-                last_idx = new_idx + 1
-
-            else: # if it is a diffused region:
-                len_ij = int(subcontig_ij.split('-')[0])
-                new_idx = last_idx + len_ij
-
-                is_motif_chunk.append(0)
-                all_chunk_ranges.append((last_idx, new_idx - 1))
-
-                last_idx = new_idx
-
-
-
-    contig_chunk_ranges = [con_tup for con_tup,is_mot in zip(all_chunk_ranges,is_motif_chunk) if is_mot]
-
-    # for i,j in contig_chunk_ranges: print(1 + j - i)
-    # print(contig_chunk_ranges)
-
-    return contig_chunk_ranges
-
-
-
-def get_repeat_t2d_mask(L, con_hal_idx0, contig_map, ij_is_visible, nrepeat, supplied_full_contig):
-    """
-    Given contig map and motif chunks that can see each other, create t2d mask
-    defining which motif chunks can see each other. 
-
-    Parameters:
-    -----------
-    L (int): total length of protein being modelled
-    
-    con_ref_idx0 (torch.tensor): tensor containing zero-indexed indices of where motif chunks are 
-                                 going to be placed in the output protein.
-
-    ij_is_visible (list): List of tuples, each tuple defines a set of motif chunks that can see each other.
-
-    nrepeat (int): Number of repeat units in repeat protein being modelled 
-    """
-    assert all([type(x) == tuple for x in ij_is_visible]), 'ij_is_visible must be list of tuples'
-    assert L%nrepeat == 0
-    Lasu = L // nrepeat
-
-    # # (1) Define matrix where each row/col is a motif chunk, entries are 1 if motif chunks can see each other
-    # #     and 0 otherwise.
-
-    # # AF : break regions into the start stop indices based on both template breaks and chain breaks
-    # # this just gets the breaks by mask regions between motifs
-    # mask_breaks = get_breaks(con_hal_idx0)
-    # templ_range_inds = find_template_ranges(con_hal_idx0, return_inds=False)
-
-    # # add the breaks from the chain jumps
-    # if full_complex_idx0 is not None:
-    #     chain_breaks = get_breaks(full_complex_idx0)
-    #     chain_range_inds = find_template_ranges(full_complex_idx0, return_inds=True)
-    #     # merge these into a list of sub-chunk tuples for template region locations
-    #     chunk_range_inds = merge_regions(templ_range_inds, chain_range_inds)
-    # else:
-    #     chunk_range_inds = templ_range_inds
-
-
-    chunk_range_inds = get_contig_chunks(contig_map)
-    # now we have the complete con_hal_idx0 including templates that are separated by chain breaks!
-    true_con_hal_idx0 = torch.tensor([ind for start,end in chunk_range_inds for ind in range(start,end+1)])
-
-    nchunk = len(chunk_range_inds)
-    nchunk_total = nchunk * nrepeat
-
-    # initially empty
-    chunk_ij_visible = torch.eye(nchunk_total)
-    # fill in user-defined visibility
-    for S in ij_is_visible:
-        for i in S:
-            for j in S: 
-                if i == j:
-                    continue # already visible bc eye 
-                chunk_ij_visible[i,j] = 1
-                chunk_ij_visible[j,i] = 1
-
-    # chunk_range_inds_hal, mask_1d_hal = iu.get_hal_contig_ranges(contig_map.contigs, contig_map.inpaint_hal)
-    # (2) Fill in LxL matrix with coarse mask info
-    con_hal_idx0_full = torch.cat([true_con_hal_idx0 + i*Lasu for i in range(nrepeat)])
-    chunk_range_inds_full = [(R[0] + i*Lasu, R[1] + i*Lasu) for i in range(nrepeat) for R in chunk_range_inds]
-    
-
-    mask2d = torch.zeros(L, L)
-    
-    # make 1D array designating which chunks are motif
-    is_motif = torch.zeros(L)
-    is_motif[con_hal_idx0_full] = 1 
-
-    # fill in 2d mask
-    for i in range(len(chunk_range_inds_full)):
-        for j in range(len(chunk_range_inds_full)):
-
-            visible = chunk_ij_visible[i,j] 
-
-            if visible: 
-                start_i, end_i = chunk_range_inds_full[i]
-                start_j, end_j = chunk_range_inds_full[j]
-                mask2d[start_i:end_i+1, start_j:end_j+1] = 1
-                mask2d[start_j:end_j+1, start_i:end_i+1] = 1
-
-    return mask2d, is_motif
-
-def parse_ij_get_repeat_mask(ij_visible, L, n_repeat, con_hal_idx0, supplied_full_contig, full_complex_idx0):
-    """
-    Helper function for getting repeat protein mask 2d info
-    """
-
-    abet = 'abcdefghijklmnopqrstuvwxyz'
-    abet = [a for a in abet]
-    abet2num = {a:i for i,a in enumerate(abet)}
-
-    # ij_visible = self._conf.inference.ij_visible # which chunks can see each other 
-    assert ij_visible is not None
-    ij_visible = ij_visible.split('-') # e.g., [abc,de,df,...]
-    ij_visible_int = [tuple([abet2num[a] for a in s]) for s in ij_visible]
-
-    assert L%n_repeat == 0, 'L must be a multiple of n_repeat'
-    Lasu = L//n_repeat 
-
-    ## check that the user-specified ij_visible is valid
-    unique_letters      = set([a for a in ''.join(ij_visible)] )
-    max_letter          = max([abet2num[a] for a in unique_letters]) # e.g., 5 for abcde
-    contig_motif_breaks = get_breaks(con_hal_idx0, cut=1)
-    nbreaks             = len(contig_motif_breaks)
-    n_motif_contig      = (nbreaks+1)*n_repeat # total number of motif chunks 
-    # cannot have more user specified motif chunks than exist in contigs 
-    assert max_letter <= n_motif_contig, 'user specified number of motif chunks > number calculated from contigs using {} repeats'.format(n_repeat)
-
-
-    # create a mask of which chunks are visible to each other compatible with contigs/con_hal_idx0
-    mask_t2d, _ = get_repeat_t2d_mask(L, con_hal_idx0, ij_visible_int, n_repeat, full_complex_idx0, supplied_full_contig)
-
-    return mask_t2d
-
-
-
 
 
 
@@ -1449,15 +1109,15 @@ class NRBStyleSelfCond(Sampler):
 
         # AF : break regions into the start stop indices based on both template breaks and chain breaks
         # this just gets the breaks by mask regions between motifs
-        mask_breaks = get_breaks(con_hal_idx0)
-        templ_range_inds = find_template_ranges(con_hal_idx0, return_inds=False)
+        mask_breaks = iu.get_breaks(con_hal_idx0)
+        templ_range_inds = iu.find_template_ranges(con_hal_idx0, return_inds=False)
 
         # add the breaks from the chain jumps
         if full_complex_idx0 is not None:
-            chain_breaks = get_breaks(full_complex_idx0)
-            chain_range_inds = find_template_ranges(full_complex_idx0, return_inds=True)
+            chain_breaks = iu.get_breaks(full_complex_idx0)
+            chain_range_inds = iu.find_template_ranges(full_complex_idx0, return_inds=True)
             # merge these into a list of sub-chunk tuples for template region locations
-            chunk_range_inds = merge_regions(templ_range_inds, chain_range_inds)
+            chunk_range_inds = iu.merge_regions(templ_range_inds, chain_range_inds)
         else:
             chunk_range_inds = templ_range_inds
 
@@ -1556,9 +1216,9 @@ class NRBStyleSelfCond(Sampler):
                 assert ij_visible is not None, '3 template + motif_only_2d requires description of motif pairwise visibility'
                 ij_visible = ij_visible.split('-') # e.g., [abc,de,df,...]
                 ij_visible_int = [tuple([abet2num[a] for a in s]) for s in ij_visible]
-                # mask_t2d, _ = get_repeat_t2d_mask(L, con_hal_idx0, ij_visible_int, 1, supplied_full_contig=True)
-                # mask_t2d, _ = get_repeat_t2d_mask(L, con_hal_idx0, ij_visible_int, 1, full_complex_idx0, self.contig_map, supplied_full_contig=True)
-                mask_t2d, _ = get_repeat_t2d_mask(L, con_hal_idx0, self.contig_map, ij_visible_int, 1, supplied_full_contig=True)
+                # mask_t2d, _ = iu.get_repeat_t2d_mask(L, con_hal_idx0, ij_visible_int, 1, supplied_full_contig=True)
+                # mask_t2d, _ = iu.get_repeat_t2d_mask(L, con_hal_idx0, ij_visible_int, 1, full_complex_idx0, self.contig_map, supplied_full_contig=True)
+                mask_t2d, _ = iu.get_repeat_t2d_mask(L, con_hal_idx0, self.contig_map, ij_visible_int, 1, supplied_full_contig=True)
 
             else:
                 # repeat/symmetric case
@@ -1578,7 +1238,7 @@ class NRBStyleSelfCond(Sampler):
                 ### t2d_is_revealed ###
                 n_repeat = self._conf.inference.n_repeats
                 L = len(is_protein_motif)
-                mask_t2d = parse_ij_get_repeat_mask(self._conf.inference.ij_visible, L, n_repeat, con_hal_idx0, supplied_full_contig, full_complex_idx0)
+                mask_t2d = iu.parse_ij_get_repeat_mask(self._conf.inference.ij_visible, L, n_repeat, con_hal_idx0, supplied_full_contig, full_complex_idx0)
 
 
 
@@ -1592,7 +1252,7 @@ class NRBStyleSelfCond(Sampler):
             ### t2d_is_revealed ###
             n_repeat = self._conf.inference.n_repeats
             L = len(is_protein_motif)
-            mask_t2d = parse_ij_get_repeat_mask(self._conf.inference.ij_visible, L, n_repeat, con_hal_idx0)
+            mask_t2d = iu.parse_ij_get_repeat_mask(self._conf.inference.ij_visible, L, n_repeat, con_hal_idx0)
 
         # return is_protein_motif, mask_t2d
         return is_motif, mask_t2d
@@ -1643,40 +1303,57 @@ class NRBStyleSelfCond(Sampler):
 
 
 
-        # Set up ss-adj t2d conditioning:
-        if self.use_ss_guidance:
+        # # Set up ss-adj matrix
+        # # This will be used for t2d conditioning:
+        # if self.use_ss_guidance:
 
-            # first priority: check for basepair range specifications (best way to specify):
-            if self._conf.scaffoldguided.target_ss_pairs is not None:
-                self.target_ss_matrix = torch.from_numpy(iu.ss_pairs_to_matrix(self._conf.scaffoldguided.target_ss_pairs, self._conf.contigmap.contigs)).long()
-                # assert 0, 'NOT IMPLEMENTED YET! TO DO!'
+        #     # first priority: check for basepair range specifications (best way to specify):
+        #     if self._conf.scaffoldguided.target_ss_pairs is not None:
+        #         self.target_ss_matrix = torch.from_numpy(iu.ss_pairs_to_matrix(self._conf.scaffoldguided.target_ss_pairs, self._conf.contigmap.contigs)).long()
+        #         # assert 0, 'NOT IMPLEMENTED YET! TO DO!'
 
-            # second priority: check for ss-string specification (slightly less precise):
-            elif self._conf.scaffoldguided.target_ss_string is not None:
-                self.target_ss_matrix = torch.from_numpy(iu.sstr_to_matrix(self._conf.scaffoldguided.target_ss_string, only_basepairs=True)).long()
+        #     # second priority: check for ss-string specification (slightly less precise):
+        #     elif self._conf.scaffoldguided.target_ss_string is not None:
+        #         self.target_ss_matrix = torch.from_numpy(iu.sstr_to_matrix(self._conf.scaffoldguided.target_ss_string, only_basepairs=True)).long()
             
-            # otherwise fall back to masking everything:
-            else:
-                print('    defaulting to fully masked ss matrix')
-                self.target_ss_matrix = (2*torch.ones(indep.same_chain.shape)).long()
+        #     # otherwise fall back to masking everything:
+        #     else:
+        #         self.target_ss_matrix = (2*torch.ones(indep.same_chain.shape)).long()
 
-            # Save the matrix image if we want:
-            if self._conf.scaffoldguided.save_ss_matrix_png and (t==self._conf.diffuser.T):
-                print('SAVING SS MATRIX PIC!')
-                output_pic_filapath = self._conf.inference.output_prefix+'.png'
-                output_dirpath = os.path.dirname(output_pic_filapath)
+        #     # Save the matrix image if we want:
+        #     if self._conf.scaffoldguided.save_ss_matrix_png and (t==self._conf.diffuser.T):
+        #         print('SAVING SS MATRIX PIC!')
+        #         output_pic_filapath = self._conf.inference.output_prefix+'.png'
+        #         output_dirpath = os.path.dirname(output_pic_filapath)
 
-                if not (os.path.exists(output_dirpath) and os.path.isdir(output_dirpath)):
-                    os.mkdir(output_dirpath)
+        #         if not (os.path.exists(output_dirpath) and os.path.isdir(output_dirpath)):
+        #             os.mkdir(output_dirpath)
 
-                fig, ax = plt.subplots(1,1,figsize=(5,5), dpi=300)
-                ax.imshow(np.array(self.target_ss_matrix))
-                plt.tight_layout()
-                plt.savefig(output_pic_filapath, bbox_inches='tight', dpi='figure')
-                plt.close()
+        #         fig, ax = plt.subplots(1,1,figsize=(5,5), dpi=300)
+        #         ax.imshow(np.array(self.target_ss_matrix))
+        #         plt.tight_layout()
+        #         plt.savefig(output_pic_filapath, bbox_inches='tight', dpi='figure')
+        #         plt.close()
+
+        # else:
+        #     self.target_ss_matrix = None
+
+
+
+
+
+        # Set up polymer class template:
+        # This will be used for t1d conditioning
+        if self.show_poly_class:
+            self.poly_class_vec = torch.zeros_like(indep.seq)
+            self.poly_class_vec[indep.is_rna] = 2 # RNA has token 2
+            self.poly_class_vec[indep.is_dna] = 1 # DNA has token 1
+            self.poly_class_vec[indep.is_protein] = 0 # Protein has token 0 (add last to overwrite to default val)
 
         else:
-            self.target_ss_matrix = None
+            self.poly_class_vec = None
+
+
 
 
         if not self.inf_conf.subsymm_t1d_perfect: 
@@ -1715,6 +1392,16 @@ class NRBStyleSelfCond(Sampler):
             ss_adj_templ_onehot = torch.nn.functional.one_hot(self.target_ss_matrix, num_classes=3)
             ss_adj_templ_onehot = ss_adj_templ_onehot.reshape(1, 1, *ss_adj_templ_onehot.shape).repeat(1,3,1,1,1)
             rfi.t2d = torch.cat((rfi.t2d, ss_adj_templ_onehot), dim=-1)
+
+
+        # Now we modify rfi to accomodate the new t1d features
+        # Adding polymer class labels if that is what we wanna do:
+        if (self.poly_class_vec is not None) and (twotemplate and threetemplate):
+            polymer_templ_onehot = torch.nn.functional.one_hot(self.poly_class_vec, num_classes=3)
+            polymer_templ_onehot = polymer_templ_onehot.reshape(1, 1, *polymer_templ_onehot.shape).repeat(1,3,1,1)
+            rfi.t1d = torch.cat((rfi.t1d, polymer_templ_onehot), dim=-1)
+
+
 
         rf2aa.tensor_util.to_device(rfi, self.device)
         seq_init = torch.nn.functional.one_hot(indep.seq, num_classes=rf2aa.chemical.NAATOKENS).to(self.device).float()
@@ -1864,9 +1551,11 @@ class NRBStyleSelfCond(Sampler):
                     mem_report() 
                     print('*'*50+'\n\n')
 
-
+                # Update arguments passed to RoseTTAfold module
+                # So that it can run forward pass with correct number of dimensions
                 if (twotemplate and threetemplate):
                     kwargs.update({'ss_adj_conditioned':self.use_ss_guidance})
+                    kwargs.update({'poly_class_conditioned':self.show_poly_class})
 
                 # Now we will add rfmotif as an item in the kwarg dict
                 # kwargs.update({'rfmotif':rfmotif})
@@ -1887,6 +1576,7 @@ class NRBStyleSelfCond(Sampler):
 
                 with torch.cuda.amp.autocast(True):
                     # rfo = self.model_adaptor.forward(rfi, N_cycle=N_cycle, rfmotif=rfmotif, return_infer=True, **kwargs)
+                    # set_trace()
                     rfo = self.model_adaptor.forward(rfi, N_cycle=N_cycle, return_infer=True, **kwargs)
 
                 print('********* SUCCESSFULL MODEL FORWARD *******')
@@ -1929,12 +1619,9 @@ class NRBStyleSelfCond(Sampler):
                         t1d[:,:,:,:20] = logits[:,None,:,:20]
                         t1d[:,:,:,20]  = 0 # Setting mask tokens to zero
 
-        # ipdb.set_trace()
         # px0         = rfo.get_xyz()[:,:14]
         # px0         = rfo.get_xyz()[:,:23]
         # px0         = rfo.get_xyz()[:,:NHEAVY]
-        # ipdb.set_trace()
-        # print('MODEL RUNNERs LINE 1854')
         px0         = rfo.get_xyz()[:,:self.inf_conf.num_atoms_modeled]
         logits      = rfo.get_seq_logits()
         seq_decoded = [rf2aa.chemical.num2aa[s] for s in rfi.seq[0]]
@@ -1943,9 +1630,10 @@ class NRBStyleSelfCond(Sampler):
         px0    = px0.float()
         # Modify logits if we want to use polymer masks:
         if self._conf.inference['mask_seq_by_polymer']:
-            logit_penalty = 1e7
+            # logit_penalty = 1e7
+            logit_penalty = 1e12
             logits = logits - logit_penalty*(torch.ones_like(self.polymer_mask)-self.polymer_mask)
-
+            # set_trace()
 
         if self.seq_diffuser is None:
             # Default method of decoding sequence

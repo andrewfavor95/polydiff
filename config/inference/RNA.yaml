@@ -1,9 +1,0 @@
-# Base inference Configuration.
-defaults:
-  - multi_polymer
-
-inference:
-  # ckpt_path: /projects/ml/afavor/RFD/models/RNA/train_session2023-11-10_1699643206_BFF_5.pt
-  ckpt_path: /projects/ml/afavor/RFD/models/RNA/train_session2023-10-29_1698607365.159913_BFF_5.pt
-  # ckpt_path: /projects/ml/afavor/RFD/models/RNA/train_session2023-11-05_1699234479.0719287_BFF_3.pt
-  # ckpt_path: /projects/ml/afavor/RFD/models/RNA/train_session2023-11-10_1699643206_BFF_6.pt
