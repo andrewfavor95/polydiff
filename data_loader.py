@@ -2757,7 +2757,7 @@ class DistilledDataset(data.Dataset):
                     except:
 
                         print('ERROR!!!!')
-                        set_trace()
+                        # set_trace()
                         ss_matrix = (2*torch.ones(rfi_tp1_t[0].t2d.shape[2:4])).long()
 
 
