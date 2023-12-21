@@ -31,7 +31,7 @@ from contigs import ContigMap, DNA_Duplex_Protein_Monomer
 from inference import utils as iu
 from potentials.manager import PotentialManager
 from inference import symmetry
-from inference import motif_manager
+# from inference import motif_manager
 import logging
 import torch.nn.functional as nn
 import util
@@ -277,18 +277,18 @@ class Sampler:
 
         # Set up motif-fitting stuffs
         self.rfmotif = None
-        if self.inf_conf.rfmotif:
-            self.rfmotif = motif_manager.create_motif_manager(self._conf, device=self.device)
-            # self.motif_fit_step_list = [50,30,20,15,10,6,3,1]
-            if self._conf['rfmotif']['fit_at_t']:
-                self.t_motif_fit = int(self._conf['rfmotif']['fit_at_t'])
-            else:
-                self.t_motif_fit = int(self.t_step_input)
+        # if self.inf_conf.rfmotif:
+        #     self.rfmotif = motif_manager.create_motif_manager(self._conf, device=self.device)
+        #     # self.motif_fit_step_list = [50,30,20,15,10,6,3,1]
+        #     if self._conf['rfmotif']['fit_at_t']:
+        #         self.t_motif_fit = int(self._conf['rfmotif']['fit_at_t'])
+        #     else:
+        #         self.t_motif_fit = int(self.t_step_input)
 
-            if self._conf['rfmotif']['motif_fit_tsteps']:
-                self.motif_fit_tsteps = [int(t_i) for t_i in self._conf['rfmotif']['motif_fit_tsteps'][0].split(',') ]
-            else:
-                self.motif_fit_tsteps = [int(t_i) for t_i in range(1,self.t_motif_fit+1)]
+        #     if self._conf['rfmotif']['motif_fit_tsteps']:
+        #         self.motif_fit_tsteps = [int(t_i) for t_i in self._conf['rfmotif']['motif_fit_tsteps'][0].split(',') ]
+        #     else:
+        #         self.motif_fit_tsteps = [int(t_i) for t_i in range(1,self.t_motif_fit+1)]
 
 
 

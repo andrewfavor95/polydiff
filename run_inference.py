@@ -31,7 +31,7 @@ import logging
 import copy 
 from util import writepdb_multi, writepdb
 from inference import utils as iu
-from inference.motif_manager import create_motif_manager
+# from inference.motif_manager import create_motif_manager
 from icecream import ic
 from hydra.core.hydra_config import HydraConfig
 import numpy as np
