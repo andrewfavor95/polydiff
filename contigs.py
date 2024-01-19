@@ -101,7 +101,7 @@ class ContigMap():
             print('WARNING: CURRENTLY ASSUMES EVERYTHING IS PROTEIN')
             print('TO DO: GO IN AND ASSIGN POLYMER TYPES BASED ON TEMPLATE/INPUT-PDB POLYMER TYPES')
             self.polymer_chains = ['protein' for chain_i in range(len(contig_list))]
-            set_trace()
+            # set_trace()
 
 
         # else check that the input spec polymer_chains is same length as number of chains in design.

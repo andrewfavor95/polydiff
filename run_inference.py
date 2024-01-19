@@ -389,6 +389,7 @@ def save_outputs(sampler, out_prefix, indep, denoised_xyz_stack, px0_xyz_stack, 
     final_seq = torch.argmax(final_seq, dim=-1)
 
     bfacts = torch.ones_like(final_seq.squeeze())
+    # set_trace()
 
     # replace mask and unknown tokens in the final seq: 
     # for protein chains, replace with alanine
@@ -400,8 +401,10 @@ def save_outputs(sampler, out_prefix, indep, denoised_xyz_stack, px0_xyz_stack, 
     # for RNA chains, replace with ribo-adenine
     rna_condition = ((final_seq == 31) | (final_seq==21)) & indep.is_rna
     final_seq = torch.where(rna_condition, 27, final_seq)
+
+    # Replace diffused regions with Alanine/Adenine if that's the setting specified.
     # final_seq = torch.where((final_seq == 20) | (final_seq==21), 0, final_seq)
-    
+    # final_seq = torch.where((final_seq == 20) | (final_seq==21), 0, final_seq)
     
 
     # determine lengths of protein and ligand for correct chain labeling in output pdb

@@ -19,6 +19,7 @@ inference:
   num_atoms_saved: 13
   scaffold_guided: False
   save_rna_oneletter: True
+  set_diffused_resi_to_A: False
 
 
   # align_motif: False
