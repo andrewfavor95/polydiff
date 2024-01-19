@@ -59,12 +59,6 @@ class ContigMap():
                 self.rf = self.inpaint_rf + self.receptor_rf 
             else:
                 self.ref, self.hal, self.rf, self.atomize_resnum2atomnames = self.expand_sampled_mask_afav()
-                # self.inpaint = []
-                # self.receptor = []
-                # self.inpaint_hal = []
-                # self.receptor_hal = []
-                # self.inpaint_rf = []
-                # self.receptor_rf = []
 
             self.atomize_indices2atomname = {self.ref.index(res_num):atom_names for res_num, atom_names in self.atomize_resnum2atomnames.items()}
             self.atomize_indices = list(self.atomize_indices2atomname.keys())
@@ -95,14 +89,8 @@ class ContigMap():
 
 
         #get 0-indexed input/output (for trb file)
-        # if use_old_receptor_system: # If you wanna use the old weird way....
         self.ref_idx0,self.hal_idx0, self.ref_idx0_inpaint, self.hal_idx0_inpaint, self.ref_idx0_receptor, self.hal_idx0_receptor=self.get_idx0(use_old_way=True)
-        # else:
-        #     self.ref_idx0,self.hal_idx0, =self.get_idx0(use_old_way=False)
-        #     self.ref_idx0_inpaint=[]
-        #     self.hal_idx0_inpaint=[]
-        #     self.ref_idx0_receptor=[]
-        #     self.hal_idx0_receptor=[]
+
 
         self.con_ref_pdb_idx=[i for i in self.ref if i != ('_','_')] 
 
@@ -113,33 +101,7 @@ class ContigMap():
             print('WARNING: CURRENTLY ASSUMES EVERYTHING IS PROTEIN')
             print('TO DO: GO IN AND ASSIGN POLYMER TYPES BASED ON TEMPLATE/INPUT-PDB POLYMER TYPES')
             self.polymer_chains = ['protein' for chain_i in range(len(contig_list))]
-            # set_trace()
-            # motif_poly_class_check = []
-            # for contig_i  in contig_list:
-            #     for subcontig_ij in contig_i.split(','):
-            #         if subcontig_ij[0].isalpha():
-            #             start_id = subcontig_ij.split('-')
-            #             chain_ij = start_id[0]
-            #             resi_ij = int(start_id[1:])
-            #             idx_ij = parsed_pdb['pdb_idx'].index((chain_ij,resi_ij))
-            #             aa_ij = parsed_pdb['seq'][idx_ij]
-
-            #             # TO DO: ADD SMALL MOLECULE OPTION:
-
-            #             if 27 <= aa_ij <= 30:
-            #                 motif_poly_class_check.append('rna')
-
-            #             elif 22 <= aa_ij <= 25:
-            #                 motif_poly_class_check.append('dna')
-
-            #             elif 0 <= aa_ij <= 19:
-            #                 motif_poly_class_check.append('protein')
-
-            #             elif
-
-            #             motif_poly_class_check.append('protein')
-
-            #             # elif
+            set_trace()
 
 
         # else check that the input spec polymer_chains is same length as number of chains in design.
