@@ -1399,18 +1399,26 @@ def get_diffusion_mask_na(
     if (add_bp_partners_cond_A and add_bp_partners_cond_B):
         relevant_Ls = indep.seq.shape[0]
 
+        # ss_matrix = get_pair_ss_partners(indep.seq, 
+        #                                  indep.xyz, 
+        #                                  indep.maskstack[0,:,:23], 
+        #                                  torch.arange(relevant_Ls), 
+        #                                  relevant_Ls,
+        #                                  bp_cutoff=4.6,
+        #                                  use_base_angles=True, 
+        #                                  base_angle_cutoff=1.5708,
+        #                                  compute_aa_contacts=False, 
+        #                                  use_repatom=True,
+        #                                  canonical_partner_filter=True # Always filter by canonical basepairs here
+        #                                  )
+
         ss_matrix = get_pair_ss_partners(indep.seq, 
-                                         indep.xyz, 
-                                         indep.maskstack[0,:,:23], 
-                                         torch.arange(relevant_Ls), 
-                                         relevant_Ls,
-                                         bp_cutoff=4.6,
-                                         use_base_angles=True, 
-                                         base_angle_cutoff=1.5708,
-                                         compute_aa_contacts=False, 
-                                         use_repatom=True,
-                                         canonical_partner_filter=True # Always filter by canonical basepairs here
-                                         )
+                                     indep.xyz, 
+                                     indep.maskstack[0,:,:23], 
+                                     torch.arange(relevant_Ls), 
+                                     relevant_Ls,
+                                     canonical_partner_filter=True,
+                                     )
 
 
         diff_mask_inds, diff_mask_vals = get_start_stop_inds(diffusion_mask )

@@ -12,7 +12,7 @@ class ContigMap():
     Default chain outputs are inpainted chains as A (and B, C etc if multiple chains), and all fragments of receptor chain on the next one (generally B)
     Output chains can be specified. Sequence must be the same number of elements as in contig string
     '''
-    def __init__(self, parsed_pdb, contigs=None, contig_atoms=None, inpaint_seq=None, inpaint_str=None, length=None, ref_idx=None, hal_idx=None, idx_rf=None, inpaint_seq_tensor=None, inpaint_str_tensor=None, topo=False, polymer_chains=None):
+    def __init__(self, parsed_pdb, contigs=None, contig_atoms=None, inpaint_seq=None, inpaint_str=None, length=None, ref_idx=None, hal_idx=None, idx_rf=None, inpaint_seq_tensor=None, inpaint_str_tensor=None, topo=False, polymer_chains=None, use_old_receptor_system=True):
         #sanity checks
         if contigs is None and ref_idx is None:
             sys.exit("Must either specify a contig string or precise mapping")
@@ -38,6 +38,8 @@ class ContigMap():
         self.parsed_pdb = parsed_pdb
         self.topo=topo
 
+        
+
         if ref_idx is None:
             #using default contig generation, which outputs in rosetta-like format
             self.contigs=contigs
@@ -46,19 +48,34 @@ class ContigMap():
             else:
                 self.contig_atoms = None
             self.sampled_mask,self.contig_length,self.n_inpaint_chains = self.get_sampled_mask()
+            
             self.receptor_chain = self.chain_order[self.n_inpaint_chains]
+            
             self.receptor, self.receptor_hal, self.receptor_rf, self.inpaint, self.inpaint_hal, self.inpaint_rf, self.atomize_resnum2atomnames = self.expand_sampled_mask()
-            self.ref = self.inpaint + self.receptor
-            self.hal = self.inpaint_hal + self.receptor_hal
-            self.rf = self.inpaint_rf + self.receptor_rf 
+            if use_old_receptor_system:  # Using old weird way which is hard-coded for ppi... 
+                # self.receptor, self.receptor_hal, self.receptor_rf, self.inpaint, self.inpaint_hal, self.inpaint_rf, self.atomize_resnum2atomnames = self.expand_sampled_mask()
+                self.ref = self.inpaint + self.receptor
+                self.hal = self.inpaint_hal + self.receptor_hal
+                self.rf = self.inpaint_rf + self.receptor_rf 
+            else:
+                self.ref, self.hal, self.rf, self.atomize_resnum2atomnames = self.expand_sampled_mask_afav()
+                # self.inpaint = []
+                # self.receptor = []
+                # self.inpaint_hal = []
+                # self.receptor_hal = []
+                # self.inpaint_rf = []
+                # self.receptor_rf = []
+
             self.atomize_indices2atomname = {self.ref.index(res_num):atom_names for res_num, atom_names in self.atomize_resnum2atomnames.items()}
             self.atomize_indices = list(self.atomize_indices2atomname.keys())
+
         else:
             #specifying precise mappings
             self.ref=ref_idx
             self.hal=hal_idx
             self.rf = rf_idx
         self.mask_1d = [False if i == ('_','_') else True for i in self.ref]
+
         #take care of sequence and structure masking
         if self.inpaint_seq_tensor is None:
             if self.inpaint_seq is not None:
@@ -75,8 +92,18 @@ class ContigMap():
                 self.inpaint_str = np.array([True if i != ('_','_') else False for i in self.ref])
         else:
             self.inpaint_str = self.inpaint_str_tensor        
+
+
         #get 0-indexed input/output (for trb file)
-        self.ref_idx0,self.hal_idx0, self.ref_idx0_inpaint, self.hal_idx0_inpaint, self.ref_idx0_receptor, self.hal_idx0_receptor=self.get_idx0()
+        # if use_old_receptor_system: # If you wanna use the old weird way....
+        self.ref_idx0,self.hal_idx0, self.ref_idx0_inpaint, self.hal_idx0_inpaint, self.ref_idx0_receptor, self.hal_idx0_receptor=self.get_idx0(use_old_way=True)
+        # else:
+        #     self.ref_idx0,self.hal_idx0, =self.get_idx0(use_old_way=False)
+        #     self.ref_idx0_inpaint=[]
+        #     self.hal_idx0_inpaint=[]
+        #     self.ref_idx0_receptor=[]
+        #     self.hal_idx0_receptor=[]
+
         self.con_ref_pdb_idx=[i for i in self.ref if i != ('_','_')] 
 
         contig_list = self.contigs[0].strip().split()
@@ -86,6 +113,35 @@ class ContigMap():
             print('WARNING: CURRENTLY ASSUMES EVERYTHING IS PROTEIN')
             print('TO DO: GO IN AND ASSIGN POLYMER TYPES BASED ON TEMPLATE/INPUT-PDB POLYMER TYPES')
             self.polymer_chains = ['protein' for chain_i in range(len(contig_list))]
+            # set_trace()
+            # motif_poly_class_check = []
+            # for contig_i  in contig_list:
+            #     for subcontig_ij in contig_i.split(','):
+            #         if subcontig_ij[0].isalpha():
+            #             start_id = subcontig_ij.split('-')
+            #             chain_ij = start_id[0]
+            #             resi_ij = int(start_id[1:])
+            #             idx_ij = parsed_pdb['pdb_idx'].index((chain_ij,resi_ij))
+            #             aa_ij = parsed_pdb['seq'][idx_ij]
+
+            #             # TO DO: ADD SMALL MOLECULE OPTION:
+
+            #             if 27 <= aa_ij <= 30:
+            #                 motif_poly_class_check.append('rna')
+
+            #             elif 22 <= aa_ij <= 25:
+            #                 motif_poly_class_check.append('dna')
+
+            #             elif 0 <= aa_ij <= 19:
+            #                 motif_poly_class_check.append('protein')
+
+            #             elif
+
+            #             motif_poly_class_check.append('protein')
+
+            #             # elif
+
+
         # else check that the input spec polymer_chains is same length as number of chains in design.
         else:
             assert len(polymer_chains)==len(contig_list) , "specified polymer chains need to match number of chains in design"
@@ -209,7 +265,81 @@ class ContigMap():
         for ch_break in receptor_chain_break[:-1]:
             receptor_rf[ch_break[0]:] += ch_break[1]
 
+        # set_trace()
+
         return receptor, receptor_hal, receptor_rf.tolist(), inpaint, inpaint_hal, inpaint_rf.tolist(), atomize_resnum2atomnames
+
+
+    def expand_sampled_mask_afav(self):
+
+        """
+        outputs:
+
+
+        self.ref, self.hal, self.rf, self.atomize_resnum2atomnames
+
+        full_ref, full_hal, full_rf, self.atomize_resnum2atomnames
+            full_ref = inpaint + receptor
+            full_hal = inpaint_hal + receptor_hal
+            full_rf = inpaint_rf + receptor_rf 
+
+        """
+
+
+        chain_order='ABCDEFGHIJKLMNOPQRSTUVWXYZ'
+
+        # receptor = []
+        # inpaint = []
+        # receptor_hal = []
+        # inpaint_hal = []
+        # receptor_idx = 1
+        # inpaint_idx = 1
+        # inpaint_chain_idx=-1
+        # receptor_chain_break=[]
+        # inpaint_chain_break = []
+        # atomize_resnum2atomnames = {}
+
+        # receptor = []
+        # inpaint = []
+        full_ref = []
+        # receptor_hal = []
+        # inpaint_hal = []
+        full_hal = []
+        # receptor_idx = 1
+        # inpaint_idx = 1
+        full_idx = 1
+        # inpaint_chain_idx=-1
+        full_chain_idx=-1
+        # receptor_chain_break=[]
+        # inpaint_chain_break = []
+        full_chain_break=[]
+        atomize_resnum2atomnames = {}
+        for con in self.sampled_mask:
+
+            full_chain_idx += 1
+            for subcon in con.split(","):
+                if subcon[0].isalpha(): # this is a part of the motif because the first element of the contig is the chain letter
+                    ref_to_add=[(subcon[0], i) for i in np.arange(int(subcon.split("-")[0][1:]),int(subcon.split("-")[1])+1)]
+                    full_ref.extend(ref_to_add)
+                    
+                    full_hal.extend([(self.chain_order[full_chain_idx], i) for i in np.arange(full_idx,full_idx+len(ref_to_add))])
+                    full_idx += len(ref_to_add)
+                    if self.contig_atoms is not None:
+                        atomize_resnum2atomnames.update({(k[0], int(k[1:])):v for k, v in self.contig_atoms.items() if (k[0], int(k[1:])) in full_ref})
+                else:
+                    full_ref.extend([('_','_')] * int(subcon.split("-")[0]))
+
+                    full_hal.extend([(self.chain_order[full_chain_idx], i) for i in np.arange(full_idx,full_idx+int(subcon.split("-")[0]))])
+
+                    full_idx += int(subcon.split("-")[0])
+            full_chain_break.append((full_idx-1,200))
+
+        full_rf = np.arange(0,len(full_ref))
+        for ch_break in full_chain_break[:-1]:
+            full_rf[ch_break[0]:] += ch_break[1]
+
+        return full_ref, full_hal, full_rf.tolist(), atomize_resnum2atomnames
+
 
     def get_inpaint_seq_str(self, inpaint_s):
         '''
@@ -228,30 +358,40 @@ class ContigMap():
     
         return np.array(s_mask) 
 
-    def get_idx0(self):
+    def get_idx0(self, use_old_way=True):
+
         ref_idx0=[]
         hal_idx0=[]
-        ref_idx0_inpaint=[]
-        hal_idx0_inpaint=[]
-        ref_idx0_receptor=[]
-        hal_idx0_receptor=[]
         for idx, val in enumerate(self.ref):
             if val != ('_','_'):
                 assert val in self.parsed_pdb['pdb_idx'],f"{val} is not in pdb file!"
                 hal_idx0.append(idx)
                 ref_idx0.append(self.parsed_pdb['pdb_idx'].index(val))
-        for idx, val in enumerate(self.inpaint):
-            if val != ('_','_'):
-                hal_idx0_inpaint.append(idx)
-                ref_idx0_inpaint.append(self.parsed_pdb['pdb_idx'].index(val))
-        for idx, val in enumerate(self.receptor):
-            if val != ('_','_'):
-                hal_idx0_receptor.append(idx)
-                ref_idx0_receptor.append(self.parsed_pdb['pdb_idx'].index(val))
 
-        return ref_idx0, hal_idx0, ref_idx0_inpaint, hal_idx0_inpaint, ref_idx0_receptor, hal_idx0_receptor
+        if not use_old_way:
+            return ref_idx0, hal_idx0
+
+        else:
+
+
+            ref_idx0_inpaint=[]
+            hal_idx0_inpaint=[]
+            for idx, val in enumerate(self.inpaint):
+                if val != ('_','_'):
+                    hal_idx0_inpaint.append(idx)
+                    ref_idx0_inpaint.append(self.parsed_pdb['pdb_idx'].index(val))
+
+            ref_idx0_receptor=[]
+            hal_idx0_receptor=[]
+            for idx, val in enumerate(self.receptor):
+                if val != ('_','_'):
+                    hal_idx0_receptor.append(idx)
+                    ref_idx0_receptor.append(self.parsed_pdb['pdb_idx'].index(val))
+
+            return ref_idx0, hal_idx0, ref_idx0_inpaint, hal_idx0_inpaint, ref_idx0_receptor, hal_idx0_receptor
 
     def get_mappings(self):
+        # set_trace()
         mappings = {}
         mappings['con_ref_pdb_idx'] = [i for i in self.inpaint if i != ('_','_')]
         mappings['con_hal_pdb_idx'] = [self.inpaint_hal[i] for i in range(len(self.inpaint_hal)) if self.inpaint[i] != ("_","_")]
@@ -447,7 +587,7 @@ def DNA_Duplex_Protein_Monomer(indep, contig_conf, idx_pdb):
     idx = torch.cat(idx)
     is_diffused = torch.Tensor(is_diffused).bool()
 
-    ipdb.set_trace()
+    # ipdb.set_trace()
     return Indep(seq,
                  xyz,
                  idx,

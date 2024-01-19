@@ -231,6 +231,10 @@ def get_args(in_args=None):
             help='Only supply frames below this t. Default -1 (never supply/ always eye)')
     diff_group.add_argument('-score_frames_under_t', default=-1, type=int,
             help='Only score frames below this t. Default -1 (never score)')
+    diff_group.add_argument('-use_exp_prob_supply_frames', default=False,
+            help='Do we want to sample from exponential distribution for deciding whether we supply/score frames?')
+    diff_group.add_argument('-exp_scale_supply_frames', default=0.05, type=float,
+            help='exponential scalar for scheduling random provision of frames.')
     diff_group.add_argument('-mask_by_polymer_type',  default=False, action='store_true',
             help='If true, assigns different type of masking token per polymer (protein, dna, rna)')
     diff_group.add_argument('-show_polymer_type_t1d',  default=False, action='store_true',
@@ -334,6 +338,10 @@ def get_args(in_args=None):
             help="Weight on MSA masked token prediction loss [0.5]")
     loss_group.add_argument('-w_aa', type=float, default=3.0,
             help="Weight on MSA masked token prediction loss [3.0]")
+    loss_group.add_argument('-w_poly_cce', type=float, default=0.0,
+            help="Weight on polymer cateogorical cross entropy loss [0.1]")
+    loss_group.add_argument('-w_ss_dist', type=float, default=0.0,
+            help="Weight on nucleic secondary struct distogram loss [0.1]")
     loss_group.add_argument('-w_blen', type=float, default=0.0,
             help="Weight on predicted blen loss [0.0]")
     loss_group.add_argument('-w_bang', type=float, default=0.0,
@@ -440,6 +448,8 @@ def get_args(in_args=None):
     args.na_fixed_intra = args.na_fixed_intra == 'True'
     args.na_fixed_inter = args.na_fixed_inter == 'True'
 
+    args.use_exp_prob_supply_frames = args.use_exp_prob_supply_frames == 'True'
+
     ic(args.sequence_decode)
     # parse the task lists
     task_names = args.task_names.split(',')
@@ -520,6 +530,8 @@ def get_args(in_args=None):
                 'w_ligand_intra_fape',\
                 'w_prot_lig_inter_fape',\
                 'w_aa',\
+                'w_poly_cce',\
+                'w_ss_dist',\
                 'w_lddt',\
                 'w_blen',\
                 'w_bang',\
@@ -563,6 +575,8 @@ def get_args(in_args=None):
                   'p_score_frames',
                   'supply_frames_under_t',
                   'score_frames_under_t',
+                  'use_exp_prob_supply_frames',
+                  'exp_scale_supply_frames',
                   'p_keep_frames',
                   'motif_only_2d',
                   'p_show_motif_seq',

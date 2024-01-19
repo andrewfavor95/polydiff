@@ -309,7 +309,6 @@ class Sampler:
         #         self.target_ss_matrix = torch.from_numpy(iu.sstr_to_matrix(conf.scaffoldguided.target_na_ss, only_basepairs=True)).long()
 
         #     else:
-        #         ipdb.set_trace()
         #         print(f'    masking full ss-adjacency matrix')
         #         self.target_ss_matrix = (2*torch.ones(rfi_tp1_t[0].t2d.shape[2:4])).long()
 
@@ -522,7 +521,6 @@ class Sampler:
         if self.inf_conf.refine: 
             L = len(self.target_feats['seq'].squeeze())
             self.contig_conf['contigs'] = [f'{L}-{L}']
-
         return ContigMap(target_feats, **self.contig_conf)
 
     def construct_denoiser(self, L, visible):
@@ -750,8 +748,10 @@ class Sampler:
             visible = is_motif | is_shown_at_t
             if self.diffuser_conf.partial_T:
                 # seq_t[visible] = seq_orig[visible]
-                assert 0, 'NEED TO MODIFY TO INCLUDE NA TOKENS!'
-                indep.seq = torch.full_like(indep.seq, 20)
+                # set_trace()
+                # assert 0, 'NEED TO MODIFY TO INCLUDE NA TOKENS!'
+                # indep.seq = torch.full_like(indep.seq, 20)
+                indep.seq = torch.full_like(indep.seq, 31)
         else:
             # Sequence diffusion
             visible = ~is_diffused
@@ -1191,6 +1191,8 @@ class NRBStyleSelfCond(Sampler):
             # # the entire protein is diffused
             # # trying to reconstruct motif from 2d only 
 
+            # set_trace()
+
             if not self._conf.model.symmetrize_repeats:
                 
                 # asymmetric case 
@@ -1288,11 +1290,14 @@ class NRBStyleSelfCond(Sampler):
         else:
             is_motif, t2d_is_revealed = None,None 
 
-        if (self.inf_conf.t2d_pic_filename) and (t==self._conf['diffuser']['T']):
-            if self.inf_conf.t2d_pic_filename.endswith('.png'):
-                out_pic_name = self.inf_conf.t2d_pic_filename
-            else:
-                out_pic_name = self.inf_conf.t2d_pic_filename + '.png'
+        if self.inf_conf.save_motif_t2d_png and (t==self._conf['diffuser']['T']):
+            # if self.inf_conf.save_motif_t2d_png:
+            # if self.inf_conf.t2d_pic_filename.endswith('.png'):
+                # out_pic_name = self.inf_conf.t2d_pic_filename
+            # else:
+                # out_pic_name = self.inf_conf.t2d_pic_filename + '.png'
+
+            out_pic_name = self.inf_conf.output_prefix + '_t2d_motif_chunks.png'
 
             fig, ax = plt.subplots(1,1,figsize=(5,5), dpi=300)
             ax.imshow(t2d_is_revealed)
@@ -1385,7 +1390,7 @@ class NRBStyleSelfCond(Sampler):
                                             rfmotif=rfmotif
                                             )
                                             # target_ss_matrix=self.target_ss_matrix,
-
+        
         # Now we modify rfi to accomodate the new t2d features
         # Adding target ss_matrix if that is what we wanna do:
         if (self.target_ss_matrix is not None) and (twotemplate and threetemplate):
@@ -1576,7 +1581,6 @@ class NRBStyleSelfCond(Sampler):
 
                 with torch.cuda.amp.autocast(True):
                     # rfo = self.model_adaptor.forward(rfi, N_cycle=N_cycle, rfmotif=rfmotif, return_infer=True, **kwargs)
-                    # set_trace()
                     rfo = self.model_adaptor.forward(rfi, N_cycle=N_cycle, return_infer=True, **kwargs)
 
                 print('********* SUCCESSFULL MODEL FORWARD *******')
@@ -1631,9 +1635,10 @@ class NRBStyleSelfCond(Sampler):
         # Modify logits if we want to use polymer masks:
         if self._conf.inference['mask_seq_by_polymer']:
             # logit_penalty = 1e7
-            logit_penalty = 1e12
+            # logit_penalty = 1e12
+            logit_penalty = 1e4
+            # logit_penalty = 1e1
             logits = logits - logit_penalty*(torch.ones_like(self.polymer_mask)-self.polymer_mask)
-            # set_trace()
 
         if self.seq_diffuser is None:
             # Default method of decoding sequence
@@ -1693,7 +1698,6 @@ class NRBStyleSelfCond(Sampler):
                 pass
 
         if t > self._conf.inference.final_step:
-            # ipdb.set_trace()
             # x_t_1, seq_t_1, tors_t_1, px0, cur_rigid_tmplt = self.denoiser.get_next_pose(
             #     xt=rfi.xyz[0,:,:14].cpu(),
             #     px0=px0,
@@ -1746,7 +1750,6 @@ class NRBStyleSelfCond(Sampler):
             # )
             self.cur_rigid_tmplt = cur_rigid_tmplt
         else:
-            # ipdb.set_trace()
             px0 = px0.cpu()
             px0[~self.is_diffused] = indep.xyz[~self.is_diffused]
             x_t_1 = torch.clone(px0)
@@ -1754,7 +1757,6 @@ class NRBStyleSelfCond(Sampler):
 
             # Dummy tors_t_1 prediction. Not used in final output.
             tors_t_1 = torch.ones((self.is_diffused.shape[-1], 10, 2))
-            # ipdb.set_trace()
 
 
         if self._conf.inference.internal_sym is not None:
@@ -1777,7 +1779,7 @@ class NRBStyleSelfCond(Sampler):
         if REPORT_MEM:
             print('MEM REPORT END OF MODEL_RUNNERS.SAMPLE_STEP')
             mem_report()
-        # ipdb.set_trace()
+
         return px0, x_t_1, seq_t_1, tors_t_1, None, rfo
 
 def sampler_selector(conf: DictConfig, preloaded_ckpts={}, preloaded_models={}):

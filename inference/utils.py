@@ -1405,8 +1405,14 @@ def parse_pdb_lines(lines, parse_hetatom=False, ignore_het_h=True):
             continue
         split = l.split()
         resNo, atom, aa, chid = int(split[5]), split[2], split[3], split[4]
+        # If it is a nucleic acid using the RoseTTAfold naming conventions:
         if aa in ['DA', 'DC', 'DG', 'DT', 'DX', 'RA', 'RC', 'RG', 'RU', 'RX',]:
             aa = ' ' + aa
+        # If it is a nucleic acid using the RoseTTAfold naming conventions:
+        elif aa in ['A','C','G','U']:
+            aa = ' R' + aa
+
+
         # resNo, atom, aa, chid = int(l[22:26]), l[12:16], l[17:20], l[21]
         #print(resNo, atom, aa)
         if (chid,resNo) not in idx_s:
@@ -1414,6 +1420,7 @@ def parse_pdb_lines(lines, parse_hetatom=False, ignore_het_h=True):
         idx = idx_s.index((chid,resNo))
         if aa not in rf2aa.chemical.aa2num.keys():
             continue
+
         for i_atm, tgtatm in enumerate(rf2aa.chemical.aa2long[rf2aa.chemical.aa2num[aa]]):
             if tgtatm and tgtatm.strip() == atom:
                 #print(i_atm, tgtatm)

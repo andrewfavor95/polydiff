@@ -35,6 +35,8 @@ preprocess:
 contigmap:
   contigs: ['30']
   polymer_chains: null
+  use_old_receptor_system: False
+  
 
 
 denoiser:
@@ -43,6 +45,8 @@ denoiser:
 
 diffuser:
   T: 50
+
+  
 
 
 scaffoldguided:

@@ -876,155 +876,291 @@ def ss_matrix_to_t2d_feats(ss_matrix):
     #19 val.  # VAL: CB: 4
 
 
-def get_pair_ss_partners(seq, xyz, mask, sel, len_s, 
-                        negative=False, incl_protein=True, cutoff=12.0, bp_cutoff=4.0, eps=1e-6, seq_cutoff=2,
-                         use_base_angles=False, base_angle_cutoff=0.5234, compute_aa_contacts=False, use_repatom=True, canonical_partner_filter=False):
+# def get_pair_ss_partners(seq, xyz, mask, sel, len_s, vert_diff_cutoff=3.0,
+#                         negative=False, incl_protein=True, cutoff=12.0, bp_cutoff=4.0, eps=1e-6, seq_cutoff=2,
+#                          use_base_angles=False, base_angle_cutoff=0.5234, compute_aa_contacts=False, use_repatom=True, canonical_partner_filter=False):
 
 
+
+
+#     seq_neighbors = torch.le(torch.abs(sel[:,None]-sel[None,:]), seq_cutoff)
+#     is_protein = torch.logical_and((0 <= seq),(seq <= 21))
+#     is_dna = torch.logical_and((22 <= seq),(seq <= 26))
+#     is_rna = torch.logical_and((27 <= seq),(seq <= 31))
+
+#     # We return an integer tensor (to later be converted to onehot), where: 
+#     # 0 means unpaired
+#     # 1 means paired
+#     # 2 means masked/unspecified
+
+#     # Initialize as all unspecified, and fill in. Everything should technically get defined if we even call this function, 
+#     # but safer to do it this way, so we fall back to the default way this template gets provided.
+#     cond_num = 2*torch.ones((len_s,len_s), dtype=torch.long, device=xyz.device)
+#     # # get base pairing NA bases
+#     if use_repatom: # Using Frank's method with distance between representative atoms:
+#         repatom = torch.zeros(len_s, dtype=torch.long, device=xyz.device)
+#         repatom[seq==22] = 15 # DA - N1
+#         repatom[seq==23] = 14 # DC - N3
+#         repatom[seq==24] = 15 # DG - N1
+#         repatom[seq==25] = 14 # DT - N3
+#         repatom[seq==27] = 12 # A - N1
+#         repatom[seq==28] = 15 # C - N3
+#         repatom[seq==29] = 12 # G - N1
+#         repatom[seq==30] = 15 # U - N3
+
+#         if compute_aa_contacts:
+#             repatom[seq==0 ] = 4
+#             repatom[seq==1 ] = 8
+#             repatom[seq==2 ] = 7
+#             repatom[seq==3 ] = 6
+#             repatom[seq==4 ] = 5
+#             repatom[seq==5 ] = 6
+#             repatom[seq==6 ] = 6
+#             repatom[seq==7 ] = 1
+#             repatom[seq==8 ] = 8
+#             repatom[seq==9 ] = 7
+#             repatom[seq==10] = 7
+#             repatom[seq==11] = 8
+#             repatom[seq==12] = 7
+#             repatom[seq==13] = 10
+#             repatom[seq==14] = 6
+#             repatom[seq==15] = 5
+#             repatom[seq==16] = 5
+#             repatom[seq==17] = 11
+#             repatom[seq==18] = 11
+#             repatom[seq==19] = 4
+
+
+#         xyz_na_rep = torch.gather(xyz, 1, repatom[:,None,None].repeat(1,1,3)).squeeze(1)
+#         contact_dist = torch.cdist(xyz_na_rep, xyz_na_rep) < bp_cutoff
+
+#     else:
+
+#         donor_atoms    = torch.ones((len_s,1), dtype=torch.long, device=xyz.device)
+#         donor_atoms[seq==22] = torch.tensor([20])
+#         donor_atoms[seq==23] = torch.tensor([16])
+#         donor_atoms[seq==24] = torch.tensor([15])
+#         donor_atoms[seq==25] = torch.tensor([14])
+#         donor_atoms[seq==27] = torch.tensor([18])
+#         donor_atoms[seq==28] = torch.tensor([17])
+#         donor_atoms[seq==29] = torch.tensor([12])
+#         donor_atoms[seq==30] = torch.tensor([15])
+
+#         acceptor_atoms = torch.ones((len_s,1), dtype=torch.long, device=xyz.device)
+#         acceptor_atoms[seq==22] = torch.tensor([15])
+#         acceptor_atoms[seq==23] = torch.tensor([14])
+#         acceptor_atoms[seq==24] = torch.tensor([21])
+#         acceptor_atoms[seq==25] = torch.tensor([16])
+#         acceptor_atoms[seq==27] = torch.tensor([12])
+#         acceptor_atoms[seq==28] = torch.tensor([15])
+#         acceptor_atoms[seq==29] = torch.tensor([19])
+#         acceptor_atoms[seq==30] = torch.tensor([17])
+
+#         donor_xyz = torch.gather(xyz, 1, donor_atoms[:,:,None].repeat(1,1,3)).squeeze(1)
+#         acceptor_xyz = torch.gather(xyz, 1, acceptor_atoms[:,:,None].repeat(1,1,3)).squeeze(1)
+
+#         contact_dist = torch.cdist(donor_xyz, acceptor_xyz) < bp_cutoff
+
+
+#     cond = torch.logical_and(contact_dist, ~seq_neighbors)
+
+#     if use_base_angles: # Additional Andrew Filter: check for angle between normal vector of any two bases
+
+#         len_s_na = (~is_protein).sum()
+
+#         base_atom_xyz = torch.zeros((len_s_na,11,3), dtype=torch.float, device=xyz.device)
+#         mask_na = mask[~is_protein].unsqueeze(-1).repeat(1,1,3)
+
+#         base_xyz_masked = torch.where(mask_na, xyz[~is_protein], torch.nan)
+
+#         base_atom_xyz[is_dna[~is_protein],:,:] = base_xyz_masked[is_dna[~is_protein],11:22,:]
+#         base_atom_xyz[is_rna[~is_protein],:,:] = base_xyz_masked[is_rna[~is_protein],12:23,:]
+
+
+#         # Compute the centroid of the points
+#         centroid = torch.nanmean(base_atom_xyz, dim=1, keepdim=True)
+
+#         # Center the points
+#         centered_points = base_atom_xyz - centroid
+#         centered_nan_mask = ~torch.isnan(centered_points)
+#         centered_zero_nan = torch.where(centered_nan_mask, centered_points, 0.0)
+
+#         ###    COMPUTING THE BASE ANGLES    ###
+#         # Compute the covariance matrix
+#         covariance_matrix_unscaled = torch.matmul(centered_zero_nan.transpose(-1, -2), centered_zero_nan)
+#         denom = ( centered_nan_mask.sum(-2) - 1 ).unsqueeze(-1).repeat((1,1,3))
+#         covariance_matrix = covariance_matrix_unscaled / (denom + eps)
+
+#         # Compute the eigenvectors and eigenvalues
+#         eigenvalues, eigenvectors = torch.linalg.eig(covariance_matrix)
+
+#         # The normal to the plane is the eigenvector associated with the smallest eigenvalue
+#         base_normals = torch.real(eigenvectors)[torch.arange(eigenvectors.shape[0]), torch.argmin(torch.real(eigenvalues),dim=-1)]
+#         cosines = torch.clamp(torch.einsum('ni,mi->nm', base_normals, base_normals), -1, 1)
+#         angle_differences = torch.acos(cosines)
+#         bases_in_plane = (angle_differences <= base_angle_cutoff)
+
+#         cond[~is_protein,:][:,~is_protein] = torch.logical_and(cond[~is_protein,:][:,~is_protein], bases_in_plane)
+    
+
+
+#         ###    COMPUTING THE PLANE DISTANCE   ###
+#         r_ij_mat = centroid - centroid.transpose(0, 1)
+#         d_ij_on_norm_i = torch.norm(torch.sum(r_ij_mat * base_normals.unsqueeze(1), dim=-1).unsqueeze(-1) * base_normals.unsqueeze(1) , dim=-1)
+
+#         cond_01 = (d_ij_on_norm_i <= vert_diff_cutoff)
+#         # cond_01 = (d_ij_on_norm_i < 2.0)
+#         # cond_01 = (d_ij_on_norm_i < 1.)
+#         cond_01_sym = torch.logical_or(cond_01, cond_01.transpose(0,1))
+#         # cond_01_sym = torch.logical_and(cond_01, cond_01.transpose(0,1))
+#         # cond = torch.logical_and(~seq_neighbors,cond_01_sym)
+#         # cond_02 = ( torch.norm(r_ij_mat , dim=-1) < 10.0 )
+#         # cond_02_sym = torch.logical_or(cond_02, cond_02.transpose(0,1))
+#         # cond = torch.logical_and(cond,cond_02_sym)
+
+#         cond = torch.logical_and(cond,cond_01_sym)
+
+#         # if just_use_proj:
+
+            
+
+
+
+#             # cond = torch.logical_and(cond,bases_in_plane)
+#             # bases_in_plane = (angle_differences <= 2.0)
+#             # cond = torch.logical_and(cond[~is_protein,:][:,~is_protein],bases_in_plane)
+#             # cond = torch.logical_and(cond[~is_protein,:][:,~is_protein],bases_in_plane)
+            
+
+#             # cond[~is_protein,:][:,~is_protein] = torch.logical_and(cond[~is_protein,:][:,~is_protein], bases_in_plane)
+
+#             # cond
+
+
+
+#             # cond_vdist = torch.logical_and(cond_01_sym, cond_02_sym)
+#             # ~seq_neighbors
+
+#             # cond = torch.logical_and(cond,cond_vdist)
+#             # cond = torch.logical_and(cond,cond_01_sym)
+#             # cond = torch.logical_and(cond,cond_01_sym)
+#             # cond = torch.logical_or(cond, cond.t())
+#             # cond_num[:,:] = cond[:,:].long()
+#             # print('JUST USING PROJECTION METHOD')
+#             # return cond_num
+
+
+
+
+
+#     cond = torch.logical_or(cond, cond.t())
+    
+
+#     # Andrew filter: check for canonical base pairing.
+#     # probably bad for RNA, but helps to add in traning occasionally.
+#     if canonical_partner_filter:
+#         bp_partners_canon = torch.zeros((len_s, len_s), dtype=torch.bool, device=xyz.device)
+
+#         # Define the conditions as boolean masks
+#         cond_AA = (seq[:, None] == 22) | (seq[:, None] == 27)
+#         cond_TU = (seq[:, None] == 25) | (seq[:, None] == 30)
+#         cond_CC = (seq[:, None] == 23) | (seq[:, None] == 28)
+#         cond_GG = (seq[:, None] == 24) | (seq[:, None] == 29)
+
+#         # Update the matrix based on the conditions
+#         bp_partners_canon[cond_AA & cond_TU.T] = True
+#         bp_partners_canon[cond_TU & cond_AA.T] = True
+#         bp_partners_canon[cond_CC & cond_GG.T] = True
+#         bp_partners_canon[cond_GG & cond_CC.T] = True
+
+#         cond = torch.logical_and(cond, bp_partners_canon)
+
+#     # If we want to return this matrix as integer, rather than boolean.
+#     cond_num[:,:] = cond[:,:].long()
+
+#     return cond_num
+
+
+
+def get_pair_ss_partners(seq, xyz, mask, sel, len_s, vert_diff_cutoff=6.69730945, incl_protein=True, centroid_cutoff=6.20250967, bp_cutoff=3.20732419, eps=1e-6, seq_cutoff=2, base_angle_cutoff=0.06184608, canonical_partner_filter=False):
 
     seq_neighbors = torch.le(torch.abs(sel[:,None]-sel[None,:]), seq_cutoff)
     is_protein = torch.logical_and((0 <= seq),(seq <= 21))
     is_dna = torch.logical_and((22 <= seq),(seq <= 26))
     is_rna = torch.logical_and((27 <= seq),(seq <= 31))
 
-    # We return an integer tensor (to later be converted to onehot), where: 
-    # 0 means unpaired
-    # 1 means paired
-    # 2 means masked/unspecified
-
-    # Initialize as all unspecified, and fill in. Everything should technically get defined if we even call this function, 
-    # but safer to do it this way, so we fall back to the default way this template gets provided.
-    cond_num = 2*torch.ones((len_s,len_s), dtype=torch.long, device=xyz.device)
-    # # get base pairing NA bases
-    if use_repatom: # Using Frank's method with distance between representative atoms:
-        repatom = torch.zeros(len_s, dtype=torch.long, device=xyz.device)
-        repatom[seq==22] = 15 # DA - N1
-        repatom[seq==23] = 14 # DC - N3
-        repatom[seq==24] = 15 # DG - N1
-        repatom[seq==25] = 14 # DT - N3
-        repatom[seq==27] = 12 # A - N1
-        repatom[seq==28] = 15 # C - N3
-        repatom[seq==29] = 12 # G - N1
-        repatom[seq==30] = 15 # U - N3
-
-        if compute_aa_contacts:
-            repatom[seq==0 ] = 4
-            repatom[seq==1 ] = 8
-            repatom[seq==2 ] = 7
-            repatom[seq==3 ] = 6
-            repatom[seq==4 ] = 5
-            repatom[seq==5 ] = 6
-            repatom[seq==6 ] = 6
-            repatom[seq==7 ] = 1
-            repatom[seq==8 ] = 8
-            repatom[seq==9 ] = 7
-            repatom[seq==10] = 7
-            repatom[seq==11] = 8
-            repatom[seq==12] = 7
-            repatom[seq==13] = 10
-            repatom[seq==14] = 6
-            repatom[seq==15] = 5
-            repatom[seq==16] = 5
-            repatom[seq==17] = 11
-            repatom[seq==18] = 11
-            repatom[seq==19] = 4
-
-
-        xyz_na_rep = torch.gather(xyz, 1, repatom[:,None,None].repeat(1,1,3)).squeeze(1)
-        contact_dist = torch.cdist(xyz_na_rep, xyz_na_rep) < bp_cutoff
-
-    else:
-
-        donor_atoms    = torch.ones((len_s,1), dtype=torch.long, device=xyz.device)
-        donor_atoms[seq==22] = torch.tensor([20])
-        donor_atoms[seq==23] = torch.tensor([16])
-        donor_atoms[seq==24] = torch.tensor([15])
-        donor_atoms[seq==25] = torch.tensor([14])
-        donor_atoms[seq==27] = torch.tensor([18])
-        donor_atoms[seq==28] = torch.tensor([17])
-        donor_atoms[seq==29] = torch.tensor([12])
-        donor_atoms[seq==30] = torch.tensor([15])
-
-        acceptor_atoms = torch.ones((len_s,1), dtype=torch.long, device=xyz.device)
-        acceptor_atoms[seq==22] = torch.tensor([15])
-        acceptor_atoms[seq==23] = torch.tensor([14])
-        acceptor_atoms[seq==24] = torch.tensor([21])
-        acceptor_atoms[seq==25] = torch.tensor([16])
-        acceptor_atoms[seq==27] = torch.tensor([12])
-        acceptor_atoms[seq==28] = torch.tensor([15])
-        acceptor_atoms[seq==29] = torch.tensor([19])
-        acceptor_atoms[seq==30] = torch.tensor([17])
-
-        donor_xyz = torch.gather(xyz, 1, donor_atoms[:,:,None].repeat(1,1,3)).squeeze(1)
-        acceptor_xyz = torch.gather(xyz, 1, acceptor_atoms[:,:,None].repeat(1,1,3)).squeeze(1)
-
-        contact_dist = torch.cdist(donor_xyz, acceptor_xyz) < bp_cutoff
-
-
-    cond = torch.logical_and(contact_dist, ~seq_neighbors)
-
-    if use_base_angles: # Additional Andrew Filter: check for angle between normal vector of any two bases
-
-        len_s_na = (~is_protein).sum()
-
-        base_atom_xyz = torch.zeros((len_s_na,11,3), dtype=torch.float, device=xyz.device)
-        mask_na = mask[~is_protein].unsqueeze(-1).repeat(1,1,3)
-
-        base_xyz_masked = torch.where(mask_na, xyz[~is_protein], torch.nan)
-
-        base_atom_xyz[is_dna[~is_protein],:,:] = base_xyz_masked[is_dna[~is_protein],11:22,:] 
-        base_atom_xyz[is_rna[~is_protein],:,:] = base_xyz_masked[is_rna[~is_protein],12:23,:] 
-
-        # Compute the centroid of the points
-        centroid = torch.nanmean(base_atom_xyz, dim=1, keepdim=True)
-
-        # Center the points
-        centered_points = base_atom_xyz - centroid
-        centered_nan_mask = ~torch.isnan(centered_points)
-        centered_zero_nan = torch.where(centered_nan_mask, centered_points, 0.0)
-
-        # Compute the covariance matrix
-        covariance_matrix_unscaled = torch.matmul(centered_zero_nan.transpose(-1, -2), centered_zero_nan)
-        denom = ( centered_nan_mask.sum(-2) - 1 ).unsqueeze(-1).repeat((1,1,3))
-        covariance_matrix = covariance_matrix_unscaled / (denom + eps)
-
-        # Compute the eigenvectors and eigenvalues
-        eigenvalues, eigenvectors = torch.linalg.eig(covariance_matrix)
-
-        # The normal to the plane is the eigenvector associated with the smallest eigenvalue
-        base_normals = torch.real(eigenvectors)[torch.arange(eigenvectors.shape[0]), torch.argmin(torch.real(eigenvalues),dim=-1)]
-        cosines = torch.clamp(torch.einsum('ni,mi->nm', base_normals, base_normals), -1, 1)
-        angle_differences = torch.acos(cosines)
-        bases_in_plane = (angle_differences <= base_angle_cutoff)
-
-        cond[~is_protein,:][:,~is_protein] = torch.logical_and(cond[~is_protein,:][:,~is_protein], bases_in_plane)
-
-    cond = torch.logical_or(cond, cond.t())
+    len_s_na = (~is_protein).sum()
+    
     
 
-    # Andrew filter: check for canonical base pairing.
-    # probably bad for RNA, but helps to add in traning occasionally.
-    if canonical_partner_filter:
-        bp_partners_canon = torch.zeros((len_s, len_s), dtype=torch.bool, device=xyz.device)
+    # Using Frank's method with distance between representative atoms:
+    repatom = torch.zeros(len_s, dtype=torch.long, device=xyz.device)
+    repatom[seq==22] = 15 # DA - N1
+    repatom[seq==23] = 14 # DC - N3
+    repatom[seq==24] = 15 # DG - N1
+    repatom[seq==25] = 14 # DT - N3
+    repatom[seq==27] = 12 # A - N1
+    repatom[seq==28] = 15 # C - N3
+    repatom[seq==29] = 12 # G - N1
+    repatom[seq==30] = 15 # U - N3
 
-        # Define the conditions as boolean masks
-        cond_AA = (seq[:, None] == 22) | (seq[:, None] == 27)
-        cond_TU = (seq[:, None] == 25) | (seq[:, None] == 30)
-        cond_CC = (seq[:, None] == 23) | (seq[:, None] == 28)
-        cond_GG = (seq[:, None] == 24) | (seq[:, None] == 29)
+    xyz_na_rep = torch.gather(xyz, 1, repatom[:,None,None].repeat(1,1,3)).squeeze(1)
+    contact_dist = torch.cdist(xyz_na_rep, xyz_na_rep) < bp_cutoff
+    cond = torch.logical_and(contact_dist, ~seq_neighbors)
 
-        # Update the matrix based on the conditions
-        bp_partners_canon[cond_AA & cond_TU.T] = True
-        bp_partners_canon[cond_TU & cond_AA.T] = True
-        bp_partners_canon[cond_CC & cond_GG.T] = True
-        bp_partners_canon[cond_GG & cond_CC.T] = True
+    
 
-        cond = torch.logical_and(cond, bp_partners_canon)
+    base_atom_xyz = torch.zeros((len_s_na,11,3), dtype=torch.float, device=xyz.device)
+    mask_na = mask[~is_protein].unsqueeze(-1).repeat(1,1,3)
 
-    # If we want to return this matrix as integer, rather than boolean.
-    cond_num[:,:] = cond[:,:].long()
+    base_xyz_masked = torch.where(mask_na, xyz[~is_protein], torch.nan)
 
-    return cond_num
+    base_atom_xyz[is_dna[~is_protein],:,:] = base_xyz_masked[is_dna[~is_protein],11:22,:]
+    base_atom_xyz[is_rna[~is_protein],:,:] = base_xyz_masked[is_rna[~is_protein],12:23,:]
+
+    # Compute the centroid of the points
+    centroid = torch.nanmean(base_atom_xyz, dim=1, keepdim=True)
+    
+    centroid_contact_dist = torch.cdist(centroid[:,0,:],centroid[:,0,:])
+
+    centroid_in_contact = (torch.cdist(centroid[:,0,:],centroid[:,0,:]) < centroid_cutoff)
+
+    cond[~is_protein,:][:,~is_protein] = torch.logical_and(cond[~is_protein,:][:,~is_protein], centroid_in_contact)
+
+
+    # Center the points
+    centered_points = base_atom_xyz - centroid
+    centered_nan_mask = ~torch.isnan(centered_points)
+    centered_zero_nan = torch.where(centered_nan_mask, centered_points, 0.0)
+
+    ###    COMPUTING THE BASE ANGLES    ###
+    # Compute the covariance matrix
+    covariance_matrix_unscaled = torch.matmul(centered_zero_nan.transpose(-1, -2), centered_zero_nan)
+    denom = ( centered_nan_mask.sum(-2) - 1 ).unsqueeze(-1).repeat((1,1,3))
+    covariance_matrix = covariance_matrix_unscaled / (denom + eps)
+
+    # Compute the eigenvectors and eigenvalues
+    eigenvalues, eigenvectors = torch.linalg.eig(covariance_matrix)
+
+    # The normal to the plane is the eigenvector associated with the smallest eigenvalue
+    base_normals = torch.real(eigenvectors)[torch.arange(eigenvectors.shape[0]), torch.argmin(torch.real(eigenvalues),dim=-1)]
+    cosines = torch.clamp(torch.einsum('ni,mi->nm', base_normals, base_normals), -1, 1)
+    angle_differences = torch.acos(torch.abs(cosines))
+    bases_in_plane = (angle_differences <= base_angle_cutoff)
+
+    # Don't use base-angle logic for protein contacts:
+    cond[~is_protein,:][:,~is_protein] = torch.logical_and(cond[~is_protein,:][:,~is_protein], bases_in_plane)
+
+    ###    COMPUTING THE PLANE DISTANCE   ###
+    r_ij_mat = centroid - centroid.transpose(0, 1)
+    d_ij_on_norm_i = torch.norm(torch.sum(r_ij_mat * base_normals.unsqueeze(1), dim=-1).unsqueeze(-1) * base_normals.unsqueeze(1) , dim=-1)
+
+    base_close_vert_dist = (d_ij_on_norm_i <= vert_diff_cutoff)
+    cond[~is_protein,:][:,~is_protein] = torch.logical_and(cond[~is_protein,:][:,~is_protein], base_close_vert_dist)
+    
+    cond = torch.logical_or(cond, cond.t())
+    
+    return cond.long()
 
 
 

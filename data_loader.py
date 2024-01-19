@@ -29,7 +29,7 @@ import rf2aa.chemical
 import guide_posts as gp
 from rf2aa.chemical import INIT_CRDS, INIT_NA_CRDS, NAATOKENS, MASKINDEX, UNKINDEX, \
     NTOTAL, NBTYPES, CHAIN_GAP, num2aa, METAL_RES_NAMES, aa2num, atomnum2atomtype
-from pdb import set_trace
+
 import dataclasses
 
 import matplotlib.pyplot as plt 
@@ -208,6 +208,9 @@ def MSAFeaturize(msa, ins, params, eps=1e-6, nmer=1, L_s=[]):
         - insertion info (1)
         - N-term or C-term? (2)
     '''
+    print('IF THIS FUNCTION IS BEING CALLED ON POLYMER TRAINING')
+    print('NEED TO CHANGE')
+    print('THIS IS HARD-CODED FOR ONLY AMINO ACIDS!!!!')
     N, L = msa.shape
     
     term_info = torch.zeros((L,2), device=msa.device).float()
@@ -2568,40 +2571,70 @@ class DistilledDataset(data.Dataset):
                 is_masked_seq[indep.is_sm] = False
 
 
-        
+            
+
+
+
+            # else:
             # Eye frames logic 
-            # if self.preprocess_param['eye_frames']:
             if self.preprocess_param['eye_frames'] or self.preprocess_param['randomize_frames']:
-                # frame_is_revealed_A = (np.random.rand() <= self.preprocess_param['p_reveal_frames']) # eye frames with certain probability 
-                frame_is_revealed_A = (np.random.rand() < self.preprocess_param['p_reveal_frames']) # eye frames with certain probability 
-                frame_is_revealed_B = (t <= self.preprocess_param['supply_frames_under_t'])          # eye frames if t too high
-                EYE_FRAMES = True 
-                # REVEAL_FRAMES = False
+                        
+                if self.preprocess_param['use_exp_prob_supply_frames']:
+                        """
+                        New system, combines benefits of random frame reveal with denoising schedule.
+                        Sample from time-dependent probablility of revealing/scoring frame info.
+                        """
+                        P_t_supply_frames = np.exp(
+                                -self.preprocess_param['exp_scale_supply_frames']*(t - self.preprocess_param['supply_frames_under_t'])
+                                )
 
-                # if both conditions met, reveal the frame (i.e., don't EYE it)
-                if (frame_is_revealed_A and frame_is_revealed_B): 
-                    EYE_FRAMES = False
-                    # REVEAL_FRAMES = True
+                        frame_is_revealed = (np.random.rand() < P_t_supply_frames)
+                        if frame_is_revealed:
+                            EYE_FRAMES = False
+                            SCORE_FRAMES = True
+                        else:
+                            EYE_FRAMES = True
+                            SCORE_FRAMES = False
 
-                ic(frame_is_revealed_A, frame_is_revealed_B, EYE_FRAMES)
-                
+                else:
+                    # frame_is_revealed_A = (np.random.rand() <= self.preprocess_param['p_reveal_frames']) # eye frames with certain probability 
+                    frame_is_revealed_A = (np.random.rand() < self.preprocess_param['p_reveal_frames']) # eye frames with certain probability 
+                    frame_is_revealed_B = (t <= self.preprocess_param['supply_frames_under_t'])          # eye frames if t too high
 
-            # Score frames logic 
-            # frame_is_scored_A = np.random.rand() <= self.preprocess_param['p_score_frames']
-            frame_is_scored_A = np.random.rand() < self.preprocess_param['p_score_frames']
-            frame_is_scored_B = t <= self.preprocess_param['score_frames_under_t']
-            ic(frame_is_scored_A, frame_is_scored_B)
-            if (frame_is_scored_A and frame_is_scored_B): 
+                    # if both conditions met, reveal the frame (i.e., don't EYE it)
+                    if (frame_is_revealed_A and frame_is_revealed_B): 
+                        EYE_FRAMES = False
+                        SCORE_FRAMES = True
+
+                    else:
+                        EYE_FRAMES = True 
+                        SCORE_FRAMES = False
+                        # REVEAL_FRAMES = True
+
+                    ic(frame_is_revealed_A, frame_is_revealed_B, EYE_FRAMES)
+
+            else:
+                EYE_FRAMES = False
                 SCORE_FRAMES = True
-            else: 
-                SCORE_FRAMES = False
 
+                    
 
+                # # Score frames logic 
+                # # frame_is_scored_A = np.random.rand() <= self.preprocess_param['p_score_frames']
+                # # IF using new exp prob sample, just score whenever frames are revealed.
+                # frame_is_scored_A = np.random.rand() < self.preprocess_param['p_score_frames']
+                # frame_is_scored_B = t <= self.preprocess_param['score_frames_under_t']
+                # ic(frame_is_scored_A, frame_is_scored_B)
+                # if (frame_is_scored_A and frame_is_scored_B): 
+                #     SCORE_FRAMES = True
+                # else: 
+                #     SCORE_FRAMES = False
 
 
             # Compute all strictly dependent model inputs from the independent inputs.
             rfi_tp1_t = []
-            score_frames = True # Default behavior, but can possibly switch to False based on next code block
+            # score_frames = True # Default behavior, but can possibly switch to False based on next code block
+            score_frames = SCORE_FRAMES # Default behavior, but can possibly switch to False based on next code block
             for indep_diffused, t in zip(indep_diffused_tp1_t, t_list):
 
 
@@ -2612,6 +2645,8 @@ class DistilledDataset(data.Dataset):
                 if EYE_FRAMES:
                     assert not self.preprocess_param['randomize_frames']
                     indep_diffused.xyz = aa_model.eye_frames2(indep_diffused.xyz)
+
+
 
 
                 polymer_type_masks = self.preprocess_param['mask_by_polymer_type'] # bool
@@ -2676,42 +2711,16 @@ class DistilledDataset(data.Dataset):
 
                 if use_ss_condit:
                     try:
-                        # ss_matrix = get_pair_ss_partners(indep.seq, 
-                        #                                  indep.xyz, 
-                        #                                  indep.maskstack[0,:,:23], 
-                        #                                  torch.arange(relevant_Ls), 
-                        #                                  relevant_Ls,
-                        #                                  bp_cutoff=4.6,
-                        #                                  use_base_angles=True, 
-                        #                                  base_angle_cutoff=1.5708,
-                        #                                  compute_aa_contacts=True, 
-                        #                                  use_repatom=True,
-                        #                                  canonical_partner_filter=use_canonical_bp_filter_condit,
-                        #                                  )
-                        
+           
                         # ss_matrix = get_pair_ss_partners(indep.seq, 
                         #              indep.xyz, 
                         #              indep.maskstack[0,:,:23], 
                         #              torch.arange(relevant_Ls), 
                         #              relevant_Ls,
-                        #              bp_cutoff=3.7,
-                        #              use_base_angles=True, 
-                        #              base_angle_cutoff=0.52,
-                        #              compute_aa_contacts=True, 
-                        #              use_repatom=False,
-                        #              canonical_partner_filter=use_canonical_bp_filter_condit,
-                        #              )
-
-                        # ss_matrix = get_pair_ss_partners(indep.seq, 
-                        #              indep.xyz, 
-                        #              indep.maskstack[0,:,:23], 
-                        #              torch.arange(relevant_Ls), 
-                        #              relevant_Ls,
-                        #              bp_cutoff=3.7,
-                        #              use_base_angles=True, 
-                        #              base_angle_cutoff=0.52,
-                        #              compute_aa_contacts=True, 
-                        #              use_repatom=True,
+                        #              bp_cutoff=3.20732419,
+                        #              centroid_cutoff=6.20250967,
+                        #              base_angle_cutoff=0.06184608,
+                        #              vert_diff_cutoff=6.69730945,
                         #              canonical_partner_filter=use_canonical_bp_filter_condit,
                         #              )
 
@@ -2720,13 +2729,23 @@ class DistilledDataset(data.Dataset):
                                      indep.maskstack[0,:,:23], 
                                      torch.arange(relevant_Ls), 
                                      relevant_Ls,
-                                     bp_cutoff=3.5,
-                                     use_base_angles=True, 
-                                     base_angle_cutoff=0.52,
-                                     compute_aa_contacts=True, 
-                                     use_repatom=False,
                                      canonical_partner_filter=use_canonical_bp_filter_condit,
                                      )
+
+                        # ss_matrix = get_pair_ss_partners(indep.seq, 
+                        #              indep.xyz, 
+                        #              indep.maskstack[0,:,:23], 
+                        #              torch.arange(relevant_Ls), 
+                        #              relevant_Ls,
+                        #              bp_cutoff=3.5,
+                        #              use_base_angles=True, 
+                        #              base_angle_cutoff=0.52,
+                        #              compute_aa_contacts=True, 
+                        #              use_repatom=False,
+                        #              canonical_partner_filter=use_canonical_bp_filter_condit,
+                        #              )
+
+
                         # ss_matrix = get_pair_ss_partners(indep.seq, indep.xyz, indep.maskstack[0,:,:23], torch.arange(relevant_Ls), relevant_Ls,bp_cutoff=3.7,use_base_angles=True, base_angle_cutoff=0.52,compute_aa_contacts=True, use_repatom=False,canonical_partner_filter=use_canonical_bp_filter_condit,)
                         
                         # # rand_choice_full_ss = (np.random.rand() < 0.5)
@@ -2736,13 +2755,20 @@ class DistilledDataset(data.Dataset):
 
                         if rand_choice_partial_ss:
 
-                            
+                            # set_trace()
+                            # (_, random_mask), _ = mask_generator.get_diffusion_mask_chunked(indep, 
+                            #                                                                 atom_mask, 
+                            #                                                                 self.params['MASK_MIN_PROPORTION'], 
+                            #                                                                 self.params['MASK_MAX_PROPORTION'], 
+                            #                                                                 self.params['MASK_BROKEN_PROPORTION'], 
+                            #                                                                 max_motif_chunks=6)
+
                             (_, random_mask), _ = mask_generator.get_diffusion_mask_chunked(indep, 
                                                                                             atom_mask, 
-                                                                                            self.params['MASK_MIN_PROPORTION'], 
-                                                                                            self.params['MASK_MAX_PROPORTION'], 
-                                                                                            self.params['MASK_BROKEN_PROPORTION'], 
-                                                                                            max_motif_chunks=6)
+                                                                                            0.1, 
+                                                                                            0.4, 
+                                                                                            0.3, 
+                                                                                            max_motif_chunks=3)
 
                             # (hide_ss_mat, _), _ = mask_generator.get_diffusion_mask_chunked(indep, atom_mask, self.params['MASK_MIN_PROPORTION'], self.params['MASK_MAX_PROPORTION'], self.params['MASK_BROKEN_PROPORTION'], max_motif_chunks=6)
                             # mask_2d = 2*hide_ss_mat[0].long()
@@ -2753,7 +2779,7 @@ class DistilledDataset(data.Dataset):
                             
 
 
-                        
+                            
                     except:
 
                         print('ERROR!!!!')
@@ -2761,9 +2787,12 @@ class DistilledDataset(data.Dataset):
                         ss_matrix = (2*torch.ones(rfi_tp1_t[0].t2d.shape[2:4])).long()
 
 
-                    # """
-                    # UNCOMMENT WHEN WE WANT PNG OF SS DURING TRAINING!
-                    # """
+
+
+
+                    # # """
+                    # # UNCOMMENT WHEN WE WANT PNG OF SS DURING TRAINING!
+                    # # """
                     # if chosen_dataset in ['eterna']:
 
                     #     pdb_ids = sel_item['PRED_ID']
@@ -2777,10 +2806,24 @@ class DistilledDataset(data.Dataset):
                     #     ax[0].set_title('Precomputed SS matrix')
 
                     #     ax[1].imshow((1*ss_matrix).cpu().numpy(),vmin=0,vmax=2)
-                    #     ax[1].set_title('Frank SS matrix')
+                    #     ax[1].set_title('On-the-fly approx. SS matrix')
                     #     # plt.colorbar()
                     #     plt.savefig(png_filename)
                     #     plt.close(fig)
+
+
+                    #     # out_dir_indep_ss_inputs = '/home/afavor/projects/fit_ss_approx_params/indep_inputs/'
+                    #     # ss_approx_inputs = {
+                    #     #     'indep_seq':indep.seq, 
+                    #     #     'indep_xyz':indep.xyz,
+                    #     #     'indep_maskstack':indep.maskstack, 
+                    #     #     'indep_arange_relevant_Ls':torch.arange(relevant_Ls), 
+                    #     # }
+                    #     # # 'indep_maskstack':indep.maskstack[0,:,:23], 
+                        
+                    #     # filenamebase_from_dbn = dbns_path.split('/')[-1].split('.dbn')[0]
+                    #     # full_path_indep_ss_inputs = os.path.join(out_dir_indep_ss_inputs, filenamebase_from_dbn+'.pth')
+                    #     # torch.save(ss_approx_inputs, full_path_indep_ss_inputs)
 
                     # # elif chosen_dataset in ['rna','tf_distil','na_compl']:
                     # else:
@@ -2797,11 +2840,19 @@ class DistilledDataset(data.Dataset):
                     #     plt.savefig(png_filename)
                     #     plt.close(fig)
 
+
                 else:
                     ss_matrix = (2*torch.ones(rfi_tp1_t[0].t2d.shape[2:4])).long()
 
+
                 ss_templ_onehot = F.one_hot(ss_matrix, num_classes=3)
                 ss_templ_onehot = ss_templ_onehot.reshape(1, 1, *ss_templ_onehot.shape).repeat(1,3,1,1,1)
+
+
+                masks_1d['ss_matrix_mask'] = torch.eq(ss_matrix,1)
+                # ic(masks_1d['ss_matrix_mask'])
+                # ic(masks_1d['ss_matrix_mask'].sum())
+
 
                 rfi_tp1_t[0].t2d = torch.cat((rfi_tp1_t[0].t2d, ss_templ_onehot), dim=-1)
                 rfi_tp1_t[1].t2d = torch.cat((rfi_tp1_t[1].t2d, ss_templ_onehot), dim=-1)

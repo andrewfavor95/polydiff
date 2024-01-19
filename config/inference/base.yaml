@@ -66,7 +66,8 @@ inference:
   contig_as_guidepost: False
   remove_guideposts_from_output: True
   mask_seq_by_polymer: False
-  t2d_pic_filename: null
+  t2d_pic_filename: null # DELETE NOT USED
+  save_motif_t2d_png: False
   num_atoms_modeled: 14
   num_atoms_saved: 23
   save_rna_oneletter: False
@@ -78,6 +79,7 @@ contigmap:
   inpaint_seq: null
   length: null
   polymer_chains: null
+  use_old_receptor_system: True
 
 
 model:
@@ -186,6 +188,7 @@ contig_settings:
   idx_rf: null
   inpaint_seq_tensor: null
   inpaint_str_tensor: null
+
 
 preprocess:
   sidechain_input: False

@@ -72,7 +72,7 @@ import torch.multiprocessing as mp
 from torch.nn.parallel import DistributedDataParallel as DDP
 torch.backends.cudnn.benchmark = False
 torch.backends.cudnn.deterministic = True
-
+# import matplotlib.pyplot as plt
 #torch.autograd.set_detect_anomaly(True)
 
 global N_EXAMPLE_PER_EPOCH
@@ -367,7 +367,7 @@ class Trainer():
                   w_nonmotif_fape=0.0, norm_fape=10.0, clamp_fape=10.0,
                   backprop_non_displacement_on_given=False, masks_1d={},
                   atom_frames=None, w_ligand_intra_fape=1.0, w_prot_lig_inter_fape=1.0, score_frames=False,
-                  fape_scale_vec=None, scale_prot_fape=1.0, scale_dna_fape=1.0, scale_rna_fape=1.0,
+                  fape_scale_vec=None, scale_prot_fape=1.0, scale_dna_fape=1.0, scale_rna_fape=1.0, w_poly_cce=0.0, w_ss_dist=0.0,
                   ):
     # def calc_loss(self, logit_s, label_s,
     #           logit_aa_s, label_aa_s, mask_aa_s, logit_exp,
@@ -405,6 +405,8 @@ class Trainer():
         is_sm_motif     = is_motif & is_atom    # (L,), True if it's a sm motif
         is_prot_motif   = is_motif & ~is_atom   # (L,), True if it's a protein motif
 
+        ss_mask_2d = masks_1d['ss_matrix_mask'].to(device=pred_in.device)
+
         loss_s = list()
         tot_loss = 0.0
         
@@ -433,18 +435,35 @@ class Trainer():
             'nonmotif_fape'             : w_nonmotif_fape*disp_tscale,
             'ligand_intra_fape'         : w_ligand_intra_fape*disp_tscale,
             'prot_lig_inter_fape'       : w_prot_lig_inter_fape*disp_tscale,
+            'poly_cce'                  : w_poly_cce
+            # 'poly_cce'                  : w_poly_cce*aa_tscale,
         }
+
+
+        # loss_weights['ss_dist'] = w_ss_dist*c6d_tscale
+
+        for i in range(4):
+            loss_weights[f'c6d_{i}'] = w_dist*c6d_tscale
+            loss_weights[f'ss_dist_{i}'] = w_ss_dist*c6d_tscale
+
+
 
         if not score_frames:
             loss_weights['frame_sqL2'] = loss_weights['frame_sqL2']*0.0
+            # THESE OTHER LOSS TERMS RELATE TO FRAME ORIENTATION
+            loss_weights['c6d_1'] = loss_weights['c6d_1']*0.0
+            loss_weights['c6d_2'] = loss_weights['c6d_2']*0.0
+            loss_weights['c6d_3'] = loss_weights['c6d_3']*0.0
+
+            loss_weights['ss_dist_1'] = loss_weights['ss_dist_1']*0.0
+            loss_weights['ss_dist_2'] = loss_weights['ss_dist_2']*0.0
+            loss_weights['ss_dist_3'] = loss_weights['ss_dist_3']*0.0
+
 
         # loss_weights['frame_sqL2'] = loss_weights['frame_sqL2'] * score_frames # only apply frame_sqL2 loss if score_frames is True
         ic(loss_weights['frame_sqL2'])
 
 
-
-        for i in range(4):
-            loss_weights[f'c6d_{i}'] = w_dist*c6d_tscale
 
         # Displacement prediction loss between xyz prev and xyz_true
         if unclamp:
@@ -483,27 +502,63 @@ class Trainer():
         frame_mask_BB = frame_mask.clone()
         frame_mask_BB[...,1:] =False
         
-        # c6d loss
+        # c6d loss AND ss_dist_loss
         for i in range(4):
             # schedule factor for c6d 
             # syntax is if it's not in the scheduling dict, loss has full weight (i.e., 1x)
 
             loss = self.loss_fn(logit_s[i], label_s[...,i]) # (B, L, L)
+            ss_loss = loss.clone()
 
             if i == 0: 
                 mask_2d_ = mask_2d
+                # For ss-specific:
+                ss_mask_2d_ = ss_mask_2d
+                # ic(ss_mask_2d_)
+                # ic(ss_mask_2d_.sum())
+
+                # png_filename = f'/home/afavor/git/RFD_AF/3template_na/pngs_training/rand_item_ss_mask_{np.random.randint(1000)}.png'
+                # fig, ax = plt.subplots(nrows=1,ncols=1,figsize=(15,15))
+                # ax.imshow(1*ss_mask_2d_.cpu().numpy(),vmin=0,vmax=2)
+                # ax.set_title('new SS matrix')
+                # # plt.colorbar()
+                # plt.savefig(png_filename)
+                # plt.close(fig)
+
             else:
                 # apply anglegram loss only when both residues have valid BB frames (i.e. not metal ions, and not examples with unresolved atoms in frames)
                 _, bb_frame_good = mask_unresolved_frames(frames_BB, frame_mask_BB, mask_crds) # (1, L, nframes)
                 bb_frame_good = bb_frame_good[...,0] # (1,L)
                 loss_mask_2d = bb_frame_good & bb_frame_good[...,None]
+
                 mask_2d_ = mask_2d & loss_mask_2d
+                # For ss-specific:
+                ss_mask_2d_ = ss_mask_2d & loss_mask_2d
+
 
             loss = (mask_2d_*loss).sum() / (mask_2d_.sum() + eps)
             loss_s.append(loss[None].detach())
 
+            ss_loss = (ss_mask_2d_*ss_loss).sum() / (ss_mask_2d_.sum() + eps)
+            loss_s.append(ss_loss[None].detach())
+
+
+            
+
             loss_dict[f'c6d_{i}'] = loss.clone()
+            loss_dict[f'ss_dist_{i}'] = ss_loss.clone()
+
+
+        # ss_dist loss:
+        # set_trace()
+
+        # ss_mask_2d = masks_1d['ss_matrix_mask']
+        # masks_1d['ss_matrix_mask']
+
+
+
         
+        # Sequence loss
         if not self.seq_diffuser is None:
             raise Exception('not implemented')
             if self.seq_diffuser.continuous_seq():
@@ -538,8 +593,47 @@ class Trainer():
             loss = loss.sum() / (mask_aa_s.sum() + 1e-8)
 
         loss_s.append(loss[None].detach())
-
         loss_dict['aa_cce'] = loss.clone()
+
+
+        # # Poly class loss
+
+        # # Define poly_ind_ranges as tensor indices
+        # poly_ind_ranges = torch.tensor([22, 27, 32, 80])
+        # # Flatten label_aa_s
+        # label_aa_s_flat = label_aa_s.flatten()
+        # # Calculate the indices for label_poly_s_flat
+        # label_poly_s_flat = torch.sum(label_aa_s_flat[..., None] >= poly_ind_ranges, dim=-1) - 1
+        # # Get the maximum values for logit_aa_s in the specified ranges
+        # logit_poly_s = torch.stack([torch.max(logit_aa_s[:, :poly_ind_ranges[0], :], dim=1)[0]] + 
+        #                            [torch.max(logit_aa_s[:, poly_ind_ranges[i-1]:poly_ind_ranges[i], :], dim=1)[0] 
+        #                             for i in range(1, len(poly_ind_ranges))])
+        # # Reshape the tensors to match original dimensions
+        # logit_poly_s = logit_poly_s.unsqueeze(0).transpose(0, 1)
+        # label_poly_s = label_poly_s_flat.reshape(1, 1, label_aa_s.shape[-1])
+
+        poly_ind_ranges = [slice(0, 22), slice(22, 27), slice(27, 32), slice(32, 80)]
+
+        label_aa_s_flat = label_aa_s.flatten()
+        label_poly_s_flat = torch.empty_like(label_aa_s_flat)
+
+        logit_poly_s_list = []
+        for i,ind_range in enumerate(poly_ind_ranges):
+            logit_poly_s_list.append(torch.max(logit_aa_s[:, ind_range, :],1)[0])
+            mask = (label_aa_s_flat >= ind_range.start) & (label_aa_s_flat < ind_range.stop)
+            label_poly_s_flat[mask] = i
+
+        logit_poly_s = torch.stack(logit_poly_s_list).unsqueeze(0)[:,:,0,:]
+        label_poly_s = label_poly_s_flat.reshape(1, 1, label_aa_s.shape[-1])
+
+
+        loss = self.loss_fn(logit_poly_s, label_poly_s.reshape(B, -1))
+        loss = loss * mask_aa_s.reshape(B, -1)
+        loss = loss.sum() / (mask_aa_s.sum() + 1e-8)
+        loss_s.append(loss[None].detach())
+        loss_dict['poly_cce'] = loss.clone()
+
+
 
         ######################################
         #### squared L2 loss on rotations ####
@@ -728,7 +822,7 @@ class Trainer():
         loss_weights['motif_rmsd']      = 0.0
         loss_weights['non_motif_rmsd']  = 0.0
         loss_weights['ligand_rmsd']     = 0.0
-        
+
         tot_loss = rf2aa.util.resolve_loss_summation(tot_loss, 
                                                      loss_dict, 
                                                      loss_weights, 
@@ -1285,6 +1379,15 @@ class Trainer():
             else:
                 # fape_scale_vec = torch.ones_like(is_diffused).float()
                 fape_scale_vec = None
+
+
+            # Make this for poly class loss
+            # poly_class = torch.ones_like(is_diffused).int()
+            # poly_class[indep.is_protein] = 0
+            # poly_class[indep.is_dna] = 1
+            # poly_class[indep.is_rna] = 1
+            # poly_class = torch.nn.functional.one_hot(poly_class, num_classes=3)
+            # poly_class = poly_class.to(gpu)
 
             
 

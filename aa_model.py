@@ -591,8 +591,10 @@ class Model:
         # o.bond_feats[n_prot:, n_prot:] = indep.bond_feats[n_prot_ref:, n_prot_ref:]
 
         hal_by_ref_d = dict(zip(contig_map.ref_idx0, contig_map.hal_idx0))
+
         def hal_by_ref(ref):
             return hal_by_ref_d[ref]
+
         hal_by_ref = np.vectorize(hal_by_ref, otypes=[float])
         o.chirals[...,:-1] = torch.tensor(hal_by_ref(o.chirals[...,:-1]))
 
@@ -606,8 +608,7 @@ class Model:
 
             o.idx[start_ind:stop_ind+1] += last_start
             last_start += 200
-
-
+        
         is_diffused_prot = ~torch.from_numpy(contig_map.inpaint_str)
         is_diffused_sm = torch.zeros(n_sm).bool()
         is_diffused = torch.cat((is_diffused_prot, is_diffused_sm))
@@ -618,6 +619,7 @@ class Model:
             pass # want to keep original xyz2 because it contains perfect motif  
         else:
             o.xyz2 = o.xyz.clone() # DJ - three template, dummy xyz for now
+
         return o, is_diffused
 
 
