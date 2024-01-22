@@ -89,6 +89,7 @@ class ContigMap():
 
 
         #get 0-indexed input/output (for trb file)
+
         self.ref_idx0,self.hal_idx0, self.ref_idx0_inpaint, self.hal_idx0_inpaint, self.ref_idx0_receptor, self.hal_idx0_receptor=self.get_idx0(use_old_way=True)
 
 
@@ -330,35 +331,30 @@ class ContigMap():
                 hal_idx0.append(idx)
                 ref_idx0.append(self.parsed_pdb['pdb_idx'].index(val))
 
-        if not use_old_way:
-            return ref_idx0, hal_idx0
+        ref_idx0_inpaint=[]
+        hal_idx0_inpaint=[]
+        for idx, val in enumerate(self.inpaint):
+            if val != ('_','_'):
+                hal_idx0_inpaint.append(idx)
+                ref_idx0_inpaint.append(self.parsed_pdb['pdb_idx'].index(val))
 
-        else:
+        ref_idx0_receptor=[]
+        hal_idx0_receptor=[]
+        for idx, val in enumerate(self.receptor):
+            if val != ('_','_'):
+                hal_idx0_receptor.append(idx)
+                ref_idx0_receptor.append(self.parsed_pdb['pdb_idx'].index(val))
 
-
-            ref_idx0_inpaint=[]
-            hal_idx0_inpaint=[]
-            for idx, val in enumerate(self.inpaint):
-                if val != ('_','_'):
-                    hal_idx0_inpaint.append(idx)
-                    ref_idx0_inpaint.append(self.parsed_pdb['pdb_idx'].index(val))
-
-            ref_idx0_receptor=[]
-            hal_idx0_receptor=[]
-            for idx, val in enumerate(self.receptor):
-                if val != ('_','_'):
-                    hal_idx0_receptor.append(idx)
-                    ref_idx0_receptor.append(self.parsed_pdb['pdb_idx'].index(val))
-
-            return ref_idx0, hal_idx0, ref_idx0_inpaint, hal_idx0_inpaint, ref_idx0_receptor, hal_idx0_receptor
+        return ref_idx0, hal_idx0, ref_idx0_inpaint, hal_idx0_inpaint, ref_idx0_receptor, hal_idx0_receptor
 
     def get_mappings(self):
-        # set_trace()
+
         mappings = {}
-        mappings['con_ref_pdb_idx'] = [i for i in self.inpaint if i != ('_','_')]
-        mappings['con_hal_pdb_idx'] = [self.inpaint_hal[i] for i in range(len(self.inpaint_hal)) if self.inpaint[i] != ("_","_")]
-        mappings['con_ref_idx0'] = np.array(self.ref_idx0_inpaint)
-        mappings['con_hal_idx0'] = np.array(self.hal_idx0_inpaint)
+        mappings['con_ref_pdb_idx'] = [i for i in self.ref if i != ('_','_')]
+        mappings['con_hal_pdb_idx'] = [self.hal[i] for i in range(len(self.hal)) if self.ref[i] != ("_","_")]
+        mappings['con_ref_idx0'] = np.array(self.ref_idx0)
+        mappings['con_hal_idx0'] = np.array(self.hal_idx0)
+
         if self.inpaint != self.ref:
             mappings['complex_con_ref_pdb_idx'] = [i for i in self.ref if i != ("_","_")]
             mappings['complex_con_hal_pdb_idx'] = [self.hal[i] for i in range(len(self.hal)) if self.ref[i] != ("_","_")]
@@ -368,11 +364,13 @@ class ContigMap():
             mappings['complex_con_hal_idx0'] = np.array(self.hal_idx0)
             mappings['receptor_con_ref_idx0'] = np.array(self.ref_idx0_receptor)
             mappings['receptor_con_hal_idx0'] = np.array(self.hal_idx0_receptor)
+
         mappings['inpaint_str'] = self.inpaint_str
         mappings['inpaint_seq'] = self.inpaint_seq
         mappings['sampled_mask'] = self.sampled_mask
         mappings['mask_1d'] = self.mask_1d
         mappings['atomize_indices2atomname'] = self.atomize_indices2atomname
+
         return mappings
 
 

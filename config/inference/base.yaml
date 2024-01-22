@@ -71,7 +71,9 @@ inference:
   num_atoms_modeled: 14
   num_atoms_saved: 23
   save_rna_oneletter: False
-  set_diffused_resi_to_A: True
+  set_diffused_prot_to: 'ALA'
+  set_diffused_dna_to: null
+  set_diffused_rna_to: null
   # ema: True
 
 contigmap:

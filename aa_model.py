@@ -978,19 +978,18 @@ class Model:
 
         # We probably want to include more atoms if diffusing a nucleic acid chain
         if polymer_type_masks:
-            # xyz[0, is_diffused_na*~indep.is_sm, num_backbone_atoms_nucleic:] = torch.nan
             xyz[0, is_diffused_protein*~indep.is_sm, num_backbone_atoms_protein:] = torch.nan
-            xyz[0, is_diffused_rna*~indep.is_sm, num_backbone_atoms_nucleic+1:] = torch.nan
+            xyz[0, is_diffused_rna*~indep.is_sm, num_backbone_atoms_nucleic+1:] = torch.nan # add one atom for hydroxyl
             xyz[0, is_diffused_dna*~indep.is_sm, num_backbone_atoms_nucleic:] = torch.nan
         else:
             xyz[0, is_diffused*~indep.is_sm,3:] = torch.nan
 
-        # ipdb.set_trace()
-        # xyz[0, indep.is_sm,14:] = 0
-        # xyz[0, is_motif, 14:] = 0
+
         xyz[0, indep.is_sm, NHEAVYPROT:] = 0
         xyz[0, is_protein_motif, NHEAVYPROT:] = 0
-        xyz[0, is_na_motif, NHEAVYNUC:] = 0
+        # xyz[0, is_na_motif, NHEAVYNUC:] = 0
+        xyz[0, is_dna_motif, NHEAVYNUC-1:] = 0 # subtract one atom for missing hydroxyl
+        xyz[0, is_rna_motif, NHEAVYNUC:] = 0
         dist_matrix = rf2aa.data_loader.get_bond_distances(indep.bond_feats)
 
         # minor tweaks to rfi to match gp training
@@ -1099,7 +1098,9 @@ def write_traj(path, xyz_stack, seq, bond_feats, natoms=23, **kwargs):
         bond_feats = bond_feats[None]
     with open(path, 'w') as fh:
         for i, xyz in enumerate(xyz23):
-            rf2aa.util.writepdb_file(fh, xyz, seq, bond_feats=bond_feats, modelnum=i, **kwargs)
+            rf2aa.util.writepdb_file(fh, xyz, seq, bond_feats=bond_feats, modelnum=i, natoms=natoms, **kwargs)
+            # rf2aa.util.writepdb_file(fh, xyz, seq, bond_feats=bond_feats, modelnum=i, **kwargs)
+
 
 def minifier(argument_map):
     argument_map['out_9'] = None

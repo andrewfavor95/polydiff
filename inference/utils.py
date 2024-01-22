@@ -770,6 +770,7 @@ class Denoise():
 
             include_motif_sidechains (bool): Provide sidechains of the fixed motif to the model
         """
+
         if origin_before_update:
             COM_ALL = xt[:,1,:].mean(0)
             xt = xt - COM_ALL
@@ -866,7 +867,7 @@ class Denoise():
             fullatom_next = fullatom_next + COM_ALL
             px0 = px0 + COM_ALL.to(px0.device)
             # print('Successful px0 origin before update')
-        # ipdb.set_trace()
+            
         # return fullatom_next.squeeze()[:,:14,:], seq_next, torsions_next, px0, next_rigid_tmplt
         return fullatom_next.squeeze()[:,:num_atoms_modeled,:], seq_next, torsions_next, px0, next_rigid_tmplt
     
@@ -2344,7 +2345,7 @@ def find_template_ranges(input_tensor, return_inds=False):
                 regions.append((start, i-1))
                 start = i
         regions.append((start, len(input_tensor)-1))
-
+    
     else:
         regions = []
         start = 0
@@ -2352,6 +2353,7 @@ def find_template_ranges(input_tensor, return_inds=False):
             if input_tensor[i] != input_tensor[i-1] + 1:
                 regions.append((int(input_tensor[start]), int(input_tensor[i-1])))
                 start = i
+        
         regions.append((int(input_tensor[start]), int(input_tensor[len(input_tensor)-1])))
 
     return regions
@@ -2462,6 +2464,7 @@ def get_repeat_t2d_mask(L, con_hal_idx0, contig_map, ij_is_visible, nrepeat, sup
     # initially empty
     chunk_ij_visible = torch.eye(nchunk_total)
     # fill in user-defined visibility
+    # set_trace()
     for S in ij_is_visible:
         for i in S:
             for j in S: 
@@ -2481,7 +2484,7 @@ def get_repeat_t2d_mask(L, con_hal_idx0, contig_map, ij_is_visible, nrepeat, sup
     # make 1D array designating which chunks are motif
     is_motif = torch.zeros(L)
     is_motif[con_hal_idx0_full] = 1 
-
+    # set_trace()
     # fill in 2d mask
     for i in range(len(chunk_range_inds_full)):
         for j in range(len(chunk_range_inds_full)):

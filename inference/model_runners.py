@@ -1109,6 +1109,7 @@ class NRBStyleSelfCond(Sampler):
 
         # AF : break regions into the start stop indices based on both template breaks and chain breaks
         # this just gets the breaks by mask regions between motifs
+
         mask_breaks = iu.get_breaks(con_hal_idx0)
         templ_range_inds = iu.find_template_ranges(con_hal_idx0, return_inds=False)
 
@@ -1123,10 +1124,19 @@ class NRBStyleSelfCond(Sampler):
 
         # now we have the complete con_hal_idx0 including templates that are separated by chain breaks!
         true_con_hal_idx0 = torch.tensor([ind for start,end in chunk_range_inds for ind in range(start,end+1)])
-
         # Update ij_visible:
         if self._conf.inference.ij_visible is None:
-            self._conf.inference.ij_visible = abet[:len(chunk_range_inds)]
+            # just enumerate chunks:
+            motif_count = 0
+            for contig_i in self.contig_map.contigs:
+                for subcontig_j in contig_i.split(' '):
+                    for subsubcontig_k in subcontig_j.split(','):
+                        if subsubcontig_k[0].isalpha():
+                            motif_count += 1
+
+            self._conf.inference.ij_visible = abet[:motif_count]
+            # self._conf.inference.ij_visible = abet[:len(chunk_range_inds)]
+            # self._conf.inference.ij_visible = abet[:len(motif_count)]
 
         return true_con_hal_idx0, full_complex_idx0
         
@@ -1148,6 +1158,7 @@ class NRBStyleSelfCond(Sampler):
         con_hal_idx0 = torch.from_numpy( self.contig_map.get_mappings()['con_hal_idx0'] )
 
 
+
         # Assume that SM input will always be motif!! 
         if indep.is_sm.any() and not refine:
             print('Detected small molecule in input - assuming it is a motif chunk.')
@@ -1162,6 +1173,9 @@ class NRBStyleSelfCond(Sampler):
         # ( this also conveniently locks all motifs in ij_visible if it has a null value )
         if torch.any(is_protein_motif):
             con_hal_idx0, full_complex_idx0 = self.get_full_chunk_idx0(indep, con_hal_idx0)
+
+            
+            # # self.index_map_dict
 
         if refine: 
             # we can rely on src_con_hal to tell us where in THIS hal the motif goes 
@@ -1186,12 +1200,9 @@ class NRBStyleSelfCond(Sampler):
         abet = [a for a in abet]
         abet2num = {a:i for i,a in enumerate(abet)} 
 
-        
         if self._conf.inference.motif_only_2d: 
             # # the entire protein is diffused
             # # trying to reconstruct motif from 2d only 
-
-            # set_trace()
 
             if not self._conf.model.symmetrize_repeats:
                 
@@ -1218,8 +1229,7 @@ class NRBStyleSelfCond(Sampler):
                 assert ij_visible is not None, '3 template + motif_only_2d requires description of motif pairwise visibility'
                 ij_visible = ij_visible.split('-') # e.g., [abc,de,df,...]
                 ij_visible_int = [tuple([abet2num[a] for a in s]) for s in ij_visible]
-                # mask_t2d, _ = iu.get_repeat_t2d_mask(L, con_hal_idx0, ij_visible_int, 1, supplied_full_contig=True)
-                # mask_t2d, _ = iu.get_repeat_t2d_mask(L, con_hal_idx0, ij_visible_int, 1, full_complex_idx0, self.contig_map, supplied_full_contig=True)
+
                 mask_t2d, _ = iu.get_repeat_t2d_mask(L, con_hal_idx0, self.contig_map, ij_visible_int, 1, supplied_full_contig=True)
 
             else:
@@ -1697,6 +1707,7 @@ class NRBStyleSelfCond(Sampler):
             if self.cur_rigid_tmplt is None: 
                 pass
 
+        
         if t > self._conf.inference.final_step:
             # x_t_1, seq_t_1, tors_t_1, px0, cur_rigid_tmplt = self.denoiser.get_next_pose(
             #     xt=rfi.xyz[0,:,:14].cpu(),
@@ -1750,6 +1761,7 @@ class NRBStyleSelfCond(Sampler):
             # )
             self.cur_rigid_tmplt = cur_rigid_tmplt
         else:
+            
             px0 = px0.cpu()
             px0[~self.is_diffused] = indep.xyz[~self.is_diffused]
             x_t_1 = torch.clone(px0)

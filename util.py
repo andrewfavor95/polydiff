@@ -655,6 +655,7 @@ def get_t2d(xyz_t, is_sm, atom_frames, mask_t_2d=None):
     t2d = rf2aa.kinematics.xyz_to_t2d(xyz_t_frames, mask_t_2d[None])
     # Strip batch dimension
     t2d = t2d[0]
+    
     return t2d, mask_t_2d
 
 def polymer_content_check(seq, polymer_focus='protein', polymer_frac_cutoff=0.2):
