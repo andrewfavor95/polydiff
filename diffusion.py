@@ -920,6 +920,9 @@ class Diffuser():
                     symmRs=None,
                     motif_only_2d=False,
                     is_na=None, 
+                    is_protein=None, 
+                    is_dna=None, 
+                    is_rna=None, 
                     num_frames_na=1, 
                     ):
         """
@@ -1077,7 +1080,10 @@ class Diffuser():
 
             # Add in sidechains from motif
             if include_motif_sidechains:
-                diffused_fa[:,diffusion_mask,:14,:] = xyz_true[None,diffusion_mask,:14]
+                # diffused_fa[:,diffusion_mask,:14,:] = xyz_true[None,diffusion_mask,:14]
+                diffused_fa[:,diffusion_mask*is_protein,:rf2aa.chemical.NHEAVYPROT,:] = xyz_true[None,diffusion_mask*is_protein,:rf2aa.chemical.NHEAVYPROT]
+                diffused_fa[:,diffusion_mask*is_dna,:rf2aa.chemical.NHEAVYDNA,:] = xyz_true[None,diffusion_mask*is_dna,:rf2aa.chemical.NHEAVYDNA]
+                diffused_fa[:,diffusion_mask*is_rna,:rf2aa.chemical.NHEAVYRNA,:] = xyz_true[None,diffusion_mask*is_rna,:rf2aa.chemical.NHEAVYRNA]
 
             if t_list is None: fa_stack = diffused_fa
             else:

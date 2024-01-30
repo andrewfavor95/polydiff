@@ -22,7 +22,7 @@ import util
 from icecream import ic
 import matplotlib.pyplot as plt
 import tqdm
-
+from pdb import set_trace
 
 def get_logged_examples(path):
     d = defaultdict(dict)
@@ -102,6 +102,7 @@ def reverse(sampler, xyz_true, seq_true, mask, final_steps=None, use_true=False,
     torch.tensor(xyz_true),
     seq_true,
     torch.tensor(mask))
+    set_trace()
     forward_traj = torch.cat([xyz_true[None], fa_stack[:,:,:14]])
     
     # x_init, seq_init, forward_traj, aa_masks = sampler.sample_init(return_forward_trajectory=True)

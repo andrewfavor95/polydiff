@@ -145,6 +145,7 @@ def get_args(in_args=None):
             help='distance to find protein-na interaction residues. Residues with atoms closer than this will be considered binding and the motif of these binding residues will be preserved. ')
     data_group.add_argument('-backbone_hotspots', action='store_true', default=False, help='Training argument - add hotspot feature for non-base-specific contacts to dna phosphate backbone')
     data_group.add_argument('-base_specific_hotspots', action='store_true', default=False, help='Training argument - add hotspot feature for base-specific contacts to dna')
+    data_group.add_argument('-polymer_hotspots', action='store_true', default=False, help='Training argument - add hotspot feature for contacts between: prot-prot, prot-dna, prot-rna, dna-dna, rna-rna, dna-rna')
     data_group.add_argument('-use_nucleic_ss', action='store_true', default=False, help='Training argument - add basepair secondary structure to 2d templates')
     data_group.add_argument('-p_add_bp_partners',type=float, default=0.0, help='When generating masks, do we want to find basepair partners and apply same behavior between them?')
     data_group.add_argument('-p_canonical_bp_filter',type=float, default=0.0, help='When generating sec struct estimation, how often do we want to use canonical basepair filter?')
@@ -243,6 +244,8 @@ def get_args(in_args=None):
             help='fraction of time that we leave frames to be noised/denoised normally, rather than randomizing or setting to identity')
     diff_group.add_argument('-p_show_ss', default=0.5, type=float, 
             help='fraction of time that we leave show the secondary structure (base pairing).')
+    diff_group.add_argument('-p_show_poly_hotspots', default=0.2, type=float, 
+            help='fraction of time that we compute and add polymer hotspot features to t2d.')
 
 
 
@@ -587,6 +590,7 @@ def get_args(in_args=None):
                   'threetemplate',
                   'p_show_ss',
                   'prop_ss_mask',
+                  'p_show_poly_hotspots',
                   ]:
         preprocess_param[param] = getattr(args, param)
     if not preprocess_param['sequence_decode']:

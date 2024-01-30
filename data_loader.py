@@ -53,7 +53,7 @@ import error
 from pdb import set_trace
 # import matplotlib.pyplot as plt
 
-from hotspots import make_hotspot_id, make_hotspot_vector, default_hotspot_vector, make_hotspot_id_distil
+from hotspots import make_hotspot_id, make_hotspot_vector, default_hotspot_vector, make_hotspot_id_distil, make_poly_hotspots_vec
 
 USE_DEFAULT = '__USE_DEFAULT__'
 
@@ -160,6 +160,8 @@ def set_data_loader_params(args):
         "P_ADD_BP_PARTNERS": args.p_add_bp_partners,
         "P_CANONICAL_BP_FILTER": args.p_canonical_bp_filter,
         "PROP_SS_MASK": args.prop_ss_mask,
+        "POLYMER_HOTSPOTS": args.polymer_hotspots,
+        "P_SHOW_POLY_HOTSPOTS": args.p_show_poly_hotspots,
     }
     for param in PARAMS:
         if hasattr(args, param.lower()):
@@ -2711,18 +2713,6 @@ class DistilledDataset(data.Dataset):
 
                 if use_ss_condit:
                     try:
-           
-                        # ss_matrix = get_pair_ss_partners(indep.seq, 
-                        #              indep.xyz, 
-                        #              indep.maskstack[0,:,:23], 
-                        #              torch.arange(relevant_Ls), 
-                        #              relevant_Ls,
-                        #              bp_cutoff=3.20732419,
-                        #              centroid_cutoff=6.20250967,
-                        #              base_angle_cutoff=0.06184608,
-                        #              vert_diff_cutoff=6.69730945,
-                        #              canonical_partner_filter=use_canonical_bp_filter_condit,
-                        #              )
 
                         ss_matrix = get_pair_ss_partners(indep.seq, 
                                      indep.xyz, 
@@ -2731,37 +2721,11 @@ class DistilledDataset(data.Dataset):
                                      relevant_Ls,
                                      canonical_partner_filter=use_canonical_bp_filter_condit,
                                      )
-
-                        # ss_matrix = get_pair_ss_partners(indep.seq, 
-                        #              indep.xyz, 
-                        #              indep.maskstack[0,:,:23], 
-                        #              torch.arange(relevant_Ls), 
-                        #              relevant_Ls,
-                        #              bp_cutoff=3.5,
-                        #              use_base_angles=True, 
-                        #              base_angle_cutoff=0.52,
-                        #              compute_aa_contacts=True, 
-                        #              use_repatom=False,
-                        #              canonical_partner_filter=use_canonical_bp_filter_condit,
-                        #              )
-
-
-                        # ss_matrix = get_pair_ss_partners(indep.seq, indep.xyz, indep.maskstack[0,:,:23], torch.arange(relevant_Ls), relevant_Ls,bp_cutoff=3.7,use_base_angles=True, base_angle_cutoff=0.52,compute_aa_contacts=True, use_repatom=False,canonical_partner_filter=use_canonical_bp_filter_condit,)
-                        
-                        # # rand_choice_full_ss = (np.random.rand() < 0.5)
                         
                         rand_choice_partial_ss = (np.random.rand() < self.preprocess_param['prop_ss_mask'])
 
 
                         if rand_choice_partial_ss:
-
-                            # set_trace()
-                            # (_, random_mask), _ = mask_generator.get_diffusion_mask_chunked(indep, 
-                            #                                                                 atom_mask, 
-                            #                                                                 self.params['MASK_MIN_PROPORTION'], 
-                            #                                                                 self.params['MASK_MAX_PROPORTION'], 
-                            #                                                                 self.params['MASK_BROKEN_PROPORTION'], 
-                            #                                                                 max_motif_chunks=6)
 
                             (_, random_mask), _ = mask_generator.get_diffusion_mask_chunked(indep, 
                                                                                             atom_mask, 
@@ -2769,11 +2733,6 @@ class DistilledDataset(data.Dataset):
                                                                                             0.4, 
                                                                                             0.3, 
                                                                                             max_motif_chunks=3)
-
-                            # (hide_ss_mat, _), _ = mask_generator.get_diffusion_mask_chunked(indep, atom_mask, self.params['MASK_MIN_PROPORTION'], self.params['MASK_MAX_PROPORTION'], self.params['MASK_BROKEN_PROPORTION'], max_motif_chunks=6)
-                            # mask_2d = 2*hide_ss_mat[0].long()
-
-                            # ss_matrix[~hide_ss_mat] = 2
                             ss_matrix[~random_mask,:] = 2
                             ss_matrix[:,~random_mask] = 2
                             
@@ -2848,11 +2807,7 @@ class DistilledDataset(data.Dataset):
                 ss_templ_onehot = F.one_hot(ss_matrix, num_classes=3)
                 ss_templ_onehot = ss_templ_onehot.reshape(1, 1, *ss_templ_onehot.shape).repeat(1,3,1,1,1)
 
-
                 masks_1d['ss_matrix_mask'] = torch.eq(ss_matrix,1)
-                # ic(masks_1d['ss_matrix_mask'])
-                # ic(masks_1d['ss_matrix_mask'].sum())
-
 
                 rfi_tp1_t[0].t2d = torch.cat((rfi_tp1_t[0].t2d, ss_templ_onehot), dim=-1)
                 rfi_tp1_t[1].t2d = torch.cat((rfi_tp1_t[1].t2d, ss_templ_onehot), dim=-1)
@@ -2867,6 +2822,55 @@ class DistilledDataset(data.Dataset):
 
                 rfi_tp1_t[0].t1d = torch.cat((rfi_tp1_t[0].t1d, poly_templ_onehot), dim=-1)
                 rfi_tp1_t[1].t1d = torch.cat((rfi_tp1_t[1].t1d, poly_templ_onehot), dim=-1)
+
+
+            if self.params["POLYMER_HOTSPOTS"]:
+                if (np.random.rand() <= self.preprocess_param['p_show_poly_hotspots']):
+                    # print('GETTING HOTSPOTS!!!!!!!')
+
+                    
+                    poly_hotspot_matrix = make_poly_hotspots_vec(indep,
+                                                        contact_cutoff = 8.0,
+                                                        cum_contact_lim = 16.0,
+                                                        max_hotspots = 3,
+                                                        min_close_contacts = 3,
+                                                        seq_dist_cutoff = 3,
+                                                        p_interchain=0.8,
+                                                        )
+                    
+                    # # """
+                    # # UNCOMMENT WHEN WE WANT PNG OF SS DURING TRAINING!
+                    # # """
+                    # if "CHAINID" in sel_item.keys():
+                    #     item_id_for_fig = sel_item["CHAINID"]
+                    # else:
+                    #     item_id_for_fig = np.random.randint(200)
+                    # debug_png_filepath = f'/home/afavor/git/RFD_AF/3template_na/pngs_training/{chosen_dataset}__{item_id_for_fig}__t_{t}.png'
+                    # poly_hotspot_matrix = make_poly_hotspots_vec(indep,
+                    #                                             contact_cutoff = 8.0,
+                    #                                             cum_contact_lim = 16.0,
+                    #                                             max_hotspots = 3,
+                    #                                             use_conv_smoothing=False,
+                    #                                             min_close_contacts = 3,
+                    #                                             seq_dist_cutoff = 3,
+                    #                                             p_interchain=0.8,
+                    #                                             png_filepath=debug_png_filepath
+                    #                                             )
+
+                else:
+                    poly_hotspot_matrix = torch.zeros((indep.seq.size(0),6)).long()
+
+
+
+
+                poly_hotspot_template = poly_hotspot_matrix.reshape(1, 1, *poly_hotspot_matrix.shape).repeat(1,3,1,1)
+
+                rfi_tp1_t[0].t1d = torch.cat((rfi_tp1_t[0].t1d, poly_hotspot_template), dim=-1)
+                rfi_tp1_t[1].t1d = torch.cat((rfi_tp1_t[1].t1d, poly_hotspot_template), dim=-1)
+
+
+
+
 
 
             run_inference.seed_all(mask_gen_seed) # Reseed the RNGs for test stability.

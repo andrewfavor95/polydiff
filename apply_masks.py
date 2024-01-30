@@ -10,7 +10,7 @@ import rf2aa.tensor_util
 import rf2aa.chemical
 from rf2aa.chemical import NAATOKENS, MASKINDEX
 from rf2aa.tensor_util import assert_equal
-
+from pdb import set_trace
 def sample_blosum_mutations(seq, *args, **kwargs):
     assert len(seq.shape) == 1
     L = len(seq)
@@ -171,6 +171,7 @@ def mask_inputs(seq,
                   'diffuse_sidechains'      :preprocess_param['sidechain_input'],
                   'include_motif_sidechains':preprocess_param['motif_sidechain_input'],
                   'is_sm': is_sm}
+        set_trace()
         diffused_fullatoms, aa_masks, true_crds = diffuser.diffuse_pose(**kwargs)
 
         ############################################

@@ -46,6 +46,18 @@ abet = [a for a in abet]
 abet2num = {a:i for i,a in enumerate(abet)} 
 num2abet = {i:a for i,a in enumerate(abet)} 
 
+contact_type_to_int = {
+                'protein_protein': 0, 
+                'dna_dna': 1, 
+                'rna_rna': 2, 
+                'protein_dna': 3, 
+                'dna_protein': 3, 
+                'protein_rna': 4, 
+                'rna_protein': 4, 
+                'dna_rna': 5, 
+                'rna_dna': 5, 
+                }
+
 def slerp_update(r_t, r_0, t, mask=0):
     """slerp_update uses SLERP to update the frames at time t to the
     predicted frame for t=0

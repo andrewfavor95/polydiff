@@ -2,7 +2,6 @@
 
 inference:
   input_pdb: test_data/1qys.pdb
-  rfmotif: False
   num_designs: 10
   design_startnum: 0
   #ckpt_path: /mnt/home/jwatson3/for/nate/diffusion_models/BFF_wcomplexes_3epochs_072522.pt
@@ -74,6 +73,13 @@ inference:
   set_diffused_prot_to: 'ALA'
   set_diffused_dna_to: null
   set_diffused_rna_to: null
+  protein_protein_hotspot_res: null
+  dna_dna_hotspot_res: null
+  rna_rna_hotspot_res: null
+  protein_dna_hotspot_res: null
+  protein_rna_hotspot_res: null
+  dna_rna_hotspot_res: null
+  use_poly_hotspots_t1d: False
   # ema: True
 
 contigmap:

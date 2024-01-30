@@ -31,7 +31,6 @@ import logging
 import copy 
 from util import writepdb_multi, writepdb
 from inference import utils as iu
-# from inference.motif_manager import create_motif_manager
 from icecream import ic
 from hydra.core.hydra_config import HydraConfig
 import numpy as np
@@ -90,8 +89,6 @@ else:
 def main(conf: HydraConfig) -> None:
 
     orig_conf = copy.deepcopy(conf)
-    # pydebug.set_trace()
-    # rfmotif = create_motif_manager(conf, device=global_device)
 
     # unpack potential json args into conf 
     if conf.inference.json_args: 
@@ -268,7 +265,6 @@ def sample_one(sampler,inf_conf, i_des, simple_logging=False):
 
         x_init = indep.xyz
         seq_init = indep.seq
-        print('For now only assuming asymmetric')
         symmsub = None
 
         denoised_xyz_stack = []
@@ -293,51 +289,20 @@ def sample_one(sampler,inf_conf, i_des, simple_logging=False):
                     e = t
                 print(f'{e}', end='')
 
-            # if sampler.rfmotif: 
-            # if sampler.rfmotif and (t <= sampler.t_motif_fit): 
-            if sampler.rfmotif and (t in sampler.motif_fit_tsteps): 
-                sampler.rfmotif.start_new_design_step(i_des, t, sampler.t_step_input, x_t, symmsub)
 
             px0, x_t, seq_t, tors_t, plddt, rfo = sampler.sample_step(t, indep, rfo)
 
-            assert xyz_template_t is None or not sampler.rfmotif, 'cant use rfmotif and regular template'
-
             # assert_that(indep.xyz.shape).is_equal_to(x_t.shape)
-            # ipdb.set_trace()
             rf2aa.tensor_util.assert_same_shape(indep.xyz, x_t)
             indep.xyz = x_t
                 
             aa_model.assert_has_coords(indep.xyz, indep)
-
-            # missing_backbone = torch.isnan(indep.xyz).any(dim=-1)[...,:3].any(dim=-1)
-            # prot_missing_bb = missing_backbone[~indep.is_sm]
-            # sm_missing_ca = torch.isnan(indep.xyz).any(dim=-1)[...,1]
-            # try:
-            #     assert not prot_missing_bb.any(), f'{t}:prot_missing_bb {prot_missing_bb}'
-            #     assert not sm_missing_ca.any(), f'{t}:sm_missing_ca {sm_missing_ca}'
-            # except Exception as e:
-            #     print(e)
-            #     import ipdb
-            #     ipdb.set_trace()
-            # ipdb.set_trace()
             
             px0_xyz_stack.append(px0)
             denoised_xyz_stack.append(x_t)
             seq_stack.append(seq_t)
             chi1_stack.append(tors_t[:,:])
 
-
-
-
-            # plddt_stack.append(plddt[0]) # remove singleton leading dimension
-            # motif_rmsd_stack.append(motif_rmsd) 
-        # else:
-        #     success = True
-
-        # ipdb.set_trace()
-        # if not success:
-        #     print(f'failed to produce design {i_des} {t}, continuing...')
-        #     continue
 
         # if doing new symmetry, dump full complex:
         if sampler._conf.inference.internal_sym:
@@ -350,7 +315,6 @@ def sample_one(sampler,inf_conf, i_des, simple_logging=False):
             # grab ASU and propogate full complex 
             xyz_particle = torch.full( (O*Lasu,23,3), float('nan'), device=px0.device )
             seq_particle = torch.zeros( (O*Lasu),dtype=seq_t.dtype, device=seq_t.device )
-            ipdb.set_trace()
             # put first asu in 
             xyz_particle[:Lasu,:14]   = px0[:Lasu]
 
@@ -449,7 +413,10 @@ def save_outputs(sampler, out_prefix, indep, denoised_xyz_stack, px0_xyz_stack, 
     out = f'{out_prefix}.pdb'
     # aa_model.write_traj(out, denoised_xyz_stack[0:1], final_seq, indep.bond_feats, chain_Ls=chain_Ls)
 
+
     
+
+
     aa_model.write_traj(out, denoised_xyz_stack[0:1], final_seq, indep.bond_feats, 
                         chain_Ls=chain_Ls, 
                         natoms=sampler.num_atoms_saved, 

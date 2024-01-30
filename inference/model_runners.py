@@ -40,7 +40,6 @@ from hydra.core.hydra_config import HydraConfig
 import os
 import matplotlib.pyplot as plt 
 from memory import mem_report
-# from pdb import set_trace
 from pdb import set_trace
 REPORT_MEM=False
 
@@ -160,6 +159,23 @@ class Sampler:
             self.target_ss_matrix = None
 
 
+        # Generate polymer hotspots:
+        tot_poly_hotspot_count = 0
+        poly_hotspot_matrix = torch.zeros((self.length_init,6)).long()
+        for poly_contact in ['protein_protein','dna_dna','rna_rna','protein_dna','protein_rna','dna_rna']:
+            conf_key = f'{poly_contact}_hotspot_res'
+            if conf.inference[conf_key] is not None:
+                all_poly_contacts = [self.index_map_dict[res[0]][int(res[1:])] for con in conf.inference[conf_key] for res in con.split(',')]
+                for res_idx0 in all_poly_contacts:
+                    tot_poly_hotspot_count += 1
+                    poly_hotspot_matrix[res_idx0 ,iu.contact_type_to_int[poly_contact]] = 1
+
+        if ( tot_poly_hotspot_count > 0 ) or ( conf.inference.use_poly_hotspots_t1d ):
+            self.use_poly_hotspots = True
+            self.poly_hotspot_template = poly_hotspot_matrix
+        else:
+            self.use_poly_hotspots = False
+            self.poly_hotspot_template = None
 
 
         # If we want to show which polymer class is at each position
@@ -168,12 +184,24 @@ class Sampler:
         if conf.preprocess.show_poly is True:
             print('SHOWING POLYMER CLASS: ')
             self.show_poly_class = True
-            self.delta_dim_t1d = 3
+            if self.use_poly_hotspots is True:
+                print(f'USING MULTIPOLYMER HOTSPOTS: with {tot_poly_hotspot_count} hotspots specified.')
+                self.show_poly_hotspots = True
+                self.delta_dim_t1d = 9
+            else:
+                self.show_poly_hotspots = False
+                self.delta_dim_t1d = 3
         else:
             self.show_poly_class = False
-            self.delta_dim_t1d = 0
+            if self.use_poly_hotspots is True:
+                print(f'USING MULTIPOLYMER HOTSPOTS: with {tot_poly_hotspot_count} hotspots specified.')
+                self.show_poly_hotspots = True
+                self.delta_dim_t1d = 6
+            else:
+                self.show_poly_hotspots = False
+                self.delta_dim_t1d = 0
 
-
+            
         if needs_model_reload:
             # Load checkpoint, so that we can assemble the config
             if self.preloaded_ckpts.get(self.ckpt_path, False):
@@ -275,20 +303,6 @@ class Sampler:
         else:
             self.t_step_input = int(self.diffuser_conf.T)
 
-        # Set up motif-fitting stuffs
-        self.rfmotif = None
-        # if self.inf_conf.rfmotif:
-        #     self.rfmotif = motif_manager.create_motif_manager(self._conf, device=self.device)
-        #     # self.motif_fit_step_list = [50,30,20,15,10,6,3,1]
-        #     if self._conf['rfmotif']['fit_at_t']:
-        #         self.t_motif_fit = int(self._conf['rfmotif']['fit_at_t'])
-        #     else:
-        #         self.t_motif_fit = int(self.t_step_input)
-
-        #     if self._conf['rfmotif']['motif_fit_tsteps']:
-        #         self.motif_fit_tsteps = [int(t_i) for t_i in self._conf['rfmotif']['motif_fit_tsteps'][0].split(',') ]
-        #     else:
-        #         self.motif_fit_tsteps = [int(t_i) for t_i in range(1,self.t_motif_fit+1)]
 
 
 
@@ -416,6 +430,7 @@ class Sampler:
                         self._conf[override.split(".")[0]][override.split(".")[1].split("=")[0]] = override.split("=")[1].lower().strip() == 'true'
                     else:
                         self._conf[override.split(".")[0]][override.split(".")[1].split("=")[0]] = mytype(override.split("=")[1])
+
         else:
             print('WARNING: Model, Diffuser and Preprocess parameters are not saved in this checkpoint. Check carefully that the values specified in the config are correct for this checkpoint')     
 
@@ -541,8 +556,6 @@ class Sampler:
         return iu.Denoise(**denoise_kwargs)
     def mask_indep(self, indep):
 
-        ipdb.set_trace()
-
         return indep
     def sample_init(self, return_forward_trajectory=False):
         """Initial features to start the sampling process.
@@ -570,14 +583,11 @@ class Sampler:
 
         is_partial = self.diffuser_conf.partial_T is not None
 
-        # ipdb.set_trace()
-        # TEST TEST TEST
-        # indep, is_diffused = DNA_Duplex_Protein_Monomer(indep, self.contig_conf, self.target_feats['pdb_idx'])
-        # TEST TEST TEST
+
+
 
         indep, is_diffused = self.model_adaptor.insert_contig(indep, self.contig_map, partial_T=is_partial) 
-        # ipdb.set_trace()
-        
+
 
         # create a residue mask based on polymer type:
         # I think we want this to be on the gpu
@@ -704,6 +714,18 @@ class Sampler:
             symmids, symmRs, symmeta, offset = None, None, None, None
 
         if not self.inf_conf.start_from_input:
+            # fa_stack, aa_masks, xyz_true = self.diffuser.diffuse_pose(
+            #     indep.xyz,
+            #     seq_one_hot,
+            #     atom_mask,
+            #     indep.is_sm,
+            #     diffusion_mask=~diffuser_is_diffused,
+            #     t_list=t_list,
+            #     diffuse_sidechains=self.preprocess_conf.sidechain_input,
+            #     include_motif_sidechains=self.preprocess_conf.motif_sidechain_input,
+            #     center_crds=center_crds,
+            #     symmRs=symmRs,
+            #     motif_only_2d=self.inf_conf.motif_only_2d)
             fa_stack, aa_masks, xyz_true = self.diffuser.diffuse_pose(
                 indep.xyz,
                 seq_one_hot,
@@ -715,6 +737,9 @@ class Sampler:
                 include_motif_sidechains=self.preprocess_conf.motif_sidechain_input,
                 center_crds=center_crds,
                 symmRs=symmRs,
+                is_protein=indep.is_protein, 
+                is_dna=indep.is_dna, 
+                is_rna=indep.is_rna, 
                 motif_only_2d=self.inf_conf.motif_only_2d)
             
             # xT = fa_stack[-1].squeeze()[:,:14,:]
@@ -748,7 +773,6 @@ class Sampler:
             visible = is_motif | is_shown_at_t
             if self.diffuser_conf.partial_T:
                 # seq_t[visible] = seq_orig[visible]
-                # set_trace()
                 # assert 0, 'NEED TO MODIFY TO INCLUDE NA TOKENS!'
                 # indep.seq = torch.full_like(indep.seq, 20)
                 indep.seq = torch.full_like(indep.seq, 31)
@@ -880,7 +904,6 @@ class Sampler:
         # ic(indep.xyz.shape)
         # assert False
         print('Total AA modeled: ', indep.xyz.shape[0])
-        # ipdb.set_trace()
         return indep
 
     def _preprocess(self, seq, xyz_t, t, repack=False):
@@ -1289,11 +1312,6 @@ class NRBStyleSelfCond(Sampler):
         twotemplate   = self.inf_conf.two_template
         threetemplate = self.inf_conf.three_template
 
-        if self.rfmotif and (t in self.motif_fit_tsteps): 
-            rfmotif = self.rfmotif
-        else:
-            rfmotif = None
-
 
         if (twotemplate and threetemplate):
             is_motif, t2d_is_revealed = self._get_3template_masks(indep)
@@ -1301,57 +1319,14 @@ class NRBStyleSelfCond(Sampler):
             is_motif, t2d_is_revealed = None,None 
 
         if self.inf_conf.save_motif_t2d_png and (t==self._conf['diffuser']['T']):
-            # if self.inf_conf.save_motif_t2d_png:
-            # if self.inf_conf.t2d_pic_filename.endswith('.png'):
-                # out_pic_name = self.inf_conf.t2d_pic_filename
-            # else:
-                # out_pic_name = self.inf_conf.t2d_pic_filename + '.png'
 
             out_pic_name = self.inf_conf.output_prefix + '_t2d_motif_chunks.png'
 
             fig, ax = plt.subplots(1,1,figsize=(5,5), dpi=300)
             ax.imshow(t2d_is_revealed)
             plt.tight_layout()
-            # plt.show()
             plt.savefig(out_pic_name, bbox_inches='tight', dpi='figure')
             plt.close()
-
-
-
-        # # Set up ss-adj matrix
-        # # This will be used for t2d conditioning:
-        # if self.use_ss_guidance:
-
-        #     # first priority: check for basepair range specifications (best way to specify):
-        #     if self._conf.scaffoldguided.target_ss_pairs is not None:
-        #         self.target_ss_matrix = torch.from_numpy(iu.ss_pairs_to_matrix(self._conf.scaffoldguided.target_ss_pairs, self._conf.contigmap.contigs)).long()
-        #         # assert 0, 'NOT IMPLEMENTED YET! TO DO!'
-
-        #     # second priority: check for ss-string specification (slightly less precise):
-        #     elif self._conf.scaffoldguided.target_ss_string is not None:
-        #         self.target_ss_matrix = torch.from_numpy(iu.sstr_to_matrix(self._conf.scaffoldguided.target_ss_string, only_basepairs=True)).long()
-            
-        #     # otherwise fall back to masking everything:
-        #     else:
-        #         self.target_ss_matrix = (2*torch.ones(indep.same_chain.shape)).long()
-
-        #     # Save the matrix image if we want:
-        #     if self._conf.scaffoldguided.save_ss_matrix_png and (t==self._conf.diffuser.T):
-        #         print('SAVING SS MATRIX PIC!')
-        #         output_pic_filapath = self._conf.inference.output_prefix+'.png'
-        #         output_dirpath = os.path.dirname(output_pic_filapath)
-
-        #         if not (os.path.exists(output_dirpath) and os.path.isdir(output_dirpath)):
-        #             os.mkdir(output_dirpath)
-
-        #         fig, ax = plt.subplots(1,1,figsize=(5,5), dpi=300)
-        #         ax.imshow(np.array(self.target_ss_matrix))
-        #         plt.tight_layout()
-        #         plt.savefig(output_pic_filapath, bbox_inches='tight', dpi='figure')
-        #         plt.close()
-
-        # else:
-        #     self.target_ss_matrix = None
 
 
 
@@ -1382,7 +1357,6 @@ class NRBStyleSelfCond(Sampler):
                                             t2d_is_revealed=t2d_is_revealed,
                                             is_motif=is_motif, 
                                             polymer_type_masks=self.inf_conf.mask_seq_by_polymer,
-                                            rfmotif=rfmotif
                                             )
                                             # target_ss_matrix=self.target_ss_matrix,
         else:
@@ -1397,7 +1371,6 @@ class NRBStyleSelfCond(Sampler):
                                             t2d_is_revealed=t2d_is_revealed,
                                             is_motif=is_motif, 
                                             polymer_type_masks=self.inf_conf.mask_seq_by_polymer,
-                                            rfmotif=rfmotif
                                             )
                                             # target_ss_matrix=self.target_ss_matrix,
         
@@ -1415,6 +1388,11 @@ class NRBStyleSelfCond(Sampler):
             polymer_templ_onehot = torch.nn.functional.one_hot(self.poly_class_vec, num_classes=3)
             polymer_templ_onehot = polymer_templ_onehot.reshape(1, 1, *polymer_templ_onehot.shape).repeat(1,3,1,1)
             rfi.t1d = torch.cat((rfi.t1d, polymer_templ_onehot), dim=-1)
+
+        # Adding multi-polymer hotspots if we wanna roll that way.
+        if self.use_poly_hotspots and (twotemplate and threetemplate):
+            polymer_hotspot_templ = self.poly_hotspot_template.reshape(1, 1, *self.poly_hotspot_template.shape).repeat(1,3,1,1)
+            rfi.t1d = torch.cat((rfi.t1d, polymer_hotspot_templ), dim=-1)
 
 
 
@@ -1571,9 +1549,8 @@ class NRBStyleSelfCond(Sampler):
                 if (twotemplate and threetemplate):
                     kwargs.update({'ss_adj_conditioned':self.use_ss_guidance})
                     kwargs.update({'poly_class_conditioned':self.show_poly_class})
+                    kwargs.update({'poly_hotspot_conditioned':self.show_poly_hotspots})
 
-                # Now we will add rfmotif as an item in the kwarg dict
-                # kwargs.update({'rfmotif':rfmotif})
 
                 # debugging 
                 # tmp_out = vars(rfi)
@@ -1590,7 +1567,6 @@ class NRBStyleSelfCond(Sampler):
                     N_cycle = 1
 
                 with torch.cuda.amp.autocast(True):
-                    # rfo = self.model_adaptor.forward(rfi, N_cycle=N_cycle, rfmotif=rfmotif, return_infer=True, **kwargs)
                     rfo = self.model_adaptor.forward(rfi, N_cycle=N_cycle, return_infer=True, **kwargs)
 
                 print('********* SUCCESSFULL MODEL FORWARD *******')
@@ -1707,24 +1683,9 @@ class NRBStyleSelfCond(Sampler):
             if self.cur_rigid_tmplt is None: 
                 pass
 
-        
+
         if t > self._conf.inference.final_step:
-            # x_t_1, seq_t_1, tors_t_1, px0, cur_rigid_tmplt = self.denoiser.get_next_pose(
-            #     xt=rfi.xyz[0,:,:14].cpu(),
-            #     px0=px0,
-            #     t=t,
-            #     diffusion_mask=~self.is_diffused,
-            #     seq_diffusion_mask=~self.is_diffused,
-            #     seq_t=seq_t,
-            #     pseq0=pseq_0,
-            #     diffuse_sidechains=self.preprocess_conf.sidechain_input,
-            #     align_motif=self.inf_conf.align_motif,
-            #     include_motif_sidechains=self.preprocess_conf.motif_sidechain_input,
-            #     rigid_symm_motif_kwargs=rigid_symm_motif_kwargs,
-            #     rigid_repeat_motif_kwargs=rigid_repeat_motif_kwargs,
-            #     origin_before_update=self._conf.inference.origin_before_update,
-            #     rfmotif=rfmotif,
-            # )
+
             x_t_1, seq_t_1, tors_t_1, px0, cur_rigid_tmplt = self.denoiser.get_next_pose(
                 xt=rfi.xyz[0,:,:self._conf.inference.num_atoms_modeled].cpu(),
                 px0=px0,
@@ -1740,25 +1701,8 @@ class NRBStyleSelfCond(Sampler):
                 rigid_repeat_motif_kwargs=rigid_repeat_motif_kwargs,
                 origin_before_update=self._conf.inference.origin_before_update,
                 num_atoms_modeled=self._conf.inference.num_atoms_modeled,
-                rfmotif=rfmotif,
             )
-            # x_t_1, seq_t_1, tors_t_1, px0, cur_rigid_tmplt = self.denoiser.get_next_pose(
-            #     xt=rfi.xyz[0,:,:NHEAVY].cpu(),
-            #     px0=px0,
-            #     t=t,
-            #     diffusion_mask=~self.is_diffused,
-            #     seq_diffusion_mask=~self.is_diffused,
-            #     seq_t=seq_t,
-            #     pseq0=pseq_0,
-            #     diffuse_sidechains=self.preprocess_conf.sidechain_input,
-            #     align_motif=self.inf_conf.align_motif,
-            #     include_motif_sidechains=self.preprocess_conf.motif_sidechain_input,
-            #     rigid_symm_motif_kwargs=rigid_symm_motif_kwargs,
-            #     rigid_repeat_motif_kwargs=rigid_repeat_motif_kwargs,
-            #     origin_before_update=self._conf.inference.origin_before_update,
-            #     num_atoms_modeled=self._conf.inference.num_atoms_modeled,
-            #     rfmotif=rfmotif,
-            # )
+
             self.cur_rigid_tmplt = cur_rigid_tmplt
         else:
             
@@ -1766,6 +1710,7 @@ class NRBStyleSelfCond(Sampler):
             px0[~self.is_diffused] = indep.xyz[~self.is_diffused]
             x_t_1 = torch.clone(px0)
             seq_t_1 = pseq_0
+            # ic(x_t_1[0,:,0], px0[0,:,0])
 
             # Dummy tors_t_1 prediction. Not used in final output.
             tors_t_1 = torch.ones((self.is_diffused.shape[-1], 10, 2))

@@ -631,8 +631,7 @@ class Model:
                 threetemplate=True, 
                 t2d_is_revealed=None, 
                 is_motif=None, 
-                polymer_type_masks=None,
-                rfmotif=None):
+                polymer_type_masks=None):
                 # target_ss_matrix=None,
 
         """
@@ -747,28 +746,29 @@ class Model:
         # num_backbone_atoms_nucleic = 3
         ### xyz_t ###
         #############
+        # set_trace()
+        # print('WHERE I LEFT OFF!!!')
+        # print('FIND OUT HOW TO SET NA SIDECHAIN COORDS to 0.00 instead of nan after backbone atom inds positions')
         if self.conf.preprocess.sidechain_input:
             raise Exception('not implemented')
             assert 0, "NEED TO CHANGE THIS TO ADD NA TOKENS!"
             xyz_t[torch.where(seq_one_hot == 21, True, False),3:,:] = float('nan')
+
+
+
         else:
 
             # Different number of atoms if protein, DNA, RNA, etc
             
             if polymer_type_masks:
-
                 # How many backbone atoms do we need per polymer type?
-                # set_trace()
-                # xyz_t[is_diffused_na,num_backbone_atoms_nucleic:,:] = float('nan')
                 xyz_t[is_diffused_dna,num_backbone_atoms_nucleic:,:] = float('nan')
                 xyz_t[is_diffused_rna,num_backbone_atoms_nucleic+1:,:] = float('nan')
                 xyz_t[is_diffused_protein,num_backbone_atoms_protein:,:] = float('nan')
 
-
             else:
                 xyz_t[is_diffused,3:,:] = float('nan')
-        #xyz_t[:,3:,:] = float('nan')
-        # ipdb.set_trace()
+
 
         # DJ - check if using inference.start_from_input
         # if so, chop off the atoms after 14: 
@@ -807,7 +807,7 @@ class Model:
         assert_that(xyz_t.shape).is_equal_to((L,NHEAVY,3))
         xyz_t=xyz_t[None, None]
         xyz_t = torch.cat((xyz_t, torch.full((1,1,L,NTOTAL-NHEAVY,3), float('nan'))), dim=3)
-        # ipdb.set_trace()
+
         # assert_that(xyz_t.shape).is_equal_to((L,atom_trim_range,3))
         # xyz_t=xyz_t[None, None]
         # xyz_t = torch.cat((xyz_t, torch.full((1,1,L,NTOTAL-atom_trim_range,3), float('nan'))), dim=3)
@@ -916,7 +916,6 @@ class Model:
 
         xyz = torch.squeeze(xyz_t, dim=0)
 
-
         # NO SELF COND
         xyz_t = torch.zeros(1,2,L,3)
         t2d = torch.zeros(1,2,L,L,68)
@@ -985,12 +984,19 @@ class Model:
             xyz[0, is_diffused*~indep.is_sm,3:] = torch.nan
 
 
+
         xyz[0, indep.is_sm, NHEAVYPROT:] = 0
         xyz[0, is_protein_motif, NHEAVYPROT:] = 0
         # xyz[0, is_na_motif, NHEAVYNUC:] = 0
         xyz[0, is_dna_motif, NHEAVYNUC-1:] = 0 # subtract one atom for missing hydroxyl
         xyz[0, is_rna_motif, NHEAVYNUC:] = 0
+        # print('WARNING: EXPERIMENTAL TEST! ADDING ZEROS INSTEAD OF NAN TO NA NONMOTIF REGIONS!!!')
+        # xyz[0, is_diffused_dna, NHEAVYNUC-1:] = 0 # subtract one atom for missing hydroxyl
+        # xyz[0, is_diffused_rna, NHEAVYNUC:] = 0
+
         dist_matrix = rf2aa.data_loader.get_bond_distances(indep.bond_feats)
+
+        
 
         # minor tweaks to rfi to match gp training
         # if ('inference' in self.conf) and (self.conf.inference.get('contig_as_guidepost', False)):
@@ -1271,7 +1277,10 @@ def diffuse(conf, diffuser, indep, is_diffused, t):
         # 'include_na_sidechains':conf['preprocess']['na_sidechain_input'],
         'is_sm': indep.is_sm,
         'is_na': indep.is_na,
-        'num_frames_na': num_frames_na
+        'num_frames_na': num_frames_na,
+        'is_protein': indep.is_protein,
+        'is_dna': indep.is_dna,
+        'is_rna': indep.is_rna,
     }
 
     diffused_fullatoms, aa_masks, true_crds = diffuser.diffuse_pose(**kwargs)
