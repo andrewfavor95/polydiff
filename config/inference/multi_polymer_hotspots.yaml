@@ -1,0 +1,8 @@
+# Base inference Configuration.
+defaults:
+  - multi_polymer
+
+inference:
+  ckpt_path: /projects/ml/afavor/RFD/models/all_na_ss_cond/train_session2024-01-24_1706161506_BFF_3.00.pt
+  use_poly_hotspots_t1d: True
+
