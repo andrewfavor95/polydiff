@@ -2749,6 +2749,7 @@ class DistilledDataset(data.Dataset):
 
 
 
+
                     # # """
                     # # UNCOMMENT WHEN WE WANT PNG OF SS DURING TRAINING!
                     # # """
@@ -2759,7 +2760,7 @@ class DistilledDataset(data.Dataset):
                     #     dssr_dbn = parse_dssr(dbns_path,ignore_symbols=['&'],return_seq=False)
                     #     ss_matrix_prev = torch.from_numpy(sstr_to_matrix(dssr_dbn, only_basepairs=True)).long()
 
-                    #     png_filename = f'/home/afavor/git/RFD_AF/3template_na/pngs_training/{chosen_dataset}__{sel_item["PRED_ID"]}.png'
+                    #     png_filename = f'/home/afavor/git/RFD_AF/elwynn_new_frames/pngs_training/{chosen_dataset}__{sel_item["PRED_ID"]}.png'
                     #     fig, ax = plt.subplots(nrows=1,ncols=2,figsize=(15,30))
                     #     ax[0].imshow(ss_matrix_prev.cpu().numpy(),vmin=0,vmax=2)
                     #     ax[0].set_title('Precomputed SS matrix')
@@ -2769,6 +2770,12 @@ class DistilledDataset(data.Dataset):
                     #     # plt.colorbar()
                     #     plt.savefig(png_filename)
                     #     plt.close(fig)
+
+                    #     print('SHOULD BE SAVING FIG')
+                    #     print('SHOULD BE SAVING FIG')
+                    #     print('SHOULD BE SAVING FIG')
+                    #     print('SHOULD BE SAVING FIG')
+                    #     print('SHOULD BE SAVING FIG')
 
 
                     #     # out_dir_indep_ss_inputs = '/home/afavor/projects/fit_ss_approx_params/indep_inputs/'
@@ -2791,7 +2798,7 @@ class DistilledDataset(data.Dataset):
                     #     else:
                     #         item_id_for_fig = np.random.randint(200)
                         
-                    #     png_filename = f'/home/afavor/git/RFD_AF/3template_na/pngs_training/{chosen_dataset}__{item_id_for_fig}.png'
+                    #     png_filename = f'/home/afavor/git/RFD_AF/elwynn_new_frames/pngs_training/{chosen_dataset}__{item_id_for_fig}.png'
                     #     fig, ax = plt.subplots(nrows=1,ncols=1,figsize=(15,15))
                     #     ax.imshow(ss_matrix.cpu().numpy(),vmin=0,vmax=2)
                     #     ax.set_title('new SS matrix')
@@ -2835,7 +2842,7 @@ class DistilledDataset(data.Dataset):
                                                         max_hotspots = 3,
                                                         min_close_contacts = 3,
                                                         seq_dist_cutoff = 3,
-                                                        p_interchain=0.8,
+                                                        p_interchain=0.95,
                                                         )
                     
                     # # """

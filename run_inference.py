@@ -262,7 +262,7 @@ def rename_ligand_atoms(ref_fn, out_fn):
 def sample_one(sampler,inf_conf, i_des, simple_logging=False):
         # For intermediate output logging
         indep = sampler.sample_init()
-
+        
         x_init = indep.xyz
         seq_init = indep.seq
         symmsub = None
@@ -411,10 +411,20 @@ def save_outputs(sampler, out_prefix, indep, denoised_xyz_stack, px0_xyz_stack, 
     
     # pX0 last step
     out = f'{out_prefix}.pdb'
-    # aa_model.write_traj(out, denoised_xyz_stack[0:1], final_seq, indep.bond_feats, chain_Ls=chain_Ls)
 
+    if sampler.inf_conf.compute_pSSA and sampler._conf.scaffoldguided.target_ss_string:
 
-    
+        pSSA_vec = util.compute_pSSA(sampler._conf.scaffoldguided.target_ss_string, 
+                                    denoised_xyz_stack[0:1], 
+                                    final_seq
+                                    )
+
+        print('pSSA vector:')
+        print(pSSA_vec)
+
+        formatted_mean_pSSA = "{:.3f}".format(pSSA_vec.mean())
+        out = out.replace('.pdb', f'__pSSA_{formatted_mean_pSSA}.pdb')
+
 
 
     aa_model.write_traj(out, denoised_xyz_stack[0:1], final_seq, indep.bond_feats, 

@@ -6,17 +6,25 @@ from omegaconf import DictConfig
 from kinematics import xyz_to_t2d
 import torch
 import torch.nn.functional as nn
-from util import get_torsions
+# from util import get_torsions
 from diffusion import get_beta_schedule, get_aa_schedule, get_chi_betaT
 from diff_util import get_aa_schedule, th_interpolate_angles, th_min_angle
 from icecream import ic
 from scipy.spatial.transform import Rotation as scipy_R
 from scipy.spatial.transform import Slerp
-from util import torsion_indices as TOR_INDICES
-from util import torsion_can_flip as TOR_CAN_FLIP
-from util import reference_angles as REF_ANGLES
-from util import rigid_from_3_points
-from util_module import ComputeAllAtomCoords
+
+# from util import torsion_indices as TOR_INDICES
+# from util import torsion_can_flip as TOR_CAN_FLIP
+# from util import reference_angles as REF_ANGLES
+# from util import rigid_from_3_points
+from rf2aa.util import torsion_indices as TOR_INDICES 
+from rf2aa.util import torsion_can_flip as TOR_CAN_FLIP
+from rf2aa.util import reference_angles as REF_ANGLES
+from rf2aa.util import rigid_from_3_points
+
+# from util_module import ComputeAllAtomCoords
+from rf2aa.util_module import XYZConverter
+
 from potentials.manager import PotentialManager
 from rf2aa.chemical import NAATOKENS, aa2num, aa2long, atomnum2atomtype, NTOTAL, CHAIN_GAP, to1letter, NHEAVY, NHEAVYPROT, NHEAVYNUC
 import util
@@ -194,7 +202,9 @@ def get_next_ca(xt, px0, t, diffusion_mask, crd_scale, beta_schedule, alphabar_s
         noise_scale: scale factor for the noise being added
 
     """
-    get_allatom = ComputeAllAtomCoords().to(device=xt.device)
+    # get_allatom = ComputeAllAtomCoords().to(device=xt.device)
+    converter = XYZConverter().to(device=xt.device)
+
     L = len(xt)
 
     # bring to origin after global alignment (when don't have a motif) or replace input motif and bring to origin, and then scale 
@@ -510,16 +520,24 @@ class Denoise():
 
         # there is no situation where we should have any NaN BB crds here  
         mask = torch.full((L, 27), False)
+        set_trace()
         mask[:,:14] = True 
 
         ### Calcualte torsions and interpolate between them 
 
         # Xt torsions
-        torsions_sincos_xt, torsions_alt_sincos_xt, tors_mask_xt, tors_planar_xt = get_torsions(xt_full[None], 
-                                                                                                seq_t[None], 
-                                                                                                TOR_INDICES, 
-                                                                                                TOR_CAN_FLIP, 
-                                                                                                REF_ANGLES)
+        # torsions_sincos_xt, torsions_alt_sincos_xt, tors_mask_xt, tors_planar_xt = get_torsions(xt_full[None], 
+        #                                                                                         seq_t[None], 
+        #                                                                                         TOR_INDICES, 
+        #                                                                                         TOR_CAN_FLIP, 
+        #                                                                                         REF_ANGLES)
+        torsions_sincos_xt, torsions_alt_sincos_xt, tors_mask_xt, tors_planar_xt = XYZConverter.get_torsions(xt_full[None], 
+                                                                                                            seq_t[None], 
+                                                                                                            TOR_INDICES, 
+                                                                                                            TOR_CAN_FLIP, 
+                                                                                                            REF_ANGLES)
+
+
         torsions_angle_xt     = torch.atan2(torsions_sincos_xt[...,1],
                                             torsions_sincos_xt[...,0]).squeeze()
         torsions_angle_xt_alt = torch.atan2(torsions_alt_sincos_xt[...,1],
@@ -528,7 +546,12 @@ class Denoise():
 
 
         # pX0 torsions - uses same seq_t to calculate 
-        torsions_sincos_px0, torsions_alt_sincos_px0, tors_mask_px0, tors_planar_px0 = get_torsions(px0_full[None], 
+        # torsions_sincos_px0, torsions_alt_sincos_px0, tors_mask_px0, tors_planar_px0 = get_torsions(px0_full[None], 
+        #                                                                                             seq_t[None], 
+        #                                                                                             TOR_INDICES, 
+        #                                                                                             TOR_CAN_FLIP, 
+        #                                                                                             REF_ANGLES)
+        torsions_sincos_px0, torsions_alt_sincos_px0, tors_mask_px0, tors_planar_px0 = XYZConverter.get_torsions(px0_full[None], 
                                                                                                     seq_t[None], 
                                                                                                     TOR_INDICES, 
                                                                                                     TOR_CAN_FLIP, 
@@ -788,7 +811,10 @@ class Denoise():
             xt = xt - COM_ALL
             px0 = px0 - COM_ALL.to(px0.device)
 
-        get_allatom = ComputeAllAtomCoords().to(device=xt.device)
+        # get_allatom = ComputeAllAtomCoords().to(device=xt.device)
+        converter = XYZConverter().to(device=xt.device)
+
+
         L,n_atom = xt.shape[:2]
         if diffuse_sidechains:
             assert (xt.shape[1]  == 14) or (xt.shape[1]  == 27)
@@ -844,7 +870,8 @@ class Denoise():
             pseq0 = torch.argmax(pseq0, dim=-1).cpu() # [L]
             torsions_next, seq_next = self.get_next_torsions(xt, px0, seq_t, pseq0, t, diffusion_mask, noise_scale = self.noise_scale_torsion)
             # build full atom representation with the new torsions but the current seq
-            _, fullatom_next =  get_allatom(seq_t[None], frames_next[None], torsions_next[None])
+            # _, fullatom_next =  get_allatom(seq_t[None], frames_next[None], torsions_next[None])
+            _,fullatom_next = converter.compute_all_atom(seq_t[None], frames_next[None], torsions_next[None])
             seq_next = torch.nn.functional.one_hot(
                     seq_next, num_classes=rf2aa.chemical.NAATOKENS).float()
 
@@ -1248,7 +1275,8 @@ def preprocess(seq, xyz_t, t, T, ppi_design, binderlen, target_res, device):
     ### alpha_t ###
     ###############
     seq_tmp = t1d[...,:-1].argmax(dim=-1).reshape(-1,L)
-    alpha, _, alpha_mask, _ = get_torsions(xyz_t.reshape(-1,L,27,3), seq_tmp, TOR_INDICES, TOR_CAN_FLIP, REF_ANGLES)
+    # alpha, _, alpha_mask, _ = get_torsions(xyz_t.reshape(-1,L,27,3), seq_tmp, TOR_INDICES, TOR_CAN_FLIP, REF_ANGLES)
+    alpha, _, alpha_mask, _ = XYZConverter.get_torsions(xyz_t.reshape(-1,L,27,3), seq_tmp, TOR_INDICES, TOR_CAN_FLIP, REF_ANGLES)
     alpha_mask = torch.logical_and(alpha_mask, ~torch.isnan(alpha[...,0]))
     alpha[torch.isnan(alpha)] = 0.0
     alpha = alpha.reshape(1,-1,L,10,2)
@@ -1830,7 +1858,7 @@ def process_target(pdb_path, parse_hetatom=False, center=True, inf_conf=None, d_
     seq_orig  = torch.from_numpy(target_struct['seq'])
     atom_mask = torch.from_numpy(target_struct['mask'])
     seq_len   = len(xyz)
-
+    
     # is_protein = torch.logical_and((0  <= seq),(seq <= 21)).squeeze()
     # is_nucleic = torch.logical_and((22 <= seq),(seq <= 31)).squeeze()
     # xyz_prot[is_protein,NHEAVYPROT:] = 0

@@ -1,11 +1,40 @@
 import torch
 import torch.nn as nn
-from Embeddings import MSA_emb, Extra_emb, Templ_emb, Recycling, Timestep_emb
+from Embeddings import MSA_emb, Extra_emb, Bond_emb, Templ_emb, Recycling, Timestep_emb
 from Track_module import IterativeSimulator
-from AuxiliaryPredictor import DistanceNetwork, MaskedTokenNetwork, ExpResolvedNetwork, LDDTNetwork
-from util import INIT_CRDS
+# from AuxiliaryPredictor import DistanceNetwork, MaskedTokenNetwork, ExpResolvedNetwork, LDDTNetwork
+# from AuxiliaryPredictor import 
+# DistanceNetwork, 
+# MaskedTokenNetwork, 
+# ExpResolvedNetwork, 
+# LDDTNetwork
+from rf2aa.AuxiliaryPredictor import (
+    DistanceNetwork,
+    MaskedTokenNetwork,
+    LDDTNetwork,
+    PAENetwork,
+    BinderNetwork,
+)
+from rf2aa.chemical import INIT_CRDS, NAATOKENS, NBTYPES, NTOTAL
+from rf2aa.tensor_util import assert_shape, assert_equal
+import rf2aa.util
+from rf2aa.util_module import rbf
+
+
+# from util import INIT_CRDS
 from opt_einsum import contract as einsum
 from icecream import ic 
+
+
+def get_shape(t):
+    if hasattr(t, "shape"):
+        return t.shape
+    if type(t) is tuple:
+        return [get_shape(e) for e in t]
+    else:
+        return type(t)
+
+
 
 class RoseTTAFoldModule(nn.Module):
     def __init__(self, 

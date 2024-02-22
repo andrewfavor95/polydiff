@@ -5,6 +5,7 @@ import torch.nn.functional as F
 from opt_einsum import contract as einsum
 import copy
 import dgl
+from pdb import set_trace
 from util import base_indices, RTs_by_torsion, xyzs_in_base_frame, rigid_from_3_points
 
 def init_lecun_normal(module, scale=1.0):
@@ -221,14 +222,21 @@ class ComputeAllAtomCoords(nn.Module):
     def __init__(self):
         super(ComputeAllAtomCoords, self).__init__()
 
+        # set_trace()
+        assert 0, "just doing this to track shit down"
+
         self.base_indices = nn.Parameter(base_indices, requires_grad=False)
         self.RTs_in_base_frame = nn.Parameter(RTs_by_torsion, requires_grad=False)
         self.xyzs_in_base_frame = nn.Parameter(xyzs_in_base_frame, requires_grad=False)
 
     def forward(self, seq, xyz, alphas, non_ideal=False, use_H=True):
+        # set_trace()
+        assert 0, "just doing this to track shit down"
+
         B,L = xyz.shape[:2]
 
-        Rs, Ts = rigid_from_3_points(xyz[...,0,:],xyz[...,1,:],xyz[...,2,:], non_ideal=non_ideal)
+        is_NA = is_nucleic(seq)
+        Rs, Ts = rigid_from_3_points(xyz[...,0,:],xyz[...,1,:],xyz[...,2,:], is_NA)
 
         RTF0 = torch.eye(4).repeat(B,L,1,1).to(device=Rs.device)
 
@@ -258,7 +266,7 @@ class ComputeAllAtomCoords(nn.Module):
         CBr = (basexyzs[:,:,4,:3])
         CBrotaxis1 = (CBr-CAr).cross(NCr-CAr)
         CBrotaxis1 /= torch.linalg.norm(CBrotaxis1, dim=-1, keepdim=True)+1e-8
-        
+
         # CB twist
         NCp = basexyzs[:,:,2,:3] - basexyzs[:,:,0,:3]
         NCpp = NCp - torch.sum(NCp*NCr, dim=-1, keepdim=True)/ torch.sum(NCr*NCr, dim=-1, keepdim=True) * NCr
@@ -271,7 +279,7 @@ class ComputeAllAtomCoords(nn.Module):
         RTF8 = torch.einsum(
             'brij,brjk,brkl->bril', 
             RTF0, CBrot1,CBrot2)
-        
+
         # chi1 + CG bend
         RTF4 = torch.einsum(
             'brij,brjk,brkl,brlm->brim', 
@@ -295,8 +303,51 @@ class ComputeAllAtomCoords(nn.Module):
             'brij,brjk,brkl->bril', 
             RTF6,self.RTs_in_base_frame[seq,6,:],make_rotX(alphas[:,:,6,:]))
 
+        # ignore RTs_in_base_frame[seq,7:9,:] and alphas[:,:,10:12,:]
+
+        # NA nu1 --> from base frame
+        RTF14 = torch.einsum(
+            'brij,brjk,brkl->bril', 
+            RTF0, self.RTs_in_base_frame[seq,14,:], make_rotX(alphas[:,:,17,:]))
+
+        # NA nu0 --> from base frame
+        RTF15 = torch.einsum(
+            'brij,brjk,brkl->bril', 
+            RTF0, self.RTs_in_base_frame[seq,15,:], make_rotX(alphas[:,:,18,:]))
+
+        # NA chi --> from base frame
+        RTF16= torch.einsum(
+            'brij,brjk,brkl->bril', 
+            RTF0, self.RTs_in_base_frame[seq,16,:], make_rotX(alphas[:,:,19,:]))
+
+        # NA nu2 --> from nu1 frame
+        RTF13 = torch.einsum(
+            'brij,brjk,brkl->bril', 
+            RTF14, self.RTs_in_base_frame[seq,13,:], make_rotX(alphas[:,:,16,:]))
+
+        # NA delta --> from nu2 frame
+        RTF12 = torch.einsum(
+            'brij,brjk,brkl->bril', 
+            RTF13, self.RTs_in_base_frame[seq,12,:], make_rotX(alphas[:,:,15,:]))
+
+        # NA gamma --> from delta frame
+        RTF11 = torch.einsum(
+            'brij,brjk,brkl->bril', 
+            RTF12, self.RTs_in_base_frame[seq,11,:], make_rotX(alphas[:,:,14,:]))
+
+        # NA beta --> from gamma frame
+        RTF10 = torch.einsum(
+            'brij,brjk,brkl->bril', 
+            RTF11, self.RTs_in_base_frame[seq,10,:], make_rotX(alphas[:,:,13,:]))
+
+        # NA alpha --> from beta frame
+        RTF9 = torch.einsum(
+            'brij,brjk,brkl->bril', 
+            RTF10, self.RTs_in_base_frame[seq,9,:], make_rotX(alphas[:,:,12,:]))
+
         RTframes = torch.stack((
-            RTF0,RTF1,RTF2,RTF3,RTF4,RTF5,RTF6,RTF7,RTF8
+            RTF0,RTF1,RTF2,RTF3,RTF4,RTF5,RTF6,RTF7,RTF8,
+            RTF9,RTF10,RTF11,RTF12,RTF13,RTF14,RTF15,RTF16
         ),dim=2)
 
         xyzs = torch.einsum(
@@ -304,7 +355,92 @@ class ComputeAllAtomCoords(nn.Module):
             RTframes.gather(2,self.base_indices[seq][...,None,None].repeat(1,1,1,4,4)), basexyzs
         )
 
-        if use_H:
-            return RTframes, xyzs[...,:3]
-        else:
-            return RTframes, xyzs[...,:14,:3]
+        return RTframes, xyzs[...,:3]
+
+
+
+        # B,L = xyz.shape[:2]
+
+        # Rs, Ts = rigid_from_3_points(xyz[...,0,:],xyz[...,1,:],xyz[...,2,:], non_ideal=non_ideal)
+
+        # RTF0 = torch.eye(4).repeat(B,L,1,1).to(device=Rs.device)
+
+        # # bb
+        # RTF0[:,:,:3,:3] = Rs
+        # RTF0[:,:,:3,3] = Ts
+
+        # # omega
+        # RTF1 = torch.einsum(
+        #     'brij,brjk,brkl->bril',
+        #     RTF0, self.RTs_in_base_frame[seq,0,:], make_rotX(alphas[:,:,0,:]))
+
+        # # phi
+        # RTF2 = torch.einsum(
+        #     'brij,brjk,brkl->bril', 
+        #     RTF0, self.RTs_in_base_frame[seq,1,:], make_rotX(alphas[:,:,1,:]))
+
+        # # psi
+        # RTF3 = torch.einsum(
+        #     'brij,brjk,brkl->bril', 
+        #     RTF0, self.RTs_in_base_frame[seq,2,:], make_rotX(alphas[:,:,2,:]))
+
+        # # CB bend
+        # basexyzs = self.xyzs_in_base_frame[seq]
+        # NCr = 0.5*(basexyzs[:,:,2,:3]+basexyzs[:,:,0,:3])
+        # CAr = (basexyzs[:,:,1,:3])
+        # CBr = (basexyzs[:,:,4,:3])
+        # CBrotaxis1 = (CBr-CAr).cross(NCr-CAr)
+        # CBrotaxis1 /= torch.linalg.norm(CBrotaxis1, dim=-1, keepdim=True)+1e-8
+        
+        # # CB twist
+        # NCp = basexyzs[:,:,2,:3] - basexyzs[:,:,0,:3]
+        # NCpp = NCp - torch.sum(NCp*NCr, dim=-1, keepdim=True)/ torch.sum(NCr*NCr, dim=-1, keepdim=True) * NCr
+        # CBrotaxis2 = (CBr-CAr).cross(NCpp)
+        # CBrotaxis2 /= torch.linalg.norm(CBrotaxis2, dim=-1, keepdim=True)+1e-8
+        
+        # CBrot1 = make_rot_axis(alphas[:,:,7,:], CBrotaxis1 )
+        # CBrot2 = make_rot_axis(alphas[:,:,8,:], CBrotaxis2 )
+        
+        # RTF8 = torch.einsum(
+        #     'brij,brjk,brkl->bril', 
+        #     RTF0, CBrot1,CBrot2)
+        
+        # # chi1 + CG bend
+        # RTF4 = torch.einsum(
+        #     'brij,brjk,brkl,brlm->brim', 
+        #     RTF8, 
+        #     self.RTs_in_base_frame[seq,3,:], 
+        #     make_rotX(alphas[:,:,3,:]), 
+        #     make_rotZ(alphas[:,:,9,:]))
+
+        # # chi2
+        # RTF5 = torch.einsum(
+        #     'brij,brjk,brkl->bril', 
+        #     RTF4, self.RTs_in_base_frame[seq,4,:],make_rotX(alphas[:,:,4,:]))
+
+        # # chi3
+        # RTF6 = torch.einsum(
+        #     'brij,brjk,brkl->bril', 
+        #     RTF5,self.RTs_in_base_frame[seq,5,:],make_rotX(alphas[:,:,5,:]))
+
+        # # chi4
+        # RTF7 = torch.einsum(
+        #     'brij,brjk,brkl->bril', 
+        #     RTF6,self.RTs_in_base_frame[seq,6,:],make_rotX(alphas[:,:,6,:]))
+
+        # RTframes = torch.stack((
+        #     RTF0,RTF1,RTF2,RTF3,RTF4,RTF5,RTF6,RTF7,RTF8
+        # ),dim=2)
+
+        # xyzs = torch.einsum(
+        #     'brtij,brtj->brti', 
+        #     RTframes.gather(2,self.base_indices[seq][...,None,None].repeat(1,1,1,4,4)), basexyzs
+        # )
+
+        # if use_H:
+        #     return RTframes, xyzs[...,:3]
+        # else:
+        #     return RTframes, xyzs[...,:14,:3]
+
+
+

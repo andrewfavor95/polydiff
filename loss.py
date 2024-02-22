@@ -216,9 +216,10 @@ def calc_displacement_loss(pred, true, gamma=0.99, d_clamp=None):
     return err.sum()
 
 # use improved coordinate frame generation
-def get_t(N, Ca, C, non_ideal=False, eps=1e-5):
+def get_t(N, Ca, C, non_ideal=False, is_na=None, eps=1e-5):
     I,B,L=N.shape[:3]
-    Rs,Ts = rigid_from_3_points(N.view(I*B,L,3), Ca.view(I*B,L,3), C.view(I*B,L,3), non_ideal=non_ideal, eps=eps)
+    # Rs,Ts = rigid_from_3_points(N.view(I*B,L,3), Ca.view(I*B,L,3), C.view(I*B,L,3), non_ideal=non_ideal, eps=eps)
+    Rs,Ts = rigid_from_3_points(N.view(I*B,L,3), Ca.view(I*B,L,3), C.view(I*B,L,3), is_na=is_na, eps=eps)
     Rs = Rs.view(I,B,L,3,3)
     Ts = Ts.view(I,B,L,3)
     t = Ts[:,:,None] - Ts[:,:,:,None] # t[0,1] = residue 0 -> residue 1 vector

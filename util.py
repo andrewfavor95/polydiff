@@ -24,6 +24,29 @@ def generate_Cbeta(N,Ca,C):
 
     return Cb
 
+
+def generate_N1(O4,C1,C2,
+                w_a = -0.17613436,
+                w_b = 1.99999996,
+                w_c = -1.15381511
+        ):
+    # recreate N1 given O4', C1', C2'
+    
+    w_a, w_b, w_c = params
+    
+    
+    # recreate Cb given N,Ca,C
+    b = C1 - O4
+    c = C2 - C1
+    a = torch.cross(b, c, dim=-1)
+    #Cb = -0.58273431*a + 0.56802827*b - 0.54067466*c + Ca
+    # fd: below matches sidechain generator (=Rosetta params)
+    N1 = w_a*a + w_b*b + w_c*c + C1
+
+    return N1
+    
+
+
 def th_ang_v(ab,bc,eps:float=1e-8):
     def th_norm(x,eps:float=1e-8):
         return x.square().sum(-1,keepdim=True).add(eps).sqrt()
@@ -109,35 +132,72 @@ def mask_sequence_chunks(is_masked, p=0.5):
     return is_masked
 
     
-# More complicated version splits error in CA-N and CA-C (giving more accurate CB position)
-# It returns the rigid transformation from local frame to global frame
-def rigid_from_3_points(N, Ca, C, non_ideal=False, eps=1e-8):
-    #N, Ca, C - [B,L, 3]
-    #R - [B,L, 3, 3], det(R)=1, inv(R) = R.T, R is a rotation matrix
-    B,L = N.shape[:2]
+# # More complicated version splits error in CA-N and CA-C (giving more accurate CB position)
+# # It returns the rigid transformation from local frame to global frame
+# def rigid_from_3_points(N, Ca, C, non_ideal=False, eps=1e-8):
+#     #N, Ca, C - [B,L, 3]
+#     #R - [B,L, 3, 3], det(R)=1, inv(R) = R.T, R is a rotation matrix
+#     B,L = N.shape[:2]
     
+#     v1 = C-Ca
+#     v2 = N-Ca
+#     e1 = v1/(torch.norm(v1, dim=-1, keepdim=True)+eps)
+#     u2 = v2-(torch.einsum('bli, bli -> bl', e1, v2)[...,None]*e1)
+#     e2 = u2/(torch.norm(u2, dim=-1, keepdim=True)+eps)
+#     e3 = torch.cross(e1, e2, dim=-1)
+#     R = torch.cat([e1[...,None], e2[...,None], e3[...,None]], axis=-1) #[B,L,3,3] - rotation matrix
+    
+#     if non_ideal:
+#         v2 = v2/(torch.norm(v2, dim=-1, keepdim=True)+eps)
+#         cosref = torch.sum(e1*v2, dim=-1) # cosine of current N-CA-C bond angle
+#         costgt = cos_ideal_NCAC.item()
+#         cos2del = torch.clamp( cosref*costgt + torch.sqrt((1-cosref*cosref)*(1-costgt*costgt)+eps), min=-1.0, max=1.0 )
+#         cosdel = torch.sqrt(0.5*(1+cos2del)+eps)
+#         sindel = torch.sign(costgt-cosref) * torch.sqrt(1-0.5*(1+cos2del)+eps)
+#         Rp = torch.eye(3, device=N.device).repeat(B,L,1,1)
+#         Rp[:,:,0,0] = cosdel
+#         Rp[:,:,0,1] = -sindel
+#         Rp[:,:,1,0] = sindel
+#         Rp[:,:,1,1] = cosdel
+    
+#         R = torch.einsum('blij,bljk->blik', R,Rp)
+
+#     return R, Ca
+
+# build a frame from 3 points
+#fd  -  more complicated version splits angle deviations between CA-N and CA-C (giving more accurate CB position)
+#fd  -  makes no assumptions about input dims (other than last 1 is xyz)
+
+def rigid_from_3_points(N, Ca, C, is_na=None, eps=1e-4):
+    dims = N.shape[:-1]
+
     v1 = C-Ca
     v2 = N-Ca
     e1 = v1/(torch.norm(v1, dim=-1, keepdim=True)+eps)
-    u2 = v2-(torch.einsum('bli, bli -> bl', e1, v2)[...,None]*e1)
+    u2 = v2-(torch.einsum('...li, ...li -> ...l', e1, v2)[...,None]*e1)
     e2 = u2/(torch.norm(u2, dim=-1, keepdim=True)+eps)
     e3 = torch.cross(e1, e2, dim=-1)
     R = torch.cat([e1[...,None], e2[...,None], e3[...,None]], axis=-1) #[B,L,3,3] - rotation matrix
-    
-    if non_ideal:
-        v2 = v2/(torch.norm(v2, dim=-1, keepdim=True)+eps)
-        cosref = torch.sum(e1*v2, dim=-1) # cosine of current N-CA-C bond angle
-        costgt = cos_ideal_NCAC.item()
-        cos2del = torch.clamp( cosref*costgt + torch.sqrt((1-cosref*cosref)*(1-costgt*costgt)+eps), min=-1.0, max=1.0 )
-        cosdel = torch.sqrt(0.5*(1+cos2del)+eps)
-        sindel = torch.sign(costgt-cosref) * torch.sqrt(1-0.5*(1+cos2del)+eps)
-        Rp = torch.eye(3, device=N.device).repeat(B,L,1,1)
-        Rp[:,:,0,0] = cosdel
-        Rp[:,:,0,1] = -sindel
-        Rp[:,:,1,0] = sindel
-        Rp[:,:,1,1] = cosdel
-    
-        R = torch.einsum('blij,bljk->blik', R,Rp)
+
+    v2 = v2/(torch.norm(v2, dim=-1, keepdim=True)+eps)
+    cosref = torch.sum(e1*v2, dim=-1)
+
+    costgt = torch.full(dims, -0.3616, device=N.device)
+    if is_na is not None:
+       costgt[is_na] = -0.2744
+
+    cos2del = torch.clamp( cosref*costgt + torch.sqrt((1-cosref*cosref)*(1-costgt*costgt)+eps), min=-1.0, max=1.0 )
+
+    cosdel = torch.sqrt(0.5*(1+cos2del)+eps)
+
+    sindel = torch.sign(costgt-cosref) * torch.sqrt(1-0.5*(1+cos2del)+eps)
+
+    Rp = torch.eye(3, device=N.device).repeat(*dims,1,1)
+    Rp[...,0,0] = cosdel
+    Rp[...,0,1] = -sindel
+    Rp[...,1,0] = sindel
+    Rp[...,1,1] = cosdel
+    R = torch.einsum('...ij,...jk->...ik', R,Rp)
 
     return R, Ca
 
@@ -171,6 +231,7 @@ def get_tor_mask(seq, torsion_indices, mask_in=None):
     return tors_mask
 
 def get_torsions(xyz_in, seq, torsion_indices, torsion_can_flip, ref_angles, mask_in=None):
+    set_trace()
     B,L = xyz_in.shape[:2]
     
     tors_mask = get_tor_mask(seq, torsion_indices, mask_in)
@@ -1091,19 +1152,19 @@ def get_pair_ss_partners(seq, xyz, mask, sel, len_s, vert_diff_cutoff=6.69730945
     is_rna = torch.logical_and((27 <= seq),(seq <= 31))
 
     len_s_na = (~is_protein).sum()
-    
-    
 
     # Using Frank's method with distance between representative atoms:
     repatom = torch.zeros(len_s, dtype=torch.long, device=xyz.device)
-    repatom[seq==22] = 15 # DA - N1
-    repatom[seq==23] = 14 # DC - N3
-    repatom[seq==24] = 15 # DG - N1
-    repatom[seq==25] = 14 # DT - N3
-    repatom[seq==27] = 12 # A - N1
-    repatom[seq==28] = 15 # C - N3
-    repatom[seq==29] = 12 # G - N1
-    repatom[seq==30] = 15 # U - N3
+
+    repatom[seq==22] = rf2aa.chemical.aa2long[22].index(' N1 ') # DA - N1
+    repatom[seq==23] = rf2aa.chemical.aa2long[23].index(' N3 ') # DC - N3
+    repatom[seq==24] = rf2aa.chemical.aa2long[24].index(' N1 ') # DG - N1
+    repatom[seq==25] = rf2aa.chemical.aa2long[25].index(' N3 ') # DT - N3
+    repatom[seq==27] = rf2aa.chemical.aa2long[27].index(' N1 ') # A - N1
+    repatom[seq==28] = rf2aa.chemical.aa2long[28].index(' N3 ') # C - N3
+    repatom[seq==29] = rf2aa.chemical.aa2long[29].index(' N1 ') # G - N1
+    repatom[seq==30] = rf2aa.chemical.aa2long[30].index(' N3 ') # U - N3
+
 
     xyz_na_rep = torch.gather(xyz, 1, repatom[:,None,None].repeat(1,1,3)).squeeze(1)
     contact_dist = torch.cdist(xyz_na_rep, xyz_na_rep) < bp_cutoff
@@ -1116,8 +1177,16 @@ def get_pair_ss_partners(seq, xyz, mask, sel, len_s, vert_diff_cutoff=6.69730945
 
     base_xyz_masked = torch.where(mask_na, xyz[~is_protein], torch.nan)
 
-    base_atom_xyz[is_dna[~is_protein],:,:] = base_xyz_masked[is_dna[~is_protein],11:22,:]
-    base_atom_xyz[is_rna[~is_protein],:,:] = base_xyz_masked[is_rna[~is_protein],12:23,:]
+    # Select full range for guanines, since those have the most atoms
+    dna_base_atoms_start = rf2aa.chemical.aa2long[24].index(' N9 ')
+    dna_base_atoms_stop = rf2aa.chemical.aa2long[24].index(' O6 ')
+    rna_base_atoms_start = rf2aa.chemical.aa2long[29].index(' N1 ')
+    rna_base_atoms_stop = rf2aa.chemical.aa2long[29].index(' N9 ')
+
+
+    base_atom_xyz[is_dna[~is_protein],:,:] = base_xyz_masked[is_dna[~is_protein],dna_base_atoms_start:dna_base_atoms_stop+1,:]
+    base_atom_xyz[is_rna[~is_protein],:,:] = base_xyz_masked[is_rna[~is_protein],rna_base_atoms_start:rna_base_atoms_stop+1,:]
+
 
     # Compute the centroid of the points
     centroid = torch.nanmean(base_atom_xyz, dim=1, keepdim=True)
@@ -1182,6 +1251,606 @@ def get_start_stop_inds(mask_vec):
 
     return start_stop_indices, values_list
 
+
+
+
+
+
+
+# # fit_params_pSSA = {
+# # 'fc1_w': torch.tensor([[-1.0338e-01,  3.5331e-02,  4.9069e-02,  2.2999e-02, -1.2684e-02,
+# #           6.4225e-04, -8.4047e-02, -4.2551e-02, -2.9523e-02, -6.8141e-02,
+# #          -8.3562e-02,  3.3802e-02,  3.4457e-02, -9.8110e-02,  1.8489e-03,
+# #           4.1041e-03,  4.6931e-02,  1.6970e-02,  5.4350e-02, -5.0783e-02,
+# #           3.2512e-02,  4.2157e-02, -1.0197e-01, -8.8423e-02, -4.8389e-03,
+# #           2.3583e-02, -6.3560e-02, -1.2945e-02, -2.1890e-02, -7.3247e-04,
+# #          -6.8314e-02,  1.7561e-02,  2.3275e-02, -8.8858e-02, -2.5093e-02,
+# #          -2.6956e-02,  1.6792e-03,  5.3077e-02,  1.0609e-04, -4.1331e-02,
+# #           5.3074e-02, -5.3591e-02, -4.6379e-02, -1.6524e-02, -8.5086e-02,
+# #          -1.3087e-02, -8.1809e-02, -2.6400e-02, -2.4189e-02, -1.5339e-02,
+# #          -9.2064e-02, -1.0170e-01,  1.2357e-02,  4.4801e-02, -9.8422e-02,
+# #           9.2845e-03, -8.2776e-02, -1.6720e-02,  5.5308e-02,  4.1154e-02,
+# #          -8.2719e-02,  2.8745e-02,  1.9451e-02, -2.9291e-02,  4.8628e-02,
+# #          -5.5326e-02, -4.1230e-02, -6.4582e-02, -1.3779e-02, -4.2797e-03,
+# #          -1.7984e-02, -6.8588e-02, -5.9289e-02,  6.2086e-03, -9.5116e-02,
+# #          -3.4776e-02, -2.3497e-02, -5.5893e-02,  6.9436e-03, -2.4496e-02,
+# #           2.6514e-02, -3.8333e-02, -7.5282e-02,  3.5022e-02, -1.3097e-02,
+# #          -4.9274e-02, -8.0056e-02, -3.3419e-03, -1.0136e-01, -1.7403e-04,
+# #           1.9120e-02, -9.4831e-02, -7.5795e-02, -8.2323e-02,  4.2873e-02,
+# #           2.8375e-02, -2.6185e-02,  4.9994e-02, -5.1200e-02, -1.0317e-01,
+# #           5.0472e-03,  3.1869e-03,  5.5251e-02, -2.3547e-02,  4.2159e-02,
+# #           2.9035e-02,  3.8108e-02, -1.0461e-01,  4.7078e-02, -9.3357e-02,
+# #           5.1856e-02, -2.8687e-02, -1.0577e-01, -3.6952e-03, -3.8753e-02,
+# #          -9.6765e-02, -5.3993e-02, -1.7855e-02,  3.8144e-02, -4.9053e-02,
+# #           2.7447e-02, -1.1727e-02, -1.9127e-02, -5.5620e-03, -7.6151e-02,
+# #          -9.1368e-02, -4.8582e-02, -1.0213e-01, -7.0996e-02, -1.8699e-02,
+# #          -7.6743e-02, -5.6831e-02, -3.9887e-02, -3.6057e-02, -7.1751e-02,
+# #          -2.0521e-02, -3.4119e-02,  1.6365e-03, -1.8133e-02, -6.3003e-02,
+# #          -5.0019e-02, -2.2778e-02, -7.4803e-02, -2.3145e-02],
+# #         [-2.7816e-02,  9.8378e-03, -2.4415e-03,  4.0384e-02, -2.4526e-02,
+# #          -8.3001e-02,  1.5791e-02, -7.7633e-02, -3.2582e-02, -4.7877e-02,
+# #          -5.2763e-02, -5.2232e-02,  5.5173e-02,  2.6401e-02,  1.4319e-03,
+# #           5.6200e-02, -9.7404e-02, -8.4639e-03,  3.1323e-02,  3.3278e-02,
+# #          -8.8002e-02,  8.2725e-03, -6.8853e-02, -2.4605e-02, -3.8600e-02,
+# #          -9.0634e-02, -1.0060e-01, -7.6126e-02,  1.6435e-02,  1.6808e-02,
+# #          -9.3844e-02, -5.3117e-02, -2.0522e-02, -9.3911e-02,  2.4911e-02,
+# #           5.3032e-02, -7.0845e-03, -8.3100e-02, -1.8995e-03,  8.8910e-03,
+# #           4.4605e-02, -6.5614e-02, -9.5747e-02,  1.5696e-02, -1.6014e-02,
+# #          -4.8527e-02, -5.6377e-02, -6.4779e-02,  4.5572e-02, -3.6254e-02,
+# #           3.7948e-02,  5.2257e-02, -1.1307e-02, -3.7387e-03, -2.7036e-02,
+# #           3.5880e-02, -9.6278e-02,  1.2329e-02, -3.4551e-02,  1.6744e-02,
+# #          -2.1773e-02, -5.2321e-02, -3.0931e-02,  2.2934e-02, -7.9807e-02,
+# #          -7.4859e-02, -4.0657e-02, -5.2229e-02,  1.0835e-02,  3.4644e-02,
+# #          -3.0194e-02,  5.7428e-02, -5.6172e-02, -6.7842e-02, -5.8126e-02,
+# #          -7.8540e-02, -7.9786e-02, -9.5628e-02, -9.5433e-02, -2.3245e-04,
+# #           2.8894e-02,  5.6278e-02,  4.9087e-02, -2.6840e-02, -5.8833e-03,
+# #          -7.1291e-02,  1.0901e-02, -1.0119e-01,  1.7887e-02, -6.1946e-03,
+# #           4.5630e-03,  9.7278e-03, -5.9352e-02,  5.0153e-02,  1.8175e-02,
+# #           3.2781e-02, -1.0881e-02,  3.0464e-02,  3.4085e-02,  1.5365e-02,
+# #           4.1440e-02, -3.6809e-02,  3.3333e-02, -2.1845e-03,  2.8844e-02,
+# #           6.0068e-02, -2.0465e-03, -5.1941e-02, -2.9716e-02,  1.5718e-03,
+# #          -8.0324e-03, -4.4665e-02,  4.3367e-02,  2.8109e-02, -7.3612e-02,
+# #          -2.8843e-02, -2.9974e-02, -7.3860e-02, -9.2198e-03, -4.6952e-02,
+# #          -6.4388e-02, -4.8134e-02, -5.0730e-02,  5.8827e-02,  1.0772e-02,
+# #           6.0444e-02,  9.5161e-04, -3.1406e-03,  1.2329e-02, -8.0648e-03,
+# #          -8.7292e-02, -7.1164e-02, -4.2299e-02, -2.0566e-02,  1.0186e-02,
+# #           1.0739e-02,  4.4716e-02, -4.5126e-03, -4.9820e-02, -8.3458e-02,
+# #          -8.1905e-02, -7.1129e-02,  3.3288e-03,  2.2996e-02],
+# #         [ 2.7126e-01,  1.4502e-01,  1.5561e-01,  1.3703e-01,  1.1476e-01,
+# #           7.1077e-02,  5.9538e-02,  1.0015e-01,  4.5924e-02, -2.5426e-02,
+# #           3.5914e-03,  7.5152e-02,  1.9214e-01,  1.4955e-01,  1.3165e-01,
+# #           2.5983e-01,  1.9904e-01,  1.6965e-01,  1.1819e-01,  1.0790e-01,
+# #           1.5805e-01,  3.3138e-01,  1.5718e-01,  1.0049e-02, -9.0633e-02,
+# #           6.3039e-04,  1.5805e-01,  2.4640e-01,  1.2110e-01,  2.0778e-01,
+# #           1.8756e-01,  1.6659e-01,  2.2584e-01,  1.3597e-01,  1.2017e-01,
+# #           7.3271e-02,  2.5205e-01,  4.3657e-01,  2.1529e-01,  7.1325e-03,
+# #          -1.1572e-01, -1.0897e-01, -1.2057e-01,  1.6960e-01,  1.3377e-01,
+# #           1.8403e-01,  1.8440e-01,  2.7987e-01,  2.0318e-01,  2.1030e-01,
+# #           1.0755e-01,  6.1883e-02,  3.0245e-01,  2.6660e-01,  1.7915e-01,
+# #          -7.6741e-02, -5.1639e-02,  3.9901e-02,  1.3324e-01,  1.6962e-01,
+# #           2.0445e-01,  1.9128e-01,  2.3609e-01,  2.0584e-01,  2.3769e-01,
+# #           8.5186e-02,  1.8973e-01,  1.5971e-01,  1.4497e-01,  1.1044e-01,
+# #          -1.7699e-01, -1.1641e-01,  9.0692e-02,  2.1250e-01,  1.9478e-01,
+# #           1.8022e-01,  2.1109e-01,  1.7864e-01,  1.7002e-01,  2.4764e-01,
+# #           1.4556e-01,  1.9088e-01,  1.3911e-01,  7.7808e-02,  1.5617e-02,
+# #          -1.3425e-01, -6.3802e-02, -9.7848e-02, -5.3549e-03,  3.4925e-02,
+# #           1.7280e-01,  1.2308e-01,  2.1563e-01,  9.0998e-02,  2.1960e-01,
+# #           1.6982e-01,  2.4067e-01,  1.4771e-01,  1.4479e-01,  9.2695e-02,
+# #           3.5370e-01,  2.8883e-01, -6.1576e-03, -6.4103e-02, -1.4769e-01,
+# #           6.6170e-02,  2.2672e-01,  1.8338e-01,  1.2975e-01,  1.8980e-01,
+# #           1.2068e-01,  2.7014e-01,  2.4337e-01,  2.3082e-01,  1.7984e-01,
+# #           4.0959e-02, -1.5578e-01, -2.8747e-01, -1.7127e-01, -9.1027e-02,
+# #           1.4858e-01,  4.2064e-01,  2.4329e-01,  2.2118e-01,  8.6948e-02,
+# #           1.5887e-01,  9.4973e-02,  2.6160e-01,  1.3898e-01,  1.3179e-01,
+# #           2.1873e-01,  2.7912e-01,  3.8992e-01,  4.3909e-01,  9.4120e-02,
+# #          -4.4665e-02, -1.3440e-01,  3.5483e-02, -8.1354e-02,  1.7336e-01,
+# #           2.4281e-01,  1.1911e-01,  2.1074e-01,  2.7794e-01],
+# #         [ 2.5804e-01,  1.3387e-01,  1.3179e-01,  1.9153e-01,  5.5519e-02,
+# #          -9.0090e-02, -3.6132e-02,  3.3289e-01,  1.0520e-01, -7.9361e-02,
+# #          -3.9609e-01, -2.0253e-01,  1.5844e-01,  9.2043e-02,  1.6224e-01,
+# #           3.5108e-01,  1.1318e-01,  1.0658e-01,  8.8094e-02,  1.2429e-01,
+# #           1.7422e-01, -2.1384e-02,  2.3167e-01, -7.4548e-02, -2.3115e-01,
+# #          -2.5651e-01, -1.6363e-01,  9.7431e-02,  1.4542e-01,  1.4314e-01,
+# #           1.7804e-01,  2.7403e-01,  1.4289e-01,  2.3776e-01,  1.2284e-01,
+# #           5.8025e-02,  4.7836e-03, -2.4114e-01, -2.4553e-01, -2.3957e-01,
+# #          -6.0037e-02,  9.5083e-02,  2.4294e-01,  4.9732e-01,  2.3886e-01,
+# #           2.1141e-01,  1.3931e-01,  3.9377e-01,  2.2025e-01,  1.5545e-01,
+# #           1.9411e-01,  1.2224e-01,  4.9635e-01,  1.9691e-01,  2.6158e-01,
+# #          -6.8881e-02, -3.0038e-01, -4.2805e-01, -4.3456e-01,  4.9864e-02,
+# #           1.5588e-01,  1.8386e-01,  2.0292e-01,  3.4799e-01,  2.2522e-01,
+# #           8.1561e-02,  6.0740e-02,  1.0061e-01, -1.6242e-01, -1.7182e-01,
+# #          -7.3501e-02, -2.2005e-01, -1.3347e-01, -3.0173e-02,  2.4687e-01,
+# #           1.6678e-01,  5.2869e-02,  1.3374e-01,  1.6562e-01,  2.8572e-01,
+# #           2.1893e-01,  2.2138e-01,  5.4650e-02, -3.9893e-02, -4.5479e-01,
+# #          -8.3597e-01, -5.1918e-01, -1.3543e-01,  1.8753e-01,  4.2470e-01,
+# #           4.8829e-01,  1.6683e-01,  1.8864e-01,  1.1017e-01,  1.2805e-01,
+# #           2.6466e-01,  2.3952e-01,  1.6207e-01,  1.4063e-01,  3.3912e-01,
+# #           5.9711e-01,  3.5110e-01,  4.2385e-01, -1.7135e-01, -8.4309e-02,
+# #          -4.2335e-01, -6.5586e-01, -1.5610e-03,  1.1905e-01,  2.0605e-01,
+# #           1.5631e-01,  2.7859e-01,  1.3922e-01,  2.3945e-01,  5.4050e-02,
+# #           5.7067e-02, -3.1652e-01, -3.3191e-01, -1.0737e-01, -3.6651e-02,
+# #           3.8004e-02, -3.6062e-01, -1.4360e-01,  1.8070e-01,  1.4570e-01,
+# #           1.1716e-01,  1.5365e-01,  2.8061e-01,  2.4132e-01,  1.3188e-01,
+# #           1.2689e-01,  1.6298e-01,  8.5855e-02, -3.3433e-01, -1.1558e-01,
+# #          -7.8668e-02, -5.8021e-02,  6.0356e-02,  7.5198e-02,  1.8321e-01,
+# #           1.6180e-01,  1.5633e-01,  2.3702e-01,  2.7541e-01]]),
+# # 'fc1_b': torch.tensor([-0.0073, -0.0736,  0.7235,  1.2319]),
+# # 'fc2_w': torch.tensor([[ 0.1245,  0.3830, -0.2434, -0.3621],
+# #         [-0.5115,  0.2924,  0.7716,  0.7454],
+# #         [ 0.2076,  0.4347, -0.6673,  0.1229],
+# #         [ 0.0469,  0.0250,  1.1549,  1.7516]]),
+# # 'fc2_b': torch.tensor([0.6202, 0.4566, 0.3264, 0.0704]),
+# # 'fc3_w': torch.tensor([[-0.9361,  0.4330, -0.6616,  0.8476],
+# #         [-0.1534,  0.3012, -0.4654,  0.2928],
+# #         [ 0.6743, -0.0571,  0.4280, -0.7742],
+# #         [-1.1054,  0.2829, -0.4307,  0.5904]]),
+# # 'fc3_b': torch.tensor([ 0.5191,  0.5326, -0.6463,  0.2321]),
+# # 'fc_out_w': torch.tensor([[-0.4532, -0.5225,  0.5296, -0.6015]]),
+# # 'fc_out_b': torch.tensor([0.2702]),
+# # }
+
+        
+# def run_inference(x, 
+#                   fit_params = fit_params_pSSA
+#                  ):
+    
+        
+#         B, N, M, D = x.shape # batch_size, n_rows, m_cols, feature_dim
+#         x = x.reshape(B*N*M, D)
+        
+
+#         # Pass through the network
+#         x = torch.matmul(x,fit_params['fc1_w'].T) + fit_params['fc1_b']
+#         x = torch.matmul(x,fit_params['fc2_w'].T) + fit_params['fc2_b']
+#         x = torch.matmul(x,fit_params['fc3_w'].T) + fit_params['fc3_b']
+#         x = torch.matmul(x,fit_params['fc_out_w'].T) + fit_params['fc_out_b']
+        
+#         x = x.reshape(B, N, M, 1)
+        
+#         x = x + x.permute(0,2,1,3)
+        
+#         x = torch.sigmoid(x)  # Using sigmoid to get values between 0 and 1
+
+        
+#         return x[0,:,:,0] # batch size should always be 1. 
+    
+    
+    
+
+# def make_rbf_feats(X_i, 
+#                    d_min=2., 
+#                    d_max=22., 
+#                    n_bases=16, 
+#                    noise_val=None,
+#                     kernel=None):
+
+#     def _gaussian(D_i, d_min, d_max, n_bases):
+#         # device = D_i.device
+#         D_mu = torch.linspace(d_min, d_max, n_bases)
+#         D_sigma = (d_max - d_min) / n_bases
+        
+#         RBF = torch.exp(-((D_i[...,None] - D_mu[None,...]) / D_sigma)**2)
+
+#         return RBF
+    
+#     def _null_base(D_i, d_min, d_max, n_bases):
+#         # device = D_i.device
+#         D_mu = torch.linspace(d_min, d_max, n_bases)
+#         D_sigma = (d_max - d_min) / n_bases
+#         RBF = ((D_i[...,None] - D_mu[None,...]) / D_sigma)
+
+#         return RBF
+    
+#     def _quadratic(D_i, d_min, d_max, n_bases):
+#         # device = D_i.device
+#         D_mu = torch.linspace(d_min, d_max, n_bases)
+#         D_sigma = (d_max - d_min) / n_bases
+#         RBF = ((D_i[...,None] - D_mu[None,...]) / D_sigma)**2
+
+#         return RBF
+
+#     nresi, natoms, ndims = X_i.shape
+
+#     if noise_val is not None:
+#         noise_i = torch.rand_like(X_i) * (2 * noise_val) - noise_val
+#         X_i += noise_i
+
+
+#     D_sigma = (d_max - d_min) / n_bases
+#     nresi, natoms, ndims = X_i.shape
+#     frame_atom_combo_inds = [(i,j) for i in range(natoms) for j in range(natoms)]
+#     # D_i = torch.zeros((1, nresi, nresi, len(frame_atom_combo_inds)), device=device)
+#     D_i = torch.zeros((1, nresi, nresi, len(frame_atom_combo_inds)))
+
+#     for pair_ind, (i,j) in enumerate(frame_atom_combo_inds):
+
+#         D_i[:,:,:,pair_ind] = torch.cdist(X_i[:,i,:],X_i[:,j,:])
+        
+#     if kernel is not None:
+#         if kernel=='gaussian':
+#             RBF_i = _gaussian(D_i, d_min, d_max, n_bases)
+#         elif kernel=='quadratic':
+#             RBF_i = _quadratic(D_i, d_min, d_max, n_bases)
+            
+#         else:
+#             RBF_i = _null_base(D_i, d_min, d_max, n_bases)
+            
+#     else:
+#         RBF_i = _null_base(D_i, d_min, d_max, n_bases)
+        
+        
+
+#     t2d_i = RBF_i.reshape(1, nresi, nresi, len(frame_atom_combo_inds)*n_bases)
+    
+    
+    
+#     return t2d_i
+        
+
+# # def compute_pSSA(ss_string, xyz, seq, 
+# #                 network_params_in=None,
+# #                 representative_res_ind=29, # RG has most atoms to reference
+# #                 frame_atom_0=" O4'", 
+# #                 frame_atom_1=" C1'", 
+# #                 frame_atom_2=" C2'",
+# #                 only_basepairs=False):
+
+
+
+
+# #     def find_any_bracket_pairs(s, open_symbol, close_symbol):
+# #         stack = []
+# #         pairs = []
+
+# #         for i, char in enumerate(s):
+# #             if char == open_symbol:
+# #                 stack.append(i)
+# #             elif char == close_symbol:
+# #                 if stack:
+# #                     pairs.append((stack.pop(), i))
+# #                 else:
+# #                     raise ValueError(f"No matching open parenthesis for closing parenthesis at index {i}")
+
+# #         if stack:
+# #             raise ValueError(f"No matching closing parenthesis for open parenthesis at index {stack[0]}")
+
+# #         return pairs
+
+# #     def find_loop_bases(s):
+# #         loop_bases = []
+# #         for i, char in enumerate(s):
+# #             if char == '.':
+# #                 loop_bases.append(i)
+
+# #         return loop_bases
+
+
+# #     open_symbols  = ['(','[','{','<','5','i','f','b']
+# #     close_symbols = [')',']','}','>','3','j','t','e']
+# #     loop_symbols  = ['.','&',','] # For now we just treating breaks as loops, cuz dssr is fallible.
+
+
+# #     all_pair_dict = {}
+# #     for pair_ind, (open_symbol, close_symbol) in enumerate(zip(open_symbols, close_symbols)):
+
+# #         num_opens = len([ _ for _ in ss_string if _ == open_symbol])
+# #         num_close = len([ _ for _ in ss_string if _ == close_symbol])
+# #         assert num_opens==num_close , "number of base pairs must be an even number... must be an error somewhere..."
+
+# #         all_pair_dict[pair_ind] = find_any_bracket_pairs(ss_string, open_symbol, close_symbol)
+
+
+# #     ss_element_list = []
+
+# #     for pair_ind in all_pair_dict.keys():
+# #         paired_base_list = all_pair_dict[pair_ind]
+# #         for i,j in paired_base_list:
+# #             ss_element_list.append(('P',i,j))
+
+
+# #     if not only_basepairs:
+# #         for i, char in enumerate(ss_string):
+# #             if char in loop_symbols: 
+# #                 ss_element_list.append(('L',i,i))
+
+
+
+# #     # Get frame atoms:
+# #     frame_atom_inds = torch.tensor([rf2aa.chemical.aa2long[representative_res_ind].index(frame_atom_0),
+# #                                     rf2aa.chemical.aa2long[representative_res_ind].index(frame_atom_1),
+# #                                     rf2aa.chemical.aa2long[representative_res_ind].index(frame_atom_2)])
+
+# #     frame_xyz = xyz[0,:,frame_atom_inds,:]
+
+# #     L = len(ss_string)
+
+# #     frame_t2d = make_rbf_feats(frame_xyz, kernel='gaussian').to('cpu')
+
+# #     P_mat = run_inference(frame_t2d, fit_params=fit_params_pSSA)
+
+# #     pSSA_vec = torch.zeros(L)
+# #     num_positions_counted = 0
+# #     for i, ss_element_i in enumerate(ss_element_list):
+
+# #         if ss_element_i[0]=='L':
+# #             P_not_i = torch.cat((P_mat[ss_element_i[1],:ss_element_i[2]], P_mat[ss_element_i[1],ss_element_i[2]+1:]),dim=-1)
+# #             pSSA_vec[ss_element_i[1]] = (1-torch.max(P_not_i))+1e-8
+
+# #         elif ss_element_i[0]=='P':
+# #             pSSA_vec[1] = P_mat[ss_element_i[1],ss_element_i[2]]
+
+
+# #     return pSSA_vec
+
+
+
+
+
+# def compute_pSSA(ss_string, xyz, seq, 
+#                 network_params_in=None,
+#                 representative_res_ind=29, # RG has most atoms to reference
+#                 frame_atom_0=" O4'", 
+#                 frame_atom_1=" C1'", 
+#                 frame_atom_2=" C2'",
+#                 only_basepairs=False):
+
+
+
+
+#     def find_any_bracket_pairs(s, open_symbol, close_symbol):
+#         stack = []
+#         pairs = []
+
+#         for i, char in enumerate(s):
+#             if char == open_symbol:
+#                 stack.append(i)
+#             elif char == close_symbol:
+#                 if stack:
+#                     pairs.append((stack.pop(), i))
+#                 else:
+#                     raise ValueError(f"No matching open parenthesis for closing parenthesis at index {i}")
+
+#         if stack:
+#             raise ValueError(f"No matching closing parenthesis for open parenthesis at index {stack[0]}")
+
+#         return pairs
+
+#     def find_loop_bases(s):
+#         loop_bases = []
+#         for i, char in enumerate(s):
+#             if char == '.':
+#                 loop_bases.append(i)
+
+#         return loop_bases
+
+
+#     open_symbols  = ['(','[','{','<','5','i','f','b']
+#     close_symbols = [')',']','}','>','3','j','t','e']
+#     loop_symbols  = ['.','&',','] # For now we just treating breaks as loops, cuz dssr is fallible.
+
+
+#     all_pair_dict = {}
+#     for pair_ind, (open_symbol, close_symbol) in enumerate(zip(open_symbols, close_symbols)):
+
+#         num_opens = len([ _ for _ in ss_string if _ == open_symbol])
+#         num_close = len([ _ for _ in ss_string if _ == close_symbol])
+#         assert num_opens==num_close , "number of base pairs must be an even number... must be an error somewhere..."
+
+#         all_pair_dict[pair_ind] = find_any_bracket_pairs(ss_string, open_symbol, close_symbol)
+
+
+#     ss_element_list = []
+
+#     for pair_ind in all_pair_dict.keys():
+#         paired_base_list = all_pair_dict[pair_ind]
+#         for i,j in paired_base_list:
+#             ss_element_list.append(('P',i,j))
+
+
+#     if not only_basepairs:
+#         for i, char in enumerate(ss_string):
+#             if char in loop_symbols: 
+#                 ss_element_list.append(('L',i,i))
+
+
+#     if network_params_in:
+#         network_params = network_params_in
+#     else:
+
+#         network_params ={
+#             'fc1_w': torch.tensor([[-0.2386, -0.3275, -0.3491,  0.4477,  0.8526, -3.0067, -1.5363],
+#                                     [-0.1860,  0.3721, -0.1883,  0.1263,  0.5563, -2.2224, -1.4701],
+#                                     [-0.1579,  0.2265, -1.0069,  0.3789,  0.4825, -2.0054, -1.1969]]),
+#             'fc1_b': torch.tensor([-1.6262, -1.7848, -1.9741]),
+#             'fc2_w': torch.tensor([[-1.5385, -0.2681, -0.1609],
+#                                     [ 1.3806,  0.4991,  0.1363],
+#                                     [ 0.0748,  0.0310,  0.4322]]),
+#             'fc2_b': torch.tensor([ 1.2666, -1.4560,  0.0421]),
+#             'fc_out_w': torch.tensor([[-1.3313,  1.1436,  0.1296]]),
+#             'fc_out_b': torch.tensor([-1.1276]),
+#         }
+
+
+#     # Get frame atoms:
+#     frame_atom_inds = torch.tensor([rf2aa.chemical.aa2long[representative_res_ind].index(frame_atom_0),
+#                                     rf2aa.chemical.aa2long[representative_res_ind].index(frame_atom_1),
+#                                     rf2aa.chemical.aa2long[representative_res_ind].index(frame_atom_2)])
+#     frame_xyz = xyz[None,None,0,:,frame_atom_inds,:]
+
+
+#     B, T, L = frame_xyz.shape[:3]
+
+#     c6d = rf2aa.kinematics.xyz_to_c6d(frame_xyz[:,:,:,:3].view(B*T,L,3,3))
+#     c6d = c6d.view(B, T, L, L, 4)
+
+#     orien = torch.cat((torch.sin(c6d[...,1:]), torch.cos(c6d[...,1:])), dim=-1) # (B, T, L, L, 6)
+#     t2d = torch.cat((c6d[...,0:1], orien), dim=-1)[0,...]
+#     D_in = t2d.shape[-1] # input feature dimension
+#     D_out = 1 # output feature dimension
+
+#     # Prepare t2d feats for forward pass
+#     x = t2d.reshape(B*L*L, D_in)
+
+#     # Pass through the network
+#     x = torch.matmul(x,network_params['fc1_w'].T) + network_params['fc1_b']
+#     x = torch.matmul(x,network_params['fc2_w'].T) + network_params['fc2_b']
+#     x = torch.matmul(x,network_params['fc_out_w'].T) + network_params['fc_out_b']
+
+#     x = x.reshape(B, L, L, D_out)
+
+#     P_mat = torch.sigmoid(x + x.permute(0,2,1,3))[0,:,:,0]  # Using sigmoid to get values between 0 and 1 (matrix of bp probabilities)
+
+#     pSSA_vec = torch.zeros(L)
+#     num_positions_counted = 0
+#     for i, ss_element_i in enumerate(ss_element_list):
+
+#         if ss_element_i[0]=='L':
+#             P_not_i = torch.cat((P_mat[ss_element_i[1],:ss_element_i[2]], P_mat[ss_element_i[1],ss_element_i[2]+1:]),dim=-1)
+#             pSSA_vec[ss_element_i[1]] = (1-torch.max(P_not_i))+1e-8
+
+#         elif ss_element_i[0]=='P':
+#             pSSA_vec[1] = P_mat[ss_element_i[1],ss_element_i[2]]
+
+
+#     return pSSA_vec
+
+
+
+
+
+def compute_pSSA(ss_string, xyz, seq, 
+                network_params_in=None,
+                representative_res_ind=29, # RG has most atoms to reference
+                frame_atom_0=" O4'", 
+                frame_atom_1=" C1'", 
+                frame_atom_2=" C2'",
+                only_basepairs=False):
+
+
+
+
+    def find_any_bracket_pairs(s, open_symbol, close_symbol):
+        stack = []
+        pairs = []
+
+        for i, char in enumerate(s):
+            if char == open_symbol:
+                stack.append(i)
+            elif char == close_symbol:
+                if stack:
+                    pairs.append((stack.pop(), i))
+                else:
+                    raise ValueError(f"No matching open parenthesis for closing parenthesis at index {i}")
+
+        if stack:
+            raise ValueError(f"No matching closing parenthesis for open parenthesis at index {stack[0]}")
+
+        return pairs
+
+    def find_loop_bases(s):
+        loop_bases = []
+        for i, char in enumerate(s):
+            if char == '.':
+                loop_bases.append(i)
+                
+        return loop_bases
+
+
+    open_symbols  = ['(','[','{','<','5','i','f','b']
+    close_symbols = [')',']','}','>','3','j','t','e']
+    loop_symbols  = ['.','&',','] # For now we just treating breaks as loops, cuz dssr is fallible.
+
+
+    all_pair_dict = {}
+    for pair_ind, (open_symbol, close_symbol) in enumerate(zip(open_symbols, close_symbols)):
+
+        num_opens = len([ _ for _ in ss_string if _ == open_symbol])
+        num_close = len([ _ for _ in ss_string if _ == close_symbol])
+        assert num_opens==num_close , "number of base pairs must be an even number... must be an error somewhere..."
+        
+        all_pair_dict[pair_ind] = find_any_bracket_pairs(ss_string, open_symbol, close_symbol)
+        
+
+    ss_element_list = []
+        
+    for pair_ind in all_pair_dict.keys():
+        paired_base_list = all_pair_dict[pair_ind]
+        for i,j in paired_base_list:
+            ss_element_list.append(('P',i,j))
+
+
+    if not only_basepairs:
+        for i, char in enumerate(ss_string):
+            if char in loop_symbols: 
+                ss_element_list.append(('L',i,i))
+
+
+    if network_params_in:
+        network_params = network_params_in
+    else:
+
+        network_params ={
+            'fc1_w': torch.tensor([[-0.2386, -0.3275, -0.3491,  0.4477,  0.8526, -3.0067, -1.5363],
+                                    [-0.1860,  0.3721, -0.1883,  0.1263,  0.5563, -2.2224, -1.4701],
+                                    [-0.1579,  0.2265, -1.0069,  0.3789,  0.4825, -2.0054, -1.1969]]),
+            'fc1_b': torch.tensor([-1.6262, -1.7848, -1.9741]),
+            'fc2_w': torch.tensor([[-1.5385, -0.2681, -0.1609],
+                                    [ 1.3806,  0.4991,  0.1363],
+                                    [ 0.0748,  0.0310,  0.4322]]),
+            'fc2_b': torch.tensor([ 1.2666, -1.4560,  0.0421]),
+            'fc_out_w': torch.tensor([[-1.3313,  1.1436,  0.1296]]),
+            'fc_out_b': torch.tensor([-1.1276]),
+        }
+
+
+    # Get frame atoms:
+    frame_atom_inds = torch.tensor([rf2aa.chemical.aa2long[representative_res_ind].index(frame_atom_0),
+                                    rf2aa.chemical.aa2long[representative_res_ind].index(frame_atom_1),
+                                    rf2aa.chemical.aa2long[representative_res_ind].index(frame_atom_2)])
+    frame_xyz = xyz[None,None,0,:,frame_atom_inds,:]
+
+
+    B, T, L = frame_xyz.shape[:3]
+
+    c6d = rf2aa.kinematics.xyz_to_c6d(frame_xyz[:,:,:,:3].view(B*T,L,3,3))
+    c6d = c6d.view(B, T, L, L, 4)
+
+    orien = torch.cat((torch.sin(c6d[...,1:]), torch.cos(c6d[...,1:])), dim=-1) # (B, T, L, L, 6)
+    t2d = torch.cat((c6d[...,0:1], orien), dim=-1)[0,...]
+    D_in = t2d.shape[-1] # input feature dimension
+    D_out = 1 # output feature dimension
+
+    # Prepare t2d feats for forward pass
+    x = t2d.reshape(B*L*L, D_in)
+    
+    # Pass through the network
+    x = torch.matmul(x,network_params['fc1_w'].T) + network_params['fc1_b']
+    x = torch.matmul(x,network_params['fc2_w'].T) + network_params['fc2_b']
+    x = torch.matmul(x,network_params['fc_out_w'].T) + network_params['fc_out_b']
+
+    x = x.reshape(B, L, L, D_out)
+    
+    P_mat = torch.sigmoid(x + x.permute(0,2,1,3))[0,:,:,0]  # Using sigmoid to get values between 0 and 1 (matrix of bp probabilities)
+
+    pSSA_vec = torch.zeros(L)
+    num_positions_counted = 0
+    for i, ss_element_i in enumerate(ss_element_list):
+
+        if ss_element_i[0]=='L':
+            P_not_i = torch.cat((P_mat[ss_element_i[1],:ss_element_i[2]], P_mat[ss_element_i[1],ss_element_i[2]+1:]),dim=-1)
+            pSSA_vec[ss_element_i[1]] = (1-torch.max(P_not_i))+1e-8
+
+        elif ss_element_i[0]=='P':
+            pSSA_vec[1] = P_mat[ss_element_i[1],ss_element_i[2]]
+
+
+    print('WARNING! THE FUNCTIONALITY OF OUR pSSA SYSTEM IS STILL SUB-OPTIMAL!!!')
+    print('WARNING! THE FUNCTIONALITY OF OUR pSSA SYSTEM IS STILL SUB-OPTIMAL!!!')
+    print('WARNING! THE FUNCTIONALITY OF OUR pSSA SYSTEM IS STILL SUB-OPTIMAL!!!')
+
+
+    return pSSA_vec
+    
 
 
 

@@ -32,7 +32,7 @@ import rotation_conversions
 import atomize
 import sys 
 import mask_generator
-from rf2aa.util_module import XYZConverter
+# from rf2aa.util_module import XYZConverter
 from pdb import set_trace
 
 NINDEL=1

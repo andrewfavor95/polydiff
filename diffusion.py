@@ -10,23 +10,34 @@ from scipy.spatial.transform import Rotation as scipy_R
 from scipy.spatial.transform import Slerp 
 import rotation_conversions
 
-from util import rigid_from_3_points, get_torsions
+# from util import rigid_from_3_points, get_torsions
+# from util import torsion_indices as TOR_INDICES 
+# from util import torsion_can_flip as TOR_CAN_FLIP
+# from util import reference_angles as REF_ANGLES
+# from util import rigid_from_3_points, get_torsions
 
-from util import torsion_indices as TOR_INDICES 
-from util import torsion_can_flip as TOR_CAN_FLIP
-from util import reference_angles as REF_ANGLES
+
+
+from rf2aa.util import torsion_indices as TOR_INDICES 
+from rf2aa.util import torsion_can_flip as TOR_CAN_FLIP
+from rf2aa.util import reference_angles as REF_ANGLES
+from rf2aa.util import rigid_from_3_points
+from rf2aa.util_module import XYZConverter
+
 import sys 
-from util_module import ComputeAllAtomCoords
+# from util_module import ComputeAllAtomCoords
 
 from diff_util import th_min_angle, th_interpolate_angles, get_aa_schedule 
 
-from chemical import INIT_CRDS 
+# from chemical import INIT_CRDS 
+
 import igso3
 import time 
 
 from icecream import ic  
 
 import rf2aa.chemical
+from rf2aa.chemical import INIT_CRDS
 from pdb import set_trace
 torch.set_printoptions(sci_mode=False)
 
@@ -793,7 +804,8 @@ class INTERP():
 
 
         # cos first, sin second 
-        torsions_sincos, torsions_alt_sincos, tors_mask, tors_planar = get_torsions(xyz[None], seq[None], TOR_INDICES, TOR_CAN_FLIP, REF_ANGLES)
+        # torsions_sincos, torsions_alt_sincos, tors_mask, tors_planar = get_torsions(xyz[None], seq[None], TOR_INDICES, TOR_CAN_FLIP, REF_ANGLES)
+        torsions_sincos, torsions_alt_sincos, tors_mask, tors_planar = XYZConverter.get_torsions(xyz[None], seq[None], TOR_INDICES, TOR_CAN_FLIP, REF_ANGLES)
 
         # convert sin/cos to degrees
         torsions_angle     = torch.atan2(torsions_sincos[...,1], 
@@ -946,7 +958,9 @@ class Diffuser():
         if diffusion_mask is None:
             diffusion_mask = torch.zeros(len(xyz.squeeze())).to(dtype=bool)
 
-        get_allatom = ComputeAllAtomCoords().to(device=xyz.device)
+        # get_allatom = ComputeAllAtomCoords().to(device=xyz.device)
+        converter = XYZConverter().to(device=xyz.device)
+
         L = len(xyz)
 
         # bring to origin and scale 
@@ -1049,7 +1063,10 @@ class Diffuser():
                 for t,alphas_t in enumerate(diffused_torsions_trig.transpose(0,1)):
                     xyz_bb_t = diffused_BB[t,:,:3]
 
-                    _,fullatom_t = get_allatom(seq[None], xyz_bb_t[None], alphas_t[None])
+                    # _,fullatom_t = get_allatom(seq[None], xyz_bb_t[None], alphas_t[None])
+                    _,fullatom_t = converter.compute_all_atom(seq[None], xyz_bb_t[None], alphas_t[None])
+
+                    
                     fa_stack.append(fullatom_t)
 
             else:
@@ -1058,7 +1075,10 @@ class Diffuser():
                     xyz_bb_t  = diffused_BB[t_idx,:,:3]
                     alphas_t = diffused_torsions_trig.transpose(0,1)[t_idx]
 
-                    _,fullatom_t = get_allatom(seq[None], xyz_bb_t[None], alphas_t[None])
+                    # _,fullatom_t = get_allatom(seq[None], xyz_bb_t[None], alphas_t[None])
+                    _,fullatom_t = converter.compute_all_atom(seq[None], xyz_bb_t[None], alphas_t[None])
+
+                    
                     fa_stack.append(fullatom_t.squeeze())
 
             fa_stack = torch.stack(fa_stack, dim=0)

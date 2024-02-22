@@ -35,6 +35,8 @@ def update_dims(weights,key):
     # weights['templ_emb.emb.weight'] # Original shape: (64, 88)
     # weights['templ_emb.emb_t1d.weight'] # Original shape: (64, 52)
 
+    ipdb.set_trace()
+    # weights['bind_pred.downsample.weight']
     # Adding 2D embedding features
     # d_t1d*2+d_t2d
     if True:
@@ -129,7 +131,11 @@ new_t2d   = orig_t2d + args.delta_t2d_dim
 # ckpt      = torch.load('/home/afavor/git/RFD_AF/3template_na/rf_diffusion/train_session2023-11-10_1699643206.3058493/models/BFF_7.pt', map_location=torch.device('cpu'))
 # ckpt = torch.load('/home/afavor/git/RFD_AF/3template_na/rf_diffusion/train_session2023-11-10_1699643206.3058493/models/BFF_2.pt', map_location=torch.device('cpu'))
 # ckpt = torch.load('/home/afavor/git/RFD_AF/3template_na/checkpoints/from_rohith/rf2a_25c_414_t1d_81_t2d_69.pt')
-ckpt = torch.load(args.input_ckpt)
+# ckpt = torch.load(args.input_ckpt, map_location=torch.device('cpu'))
+
+
+# ckpt = torch.load(args.input_ckpt)
+ckpt = torch.load(args.input_ckpt, map_location=torch.device('cpu'))
 
 for k in ['final_state_dict', 'model_state_dict']:
     weights_in = ckpt[k]

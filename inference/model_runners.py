@@ -1620,10 +1620,7 @@ class NRBStyleSelfCond(Sampler):
         px0    = px0.float()
         # Modify logits if we want to use polymer masks:
         if self._conf.inference['mask_seq_by_polymer']:
-            # logit_penalty = 1e7
-            # logit_penalty = 1e12
             logit_penalty = 1e4
-            # logit_penalty = 1e1
             logits = logits - logit_penalty*(torch.ones_like(self.polymer_mask)-self.polymer_mask)
 
         if self.seq_diffuser is None:
@@ -1705,7 +1702,6 @@ class NRBStyleSelfCond(Sampler):
 
             self.cur_rigid_tmplt = cur_rigid_tmplt
         else:
-            
             px0 = px0.cpu()
             px0[~self.is_diffused] = indep.xyz[~self.is_diffused]
             x_t_1 = torch.clone(px0)

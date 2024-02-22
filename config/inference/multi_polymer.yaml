@@ -29,6 +29,7 @@ inference:
   protein_rna_hotspot_res: null
   dna_rna_hotspot_res: null
   use_poly_hotspots_t1d: False
+  compute_pSSA: False
   # align_motif: False
 
 preprocess:
