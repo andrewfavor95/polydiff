@@ -30,9 +30,11 @@ import rf2aa.loss
 import rf2aa.tensor_util
 from rf2aa.tensor_util import assert_equal
 from rf2aa.util_module import XYZConverter
-from rf2aa.util import get_frames
+from rf2aa.util import get_frames, is_protein, is_nucleic, is_DNA, is_RNA, is_atom
 from rf2aa.RoseTTAFoldModel import RoseTTAFoldModule
 from rf2aa.loss import compute_general_FAPE, mask_unresolved_frames
+
+
 import loss_aa
 import run_inference
 import aa_model
@@ -44,7 +46,9 @@ from data_loader import (
 )
 import error
 
-from kinematics import xyz_to_c6d, c6d_to_bins2, xyz_to_t2d, xyz_to_bbtor, get_init_xyz
+# from kinematics import xyz_to_c6d, c6d_to_bins2, xyz_to_t2d, xyz_to_bbtor, get_init_xyz
+# from rf2aa.kinematics import xyz_to_c6d, c6d_to_bins2, xyz_to_t2d, xyz_to_bbtor, get_init_xyz
+from rf2aa.kinematics import xyz_to_c6d, xyz_to_t2d, xyz_to_bbtor, get_init_xyz
 import loss 
 from loss import *
 import util
@@ -619,12 +623,15 @@ class Trainer():
 
         logit_poly_s_list = []
         for i,ind_range in enumerate(poly_ind_ranges):
-            logit_poly_s_list.append(torch.max(logit_aa_s[:, ind_range, :],1)[0])
+            # logit_poly_s_list.append(torch.max(logit_aa_s[:, ind_range, :],1)[0])
+            # logit_poly_s_list.append(torch.sum(logit_aa_s[:, ind_range, :],1)[0])
+            logit_poly_s_list.append(torch.mean(logit_aa_s[:, ind_range, :],1))
             mask = (label_aa_s_flat >= ind_range.start) & (label_aa_s_flat < ind_range.stop)
             label_poly_s_flat[mask] = i
-
+        
         logit_poly_s = torch.stack(logit_poly_s_list).unsqueeze(0)[:,:,0,:]
         label_poly_s = label_poly_s_flat.reshape(1, 1, label_aa_s.shape[-1])
+        is_na = (label_poly_s_flat > 0)
 
 
         loss = self.loss_fn(logit_poly_s, label_poly_s.reshape(B, -1))
@@ -637,19 +644,17 @@ class Trainer():
 
         ######################################
         #### squared L2 loss on rotations ####
-        ###################################### 
+        ######################################
         I,B,L = pred.shape[:3]
         N_pred, Ca_pred, C_pred = pred[:,:,:,0], pred[:,:,:,1], pred[:,:,:,2]
         N_true, Ca_true, C_true = true[:,:,0], true[:,:,1], true[:,:,2]
         
         # get predicted frames 
-        R_pred,_ = rigid_from_3_points(N_pred.reshape(I*B,L,3), 
-                                       Ca_pred.reshape(I*B,L,3), 
-                                       C_pred.reshape(I*B,L,3))
+        R_pred,_ = rf2aa.util.rigid_from_3_points(N_pred.reshape(I*B,L,3), Ca_pred.reshape(I*B,L,3), C_pred.reshape(I*B,L,3),is_na=is_na)
         
         R_pred = R_pred.reshape(I,B,L,3,3)
         # get true frames 
-        R_true,_ = rigid_from_3_points(N_true, Ca_true, C_true)
+        R_true,_ = rf2aa.util.rigid_from_3_points(N_true, Ca_true, C_true, is_na=is_na)
 
 
         # calculate frame distance loss 

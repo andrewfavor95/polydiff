@@ -15,8 +15,8 @@ import ast
 from dateutil import parser
 import numpy as np
 from parsers import parse_a3m, parse_pdb, parse_dssr
-from chemical import INIT_CRDS
-from kinematics import xyz_to_t2d
+# from chemical import INIT_CRDS
+# from kinematics import xyz_to_t2d
 import sys
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'RF2-allatom'))
 import rf2aa.data_loader
@@ -29,7 +29,8 @@ import rf2aa.chemical
 import guide_posts as gp
 from rf2aa.chemical import INIT_CRDS, INIT_NA_CRDS, NAATOKENS, MASKINDEX, UNKINDEX, \
     NTOTAL, NBTYPES, CHAIN_GAP, num2aa, METAL_RES_NAMES, aa2num, atomnum2atomtype
-
+from rf2aa.chemical import INIT_CRDS
+from rf2aa.kinematics import xyz_to_t2d
 import dataclasses
 
 import matplotlib.pyplot as plt 
@@ -40,7 +41,8 @@ from icecream import ic
 import pickle
 import random
 from apply_masks import mask_inputs
-import util
+# import util
+# import rf2util
 from util import mask_sequence_chunks, sstr_to_matrix, get_pair_ss_partners
 import math
 from functools import partial
@@ -174,6 +176,7 @@ def set_data_loader_params(args):
     for key,val in PARAMS.items():
         print(key, val)
     return PARAMS
+
 
 def MSABlockDeletion(msa, ins, nb=5):
     '''
@@ -1599,93 +1602,238 @@ def dna_complementarity_direction(seq, xyz, Ls): # TODO better way is to match t
         return 'reverse'
     
 
+
 def loader_na_complex_diff(item, params, native_NA_frac=0.25, negative=False, pick_top=True, random_noise=5.0, fixbb=False):
     
     pdb_set = item['CHAINID']
     msa_id = item['HASH']
-    Ls = item['LEN']
+    #Ls = item['LEN']  #fd this is not reported correctly....
 
-    ## HACK to work like the old dataloader. If/when frank introduces updates, go with those updates
-    pdb_ids = pdb_set.split(':')
-    if len(pdb_ids) == 4:
-        pdb_ids = pdb_ids[0:1] + pdb_ids[2:]
-        Ls = Ls[0:1] + Ls[2:]
-
-
-    # read MSA for protein
-    a3mA = rf2aa.data_loader.get_msa(params['PDB_DIR'] + '/a3m/' + msa_id[:3] + '/' + msa_id + '.a3m.gz', msa_id)
-
+    if negative:
+        padding = (item['DNA1'],item['DNA2'])
+    else:
+        padding = item['TOPAD?']
+    
     # read PDBs
-    # pdb_ids = pdb_set.split(':')
-    pdbA = torch.load(params['PDB_DIR']+'/torch/pdb/'+pdb_ids[0][1:3]+'/'+pdb_ids[0]+'.pt')
-    pdbB = torch.load(params['NA_DIR']+'/torch/'+pdb_ids[1][1:3]+'/'+pdb_ids[1]+'.pt')
-    pdbC = None
-    if (len(pdb_ids)==3):
-        pdbC = torch.load(params['NA_DIR']+'/torch/'+pdb_ids[2][1:3]+'/'+pdb_ids[2]+'.pt')
+    pdb_ids = pdb_set.split(':')
 
-    # msa for NA is sequence only
-    msaB,insB = rf2aa.data_loader.parse_fasta_if_exists(
-        pdbB['seq'], params['NA_DIR']+'/torch/'+pdb_ids[1][1:3]+'/'+pdb_ids[1]+'.afa', 
-        maxseq=5000,
-        rmsa_alphabet=True
-    )
-    a3mB = {'msa':torch.from_numpy(msaB), 'ins':torch.from_numpy(insB)}
-    NMDLS=1
-    if (len(pdb_ids)==3):
-        msaC,insC = rf2aa.data_loader.parse_fasta_if_exists(
-            pdbC['seq'], params['NA_DIR']+'/torch/'+pdb_ids[2][1:3]+'/'+pdb_ids[2]+'.afa', 
+    # read protein MSA
+    a3mA = rf2aa.data_loader.get_msa(params['PDB_DIR'] + '/a3m/' + msa_id[:3] + '/' + msa_id + '.a3m.gz', msa_id, maxseq=5000)
+
+    # protein + NA
+    NMDLS = 1
+    if (len(pdb_ids)==2):
+        pdbA = [ torch.load(params['PDB_DIR']+'/torch/pdb/'+pdb_ids[0][1:3]+'/'+pdb_ids[0]+'.pt') ]
+        
+        filenameB = params['NA_DIR']+'/torch/'+pdb_ids[1][1:3]+'/'+pdb_ids[1]+'.pt'
+        if os.path.exists(filenameB+".v3"):
+            filenameB = filenameB+".v3"
+        pdbB = [ torch.load(filenameB) ]
+
+        msaB,insB = rf2aa.data_loader.parse_fasta_if_exists(
+            pdbB[0]['seq'], params['NA_DIR']+'/torch/'+pdb_ids[1][1:3]+'/'+pdb_ids[1]+'.afa', 
             maxseq=5000,
             rmsa_alphabet=True
         )
-        a3mC = {'msa':torch.from_numpy(msaC), 'ins':torch.from_numpy(insC)}
-        a3mB = rf2aa.data_loader.merge_a3m_hetero(a3mB, a3mC, Ls[1:])
-        # if (pdbB['seq']==pdbC['seq']):
-            # NMDLS=2 # flip B and C
+        a3mB = {'msa':torch.from_numpy(msaB), 'ins':torch.from_numpy(insB)}
 
-    # For some reason the data has wrong length info
-    if ( not a3mA['msa'].shape[-1] == Ls[0] ) and (a3mA['msa'].shape[-1] == pdbA['xyz'].shape[0] ):
-        Ls[0] = a3mA['msa'].shape[-1]
+        Ls = [a3mA['msa'].shape[1], a3mB['msa'].shape[1]]
+    # protein + NA duplex
+    elif (len(pdb_ids)==3):
+        pdbA = [ torch.load(params['PDB_DIR']+'/torch/pdb/'+pdb_ids[0][1:3]+'/'+pdb_ids[0]+'.pt') ]
+        filenameB1 = params['NA_DIR']+'/torch/'+pdb_ids[1][1:3]+'/'+pdb_ids[1]+'.pt'
+        filenameB2 = params['NA_DIR']+'/torch/'+pdb_ids[2][1:3]+'/'+pdb_ids[2]+'.pt'
+        if os.path.exists(filenameB1+".v3"):
+            filenameB1 = filenameB1+".v3"
+        if os.path.exists(filenameB2+".v3"):
+            filenameB2 = filenameB2+".v3"
+        pdbB = [ torch.load(filenameB1), torch.load(filenameB2) ]
 
-    a3m = rf2aa.data_loader.merge_a3m_hetero(a3mA, a3mB, [Ls[0],sum(Ls[1:])])
-    # note: the block below is due to differences in the way RNA and DNA structures are processed
+        msaB1,insB1 = rf2aa.data_loader.parse_fasta_if_exists(
+            pdbB[0]['seq'], params['NA_DIR']+'/torch/'+pdb_ids[1][1:3]+'/'+pdb_ids[1]+'.afa', 
+            maxseq=5000,
+            rmsa_alphabet=True
+        )
+        msaB2,insB2 = rf2aa.data_loader.parse_fasta_if_exists(
+            pdbB[1]['seq'], params['NA_DIR']+'/torch/'+pdb_ids[2][1:3]+'/'+pdb_ids[2]+'.afa', 
+            maxseq=5000,
+            rmsa_alphabet=True
+        )
+        if (pdbB[0]['seq']==pdbB[1]['seq']):
+            NMDLS=2 # flip B0 and B1
+
+        a3mB1 = {'msa':torch.from_numpy(msaB1), 'ins':torch.from_numpy(insB1)}
+        a3mB2 = {'msa':torch.from_numpy(msaB2), 'ins':torch.from_numpy(insB2)}
+        Ls = [a3mA['msa'].shape[1], a3mB1['msa'].shape[1], a3mB2['msa'].shape[1]]
+        a3mB = rf2aa.data_loader.merge_a3m_hetero(a3mB1, a3mB2, Ls[1:])
+
+    # homodimer + NA duplex
+    elif (len(pdb_ids)==4):
+        pdbA = [
+            torch.load(params['PDB_DIR']+'/torch/pdb/'+pdb_ids[0][1:3]+'/'+pdb_ids[0]+'.pt'),
+            torch.load(params['PDB_DIR']+'/torch/pdb/'+pdb_ids[1][1:3]+'/'+pdb_ids[1]+'.pt')
+        ]
+        filenameB1 = params['NA_DIR']+'/torch/'+pdb_ids[2][1:3]+'/'+pdb_ids[2]+'.pt'
+        filenameB2 = params['NA_DIR']+'/torch/'+pdb_ids[3][1:3]+'/'+pdb_ids[3]+'.pt'
+        if os.path.exists(filenameB1+".v3"):
+            filenameB1 = filenameB1+".v3"
+        if os.path.exists(filenameB2+".v3"):
+            filenameB2 = filenameB2+".v3"
+        pdbB = [ torch.load(filenameB1), torch.load(filenameB2) ]
+        msaB1,insB1 = rf2aa.data_loader.parse_fasta_if_exists(
+            pdbB[0]['seq'], params['NA_DIR']+'/torch/'+pdb_ids[2][1:3]+'/'+pdb_ids[2]+'.afa', 
+            maxseq=5000,
+            rmsa_alphabet=True
+        )
+        msaB2,insB2 = rf2aa.data_loader.parse_fasta_if_exists(
+            pdbB[1]['seq'], params['NA_DIR']+'/torch/'+pdb_ids[3][1:3]+'/'+pdb_ids[3]+'.afa', 
+            maxseq=5000,
+            rmsa_alphabet=True
+        )
+        a3mB1 = {'msa':torch.from_numpy(msaB1), 'ins':torch.from_numpy(insB1)}
+        a3mB2 = {'msa':torch.from_numpy(msaB2), 'ins':torch.from_numpy(insB2)}
+        Ls = [a3mA['msa'].shape[1], a3mA['msa'].shape[1], a3mB1['msa'].shape[1], a3mB2['msa'].shape[1]]
+        a3mB = rf2aa.data_loader.merge_a3m_hetero(a3mB1, a3mB2, Ls[2:])
+
+
+        NMDLS=2 # flip A0 and A1
+        if (pdbB[0]['seq']==pdbB[1]['seq']):
+            NMDLS=4 # flip B0 and B1
+
+    else:
+        assert False
+
+    # apply padding
+    if (not negative and padding):
+        assert (len(pdbB)==2)
+        lpad = np.random.randint(6)
+        rpad = np.random.randint(6)
+        lseq1 = torch.randint(4,(1,lpad))
+        rseq1 = torch.randint(4,(1,rpad))
+        lseq2 = 3-torch.flip(rseq1,(1,))
+        rseq2 = 3-torch.flip(lseq1,(1,))
+
+        # pad seqs -- hacky, DNA indices 22-25
+        msaB1 = torch.cat((22+lseq1,a3mB1['msa'],22+rseq1), dim=1)
+        msaB2 = torch.cat((22+lseq2,a3mB2['msa'],22+rseq2), dim=1)
+        insB1 = torch.cat((torch.zeros_like(lseq1),a3mB1['ins'],torch.zeros_like(rseq1)), dim=1)
+        insB2 = torch.cat((torch.zeros_like(lseq2),a3mB2['ins'],torch.zeros_like(rseq2)), dim=1)
+        a3mB1 = {'msa':msaB1, 'ins':insB1}
+        a3mB2 = {'msa':msaB2, 'ins':insB2}
+
+        # update lengths
+        Ls = Ls.copy()
+        Ls[-2] = msaB1.shape[1]
+        Ls[-1] = msaB2.shape[1]
+
+        a3mB = rf2aa.data_loader.merge_a3m_hetero(a3mB1, a3mB2, Ls[-2:])
+
+        # pad PDB
+        pdbB[0]['xyz'] = torch.nn.functional.pad(pdbB[0]['xyz'], (0,0,0,0,lpad,rpad), "constant", 0.0)
+        pdbB[0]['mask'] = torch.nn.functional.pad(pdbB[0]['mask'], (0,0,lpad,rpad), "constant", False)
+        pdbB[1]['xyz'] = torch.nn.functional.pad(pdbB[1]['xyz'], (0,0,0,0,rpad,lpad), "constant", 0.0)
+        pdbB[1]['mask'] = torch.nn.functional.pad(pdbB[1]['mask'], (0,0,rpad,lpad), "constant", False)
+
+    # rewrite seq if negative
+    if (negative):
+        alphabet = np.array(list("ARNDCQEGHILKMFPSTWYV-Xacgtxbdhuy"), dtype='|S1').view(np.uint8)
+        seqA = np.array( [list(padding[0])], dtype='|S1').view(np.uint8)
+        seqB = np.array( [list(padding[1])], dtype='|S1').view(np.uint8)
+        for i in range(alphabet.shape[0]):
+            seqA[seqA == alphabet[i]] = i
+            seqB[seqB == alphabet[i]] = i
+        seqA = torch.tensor(seqA)
+        seqB = torch.tensor(seqB)
+
+        # scramble seq
+        diff = (a3mB1['msa'] != seqA)
+        shift = torch.randint(1,4, (torch.sum(diff),), dtype=torch.uint8)
+        seqA[diff] = ((a3mB1['msa'][diff]-22)+shift)%4+22
+        seqB = torch.flip(25-seqA+22, dims=(-1,))
+
+        a3mB1 = {'msa':seqA, 'ins':torch.zeros(seqA.shape)}
+        a3mB2 = {'msa':seqB, 'ins':torch.zeros(seqB.shape)}
+        a3mB = rf2aa.data_loader.merge_a3m_hetero(a3mB1, a3mB2, Ls[-2:])
+
+    ## look for shared MSA
+    a3m=None
+    NAchn = pdb_ids[1].split('_')[1]
+    sharedMSA = params['NA_DIR']+'/msas/'+pdb_ids[0][1:3]+'/'+pdb_ids[0][:4]+'/'+pdb_ids[0]+'_'+NAchn+'_paired.a3m'
+    if (len(pdb_ids)==2 and os.path.exists(sharedMSA)):
+        msa,ins,_ = rf2aa.data_loader.parse_mixed_fasta(sharedMSA)
+        if (msa.shape[1] != sum(Ls)):
+            print ("Error loading shared MSA",pdb_ids, msa.shape, Ls)
+        else:
+            a3m = {'msa':torch.from_numpy(msa),'ins':torch.from_numpy(ins)}
+
+    if a3m is None:
+        if (len(pdbA)==2):
+            msa = a3mA['msa'].long()
+            ins = a3mA['ins'].long()
+            msa,ins = merge_a3m_homo(msa, ins, 2)
+            a3mA = {'msa':msa,'ins':ins}
+
+        if (len(pdb_ids)==4):
+            a3m = rf2aa.data_loader.merge_a3m_hetero(a3mA, a3mB, [Ls[0]+Ls[1],sum(Ls[2:])])
+        else:
+            a3m = rf2aa.data_loader.merge_a3m_hetero(a3mA, a3mB, [Ls[0],sum(Ls[1:])])
+
+
+    # the block below is due to differences in the way RNA and DNA structures are processed
     # to support NMR, RNA structs return multiple states
     # For protein/NA complexes get rid of the 'NMODEL' dimension (if present)
     # NOTE there are a very small number of protein/NA NMR models:
-    #       - ideally these should return the ensemble, but that requires reprocessing of PDBs
-    if (len(pdbB['xyz'].shape) > 3):
-         pdbB['xyz'] = pdbB['xyz'][0,...]
-         pdbB['mask'] = pdbB['mask'][0,...]
-    if (pdbC is not None and len(pdbC['xyz'].shape) > 3):
-         pdbC['xyz'] = pdbC['xyz'][0,...]
-         pdbC['mask'] = pdbC['mask'][0,...]
+    #       - ideally these should return the ensemble, but that requires reprocessing of proteins
+    for pdb in pdbB:
+        if (len(pdb['xyz'].shape) > 3):
+            pdb['xyz'] = pdb['xyz'][0,...]
+            pdb['mask'] = pdb['mask'][0,...]
 
     # read template info
     tpltA = torch.load(params['PDB_DIR'] + '/torch/hhr/' + msa_id[:3] + '/' + msa_id + '.pt')
     ntempl = np.random.randint(params['MINTPLT'], params['MAXTPLT']-1)
-    xyz_t, f1d_t, mask_t = rf2aa.data_loader.TemplFeaturize(tpltA, sum(Ls), params, offset=0, npick=ntempl, pick_top=pick_top, random_noise=random_noise) 
-    xyz_t[:,Ls[0]:] = INIT_NA_CRDS.reshape(1,1,NTOTAL,3).repeat(1,sum(Ls[1:]),1,1) + torch.rand(1,sum(Ls[1:]),1,3)*random_noise - random_noise/2
+    if (len(pdb_ids)==4):
+        if ntempl < 1:
+            xyz_t, f1d_t, mask_t, _ = rf2aa.data_loader.TemplFeaturize(tpltA, 2*Ls[0], params, npick=ntempl, offset=0, pick_top=pick_top, random_noise=random_noise)
+        else:
+            xyz_t_single, f1d_t_single, mask_t_single, _ = rf2aa.data_loader.TemplFeaturize(tpltA, Ls[0], params, npick=ntempl, offset=0, pick_top=pick_top, random_noise=random_noise)
+            # duplicate
+            xyz_t = torch.cat((xyz_t_single, rf2aa.util.random_rot_trans(xyz_t_single)), dim=1) # (ntempl, 2*L, natm, 3)
+            f1d_t = torch.cat((f1d_t_single, f1d_t_single), dim=1) # (ntempl, 2*L, 21)
+            mask_t = torch.cat((mask_t_single, mask_t_single), dim=1) # (ntempl, 2*L, natm)
 
+        ntmpl = xyz_t.shape[0]
+        nNA = sum(Ls[2:])
+        xyz_t = torch.cat( 
+            (xyz_t, INIT_NA_CRDS.reshape(1,1,NTOTAL,3).repeat(ntmpl,nNA,1,1) + torch.rand(ntmpl,nNA,1,3)*random_noise), dim=1)
+        f1d_t = torch.cat(
+            (f1d_t, torch.nn.functional.one_hot(torch.full((ntmpl,nNA), 20).long(), num_classes=NAATOKENS).float()), dim=1) # add extra class for 0 confidence
+        mask_t = torch.cat( 
+            (mask_t, torch.full((ntmpl,nNA,NTOTAL), False)), dim=1)
+
+        NAstart = 2*Ls[0]
+    else:
+        xyz_t, f1d_t, mask_t, _ = rf2aa.data_loader.TemplFeaturize(tpltA, sum(Ls), params, offset=0, npick=ntempl, pick_top=pick_top, random_noise=random_noise)
+        xyz_t[:,Ls[0]:] = INIT_NA_CRDS.reshape(1,1,NTOTAL,3).repeat(1,sum(Ls[1:]),1,1) + torch.rand(1,sum(Ls[1:]),1,3)*random_noise
+        NAstart = Ls[0]
+
+    # seed with native NA
     if (np.random.rand()<=native_NA_frac):
-        natNA_templ = pdbB['xyz']
-        maskNA_templ = pdbB['mask']
-
-        if pdbC is not None:
-            natNA_templ = torch.cat((pdbB['xyz'], pdbC['xyz']), dim=0)
-            maskNA_templ =  torch.cat((pdbB['mask'], pdbC['mask']), dim=0)
+        natNA_templ = torch.cat( [x['xyz'] for x in pdbB], dim=0)
+        maskNA_templ = torch.cat( [x['mask'] for x in pdbB], dim=0)
 
         # construct template from NA
-        xyz_t_B = INIT_CRDS.reshape(1,1,NTOTAL,3).repeat(1,sum(Ls),1,1) + torch.rand(1,sum(Ls),1,3)*random_noise - random_noise/2
-        #xyz_t_B[:,Ls[0]:,:23] = natNA_templ
+        xyz_t_B = INIT_CRDS.reshape(1,1,NTOTAL,3).repeat(1,sum(Ls),1,1) + torch.rand(1,sum(Ls),1,3)*random_noise
         mask_t_B = torch.full((1,sum(Ls),NTOTAL), False)
-        mask_t_B[:,Ls[0]:,:23] = maskNA_templ
+        mask_t_B[:,NAstart:,:23] = maskNA_templ
         xyz_t_B[mask_t_B] = natNA_templ[maskNA_templ]
 
-        seq_t_B = torch.cat( (torch.full((1, Ls[0]), 20).long(),  a3mB['msa'][0:1]), dim=1)
+        seq_t_B = torch.cat( (torch.full((1, NAstart), 20).long(),  a3mB['msa'][0:1]), dim=1)
         seq_t_B[seq_t_B>21] -= 1 # remove mask token
         f1d_t_B = torch.nn.functional.one_hot(seq_t_B, num_classes=NAATOKENS-1).float()
         conf_B = torch.cat( (
-            torch.zeros((1,Ls[0],1)),
-            torch.full((1,sum(Ls[1:]),1),1.0),
+            torch.zeros((1,NAstart,1)),
+            torch.full((1,sum(Ls)-NAstart,1),1.0),
         ),dim=1).float()
         f1d_t_B = torch.cat((f1d_t_B, conf_B), -1)
 
@@ -1698,24 +1846,42 @@ def loader_na_complex_diff(item, params, native_NA_frac=0.25, negative=False, pi
     ins = a3m['ins'].long()
     if len(msa) > params['BLOCKCUT']:
         msa, ins = rf2aa.data_loader.MSABlockDeletion(msa, ins)
-    seq, msa_seed_orig, msa_seed, msa_extra, mask_msa = rf2aa.data_loader.MSAFeaturize(msa, ins, params, L_s=Ls, fixbb=fixbb)
+    seq, msa_seed_orig, msa_seed, msa_extra, mask_msa = rf2aa.data_loader.MSAFeaturize(msa, ins, params, L_s=Ls)
 
-    xyz = torch.full((NMDLS, sum(Ls), NTOTAL, 3), np.nan).float()
+    # build native from components
+    xyz = torch.full((NMDLS, sum(Ls), NTOTAL, 3), np.nan)
     mask = torch.full((NMDLS, sum(Ls), NTOTAL), False)
-    if (len(pdb_ids)==3):
-        xyz[:,:Ls[0],:14] = pdbA['xyz'][None,...]
-        xyz[0,Ls[0]:,:23] = torch.cat((pdbB['xyz'], pdbC['xyz']), dim=0)
-        mask[:,:Ls[0],:14] = pdbA['mask'][None,...]
-        mask[0,Ls[0]:,:23] = torch.cat((pdbB['mask'], pdbC['mask']), dim=0)
+    if (len(pdb_ids)==2):
+        xyz[0,:NAstart,:14] = pdbA[0]['xyz']
+        xyz[0,NAstart:,:23] = pdbB[0]['xyz']
+        mask[0,:NAstart,:14] = pdbA[0]['mask']
+        mask[0,NAstart:,:23] = pdbB[0]['mask']
+    elif (len(pdb_ids)==3):
+        xyz[:,:NAstart,:14] = pdbA[0]['xyz'][None,...]
+        xyz[0,NAstart:,:23] = torch.cat((pdbB[0]['xyz'], pdbB[1]['xyz']), dim=0)
+        mask[:,:NAstart,:14] = pdbA[0]['mask'][None,...]
+        mask[0,NAstart:,:23] = torch.cat((pdbB[0]['mask'], pdbB[1]['mask']), dim=0)
         if (NMDLS==2): # B & C are identical
-            xyz[1,Ls[0]:,:23] = torch.cat((pdbC['xyz'], pdbB['xyz']), dim=0)
-            mask[1,Ls[0]:,:23] = torch.cat((pdbC['mask'], pdbB['mask']), dim=0)
+            xyz[1,NAstart:,:23] = torch.cat((pdbB[1]['xyz'], pdbB[0]['xyz']), dim=0)
+            mask[1,NAstart:,:23] = torch.cat((pdbB[1]['mask'], pdbB[0]['mask']), dim=0)
     else:
-        xyz[0,:Ls[0],:14] = pdbA['xyz']
-        xyz[0,Ls[0]:,:23] = pdbB['xyz']
-        mask[0,:Ls[0],:14] = pdbA['mask']
-        mask[0,Ls[0]:,:23] = pdbB['mask']
+        xyz[0,:NAstart,:14] = torch.cat( (pdbA[0]['xyz'], pdbA[1]['xyz']), dim=0)
+        xyz[1,:NAstart,:14] = torch.cat( (pdbA[1]['xyz'], pdbA[0]['xyz']), dim=0)
+        xyz[:2,NAstart:,:23] = torch.cat((pdbB[0]['xyz'], pdbB[1]['xyz']), dim=0)[None,...]
+        mask[0,:NAstart,:14] = torch.cat( (pdbA[0]['mask'], pdbA[1]['mask']), dim=0)
+        mask[1,:NAstart,:14] = torch.cat( (pdbA[1]['mask'], pdbA[0]['mask']), dim=0)
+        mask[:2,NAstart:,:23] = torch.cat( (pdbB[0]['mask'], pdbB[1]['mask']), dim=0)[None,...]
+        if (NMDLS==4): # B & C are identical
+            xyz[2,:NAstart,:14] = torch.cat( (pdbA[0]['xyz'], pdbA[1]['xyz']), dim=0)
+            xyz[3,:NAstart,:14] = torch.cat( (pdbA[1]['xyz'], pdbA[0]['xyz']), dim=0)
+            xyz[2:,NAstart:,:23] = torch.cat((pdbB[1]['xyz'], pdbB[0]['xyz']), dim=0)[None,...]
+            mask[2,:NAstart,:14] = torch.cat( (pdbA[0]['mask'], pdbA[1]['mask']), dim=0)
+            mask[3,:NAstart,:14] = torch.cat( (pdbA[1]['mask'], pdbA[0]['mask']), dim=0)
+            mask[2:,NAstart:,:23] = torch.cat( (pdbB[1]['mask'], pdbB[0]['mask']), dim=0)[None,...]
+    
     xyz = torch.nan_to_num(xyz)
+
+    xyz, mask = rf2aa.data_loader.remap_NA_xyz_tensors(xyz,mask,msa[0])
 
     # other features
     idx = idx_from_Ls(Ls)
@@ -1723,17 +1889,8 @@ def loader_na_complex_diff(item, params, native_NA_frac=0.25, negative=False, pi
     bond_feats = bond_feats_from_Ls(Ls)
     ch_label = torch.cat([torch.full((L_,), i) for i,L_ in enumerate(Ls)]).long()
 
-
     # Do cropping
-    # import pickle
-    # pickle.dump([seq, xyz, mask, Ls, params, negative], open('/home/ptkim/temp/0_pre_crop.pkl', 'wb'))
-
     if sum(Ls) > params['CROP']:
-    # if True: # always crop!
-        # na_contacts, prot_contacts = contacting_dna_protein_residues(xyz.squeeze(), Ls)
-        # na_contacts, prot_contacts = contacting_dna_protein_residues(xyz.squeeze(), Ls, closest_k=2)
-        # sel = na_motif_preserving_tight_crop(seq.squeeze(), xyz.squeeze(), na_contacts, prot_contacts, Ls, params['CROP'])
-        # sel = rf2aa.data_loader.get_na_crop(seq[0], xyz[0], mask[0], torch.arange(sum(Ls)), Ls, params, negative)
         cropref = np.random.randint(xyz.shape[0])
         sel = rf2aa.data_loader.get_na_crop(seq[0], xyz[cropref], mask[cropref], torch.arange(sum(Ls)), Ls, params, negative)
 
@@ -1753,20 +1910,22 @@ def loader_na_complex_diff(item, params, native_NA_frac=0.25, negative=False, pi
         bond_feats = bond_feats[sel][:,sel]
         ch_label = ch_label[sel]
 
-    xyz_prev = xyz_t[0].clone()
-    mask_prev = mask_t[0].clone()
+    ntempl = xyz_t.shape[0]
+    xyz_t = torch.stack(
+        [center_and_realign_missing(xyz_t[i], mask_t[i], same_chain=same_chain) for i in range(ntempl)]
+    )
+    xyz_prev, mask_prev = rf2aa.data_loader.generate_xyz_prev(xyz_t, mask_t, params)
+
     chirals = torch.Tensor()
     dist_matrix = rf2aa.data_loader.get_bond_distances(bond_feats)
 
-    # TEMPORARILY NONE: IMPLEMENT LATER
-    ss_matrix = None
 
     return seq.long(), msa_seed_orig.long(), msa_seed.float(), msa_extra.float(), mask_msa,\
            xyz.float(), mask, idx.long(), \
            xyz_t.float(), f1d_t.float(), mask_t, \
            xyz_prev.float(), mask_prev, \
            same_chain, False, negative, torch.zeros(seq.shape), bond_feats, dist_matrix, chirals, ch_label, 'C1', "na_compl", item, [[Ls],[]]
-           # same_chain, False, negative, torch.zeros(seq.shape), bond_feats, dist_matrix, chirals, ch_label, 'C1', ss_matrix, "na_compl", item, [Ls,[]]
+           # same_chain, False, negative, torch.zeros(seq.shape), bond_feats, dist_matrix, chirals, ch_label, 'C1', ss_matrix, "na_compl", item, [[Ls],[]]
 
 
 def loader_distil_tf_diff(item, params, random_noise=5.0, pick_top=True, native_NA_frac=0.05, negative=False, fixbb=False):
@@ -1952,6 +2111,8 @@ def loader_dna_rna_diff(item, params, random_noise=5.0, pick_top=True, native_NA
     else:
         xyz[:,:,:23] = pdbA['xyz']
         mask[:,:,:23] = pdbA['mask']
+
+    xyz, mask = rf2aa.data_loader.remap_NA_xyz_tensors(xyz,mask,msa[0])
 
     # other features
     idx = torch.arange(L)

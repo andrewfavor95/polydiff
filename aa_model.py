@@ -11,13 +11,13 @@ import rf2aa.util
 from rf2aa import parsers
 from dataclasses import dataclass
 from rf2aa.data_loader import MSAFeaturize, MSABlockDeletion, merge_a3m_homo, merge_a3m_hetero
-from rf2aa.kinematics import xyz_to_c6d, c6d_to_bins, xyz_to_t2d, get_chirals
+from rf2aa.kinematics import xyz_to_c6d, c6d_to_bins, xyz_to_t2d, get_chirals, get_init_xyz
 from rf2aa.util_module import XYZConverter
 import rf2aa.tensor_util
 import torch
 import copy
 import numpy as np
-from kinematics import get_init_xyz
+# from kinematics import get_init_xyz
 import chemical
 from rf2aa.chemical import MASKINDEX, DNAMASKINDEX, RNAMASKINDEX
 import rf2aa.chemical
@@ -237,6 +237,7 @@ def filter_het(pdb_lines, ligand):
             violations.append(f'line {l} references atom ids in the target ligand {ligand}: {ligand_atms_bonded_to_protein} and another atom')
     if violations:
         raise Exception('\n'.join(violations))
+
     return lines
 
 
@@ -1918,7 +1919,8 @@ def eye_frames(xyz, _assert=False):
     L, _, _ = xyz.shape
 
     # find the R that would yield ID matrix when combined w/ current frames 
-    R_orig, _ = util.rigid_from_3_points(xyz[None,:,0,:], xyz[None,:,1,:], xyz[None,:,2,:])
+    # R_orig, _ = util.rigid_from_3_points(xyz[None,:,0,:], xyz[None,:,1,:], xyz[None,:,2,:])
+    R_orig, _ = rf2aa.util.rigid_from_3_points(xyz[None,:,0,:], xyz[None,:,1,:], xyz[None,:,2,:])
     R_orig = R_orig[0] # (L,3,3)
     R_inv = R_orig.transpose(-1,-2)
 
@@ -1928,7 +1930,8 @@ def eye_frames(xyz, _assert=False):
 
     if _assert: 
         # make sure it worked 
-        R_new, _ = util.rigid_from_3_points(rotated[None,:,0,:], rotated[None,:,1,:], rotated[None,:,2,:])
+        # R_new, _ = util.rigid_from_3_points(rotated[None,:,0,:], rotated[None,:,1,:], rotated[None,:,2,:])
+        R_new, _ = rf2aa.util.rigid_from_3_points(rotated[None,:,0,:], rotated[None,:,1,:], rotated[None,:,2,:])
         R_new = R_new[0] # (L,3,3)
         
         eye = torch.eye(3, dtype=R_new.dtype, device=R_new.device).unsqueeze(0).expand(L,3,3)

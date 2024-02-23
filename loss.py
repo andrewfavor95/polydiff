@@ -2,7 +2,9 @@ import torch
 import numpy as np
 from opt_einsum import contract as einsum
 
-from util import rigid_from_3_points, get_mu_xt_x0
+# from util import rigid_from_3_points, get_mu_xt_x0
+from util import get_mu_xt_x0
+from rf2aa.util import rigid_from_3_points
 from kinematics import get_dih, th_kabsch
 from scoring import HbHybType
 from icecream import ic
@@ -19,10 +21,17 @@ torch.autograd.set_detect_anomaly(True)
 # 4. predicted lddt loss
 
 def frame_distance_err(R_pred, R_true, eps=1e-8):
+    '''
+    Args
+        R_pred (I, B, L, 3, 3)
+        R_true (L, 3, 3)
+    '''
 
     I,B,L = R_pred.shape[:3]
     assert len(R_true.shape) == 3
     assert B == 1
+
+    eps=1e-8
 
     true_repeated = R_true.repeat((I,B,1,1,1))
     eye_repeated  = torch.eye(3,3).repeat((I,B,L,1,1)).to(device=true_repeated.device)
@@ -33,6 +42,7 @@ def frame_distance_err(R_pred, R_true, eps=1e-8):
     # Squared L2 (squared Frobenius) norm of deviation from mm and eye (I,)
     err = torch.square((mm - eye_repeated)+eps).sum(dim=(-1,-2)).mean(dim=-1).squeeze()
     return err
+    
 
 def frame_distance_loss(R_pred, R_true, eps=1e-8, gamma=0.99):
     """
@@ -218,8 +228,7 @@ def calc_displacement_loss(pred, true, gamma=0.99, d_clamp=None):
 # use improved coordinate frame generation
 def get_t(N, Ca, C, non_ideal=False, is_na=None, eps=1e-5):
     I,B,L=N.shape[:3]
-    # Rs,Ts = rigid_from_3_points(N.view(I*B,L,3), Ca.view(I*B,L,3), C.view(I*B,L,3), non_ideal=non_ideal, eps=eps)
-    Rs,Ts = rigid_from_3_points(N.view(I*B,L,3), Ca.view(I*B,L,3), C.view(I*B,L,3), is_na=is_na, eps=eps)
+    Rs,Ts = rigid_from_3_points(N.view(I*B,L,3), Ca.view(I*B,L,3), C.view(I*B,L,3), is_na=is_na, non_ideal=non_ideal, eps=eps)
     Rs = Rs.view(I,B,L,3,3)
     Ts = Ts.view(I,B,L,3)
     t = Ts[:,:,None] - Ts[:,:,:,None] # t[0,1] = residue 0 -> residue 1 vector

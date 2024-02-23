@@ -230,13 +230,15 @@ class ComputeAllAtomCoords(nn.Module):
         self.xyzs_in_base_frame = nn.Parameter(xyzs_in_base_frame, requires_grad=False)
 
     def forward(self, seq, xyz, alphas, non_ideal=False, use_H=True):
+
+        
         # set_trace()
         assert 0, "just doing this to track shit down"
 
         B,L = xyz.shape[:2]
 
         is_NA = is_nucleic(seq)
-        Rs, Ts = rigid_from_3_points(xyz[...,0,:],xyz[...,1,:],xyz[...,2,:], is_NA)
+        Rs, Ts = rigid_from_3_points(xyz[...,0,:],xyz[...,1,:],xyz[...,2,:], is_na=is_NA)
 
         RTF0 = torch.eye(4).repeat(B,L,1,1).to(device=Rs.device)
 
@@ -355,7 +357,15 @@ class ComputeAllAtomCoords(nn.Module):
             RTframes.gather(2,self.base_indices[seq][...,None,None].repeat(1,1,1,4,4)), basexyzs
         )
 
-        return RTframes, xyzs[...,:3]
+        xyzs = torch.einsum(
+            'brtij,brtj->brti', 
+            RTframes.gather(2,self.base_indices[seq][...,None,None].repeat(1,1,1,4,4)), basexyzs
+        )
+
+        if use_H:
+            return RTframes, xyzs[...,:3]
+        else:
+            return RTframes, xyzs[...,:14,:3]
 
 
 

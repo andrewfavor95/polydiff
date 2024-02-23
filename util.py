@@ -25,28 +25,6 @@ def generate_Cbeta(N,Ca,C):
     return Cb
 
 
-def generate_N1(O4,C1,C2,
-                w_a = -0.17613436,
-                w_b = 1.99999996,
-                w_c = -1.15381511
-        ):
-    # recreate N1 given O4', C1', C2'
-    
-    w_a, w_b, w_c = params
-    
-    
-    # recreate Cb given N,Ca,C
-    b = C1 - O4
-    c = C2 - C1
-    a = torch.cross(b, c, dim=-1)
-    #Cb = -0.58273431*a + 0.56802827*b - 0.54067466*c + Ca
-    # fd: below matches sidechain generator (=Rosetta params)
-    N1 = w_a*a + w_b*b + w_c*c + C1
-
-    return N1
-    
-
-
 def th_ang_v(ab,bc,eps:float=1e-8):
     def th_norm(x,eps:float=1e-8):
         return x.square().sum(-1,keepdim=True).add(eps).sqrt()
@@ -169,6 +147,8 @@ def mask_sequence_chunks(is_masked, p=0.5):
 #fd  -  makes no assumptions about input dims (other than last 1 is xyz)
 
 def rigid_from_3_points(N, Ca, C, is_na=None, eps=1e-4):
+
+    assert 0, "nothing wrong here, just trying to redirect all calls to the function versions in rf2aa.util.py"
     dims = N.shape[:-1]
 
     v1 = C-Ca
@@ -202,6 +182,8 @@ def rigid_from_3_points(N, Ca, C, is_na=None, eps=1e-4):
     return R, Ca
 
 def get_tor_mask(seq, torsion_indices, mask_in=None):
+    assert 0, "nothing wrong here, just trying to redirect all calls to the function versions in rf2aa.util.py"
+
     B,L = seq.shape[:2]
     tors_mask = torch.ones((B,L,10), dtype=torch.bool, device=seq.device)
     tors_mask[...,3:7] = torsion_indices[seq,:,-1] > 0
@@ -231,7 +213,8 @@ def get_tor_mask(seq, torsion_indices, mask_in=None):
     return tors_mask
 
 def get_torsions(xyz_in, seq, torsion_indices, torsion_can_flip, ref_angles, mask_in=None):
-    set_trace()
+    # set_trace()
+    assert 0, "nothing wrong here, just trying to redirect all calls to the function versions in rf2aa.util.py"
     B,L = xyz_in.shape[:2]
     
     tors_mask = get_tor_mask(seq, torsion_indices, mask_in)
@@ -405,31 +388,81 @@ def writepdb(filename, atoms, seq, binderlen=None, idx_pdb=None, bfacts=None, ch
 
 
 # resolve tip atom indices
-tip_indices = torch.full((NNAPROTAAS,), 0)
-for i in range(NNAPROTAAS):
-    tip_atm = aa2tip[i]
-    atm_long = aa2long[i]
-    tip_indices[i] = atm_long.index(tip_atm)
+tip_indices = torch.full((NAATOKENS,), 0)
+for i in range(NAATOKENS):
+    if i > NNAPROTAAS-1:
+        # all atoms are at index 1 in the atom array 
+        tip_indices[i] = 1
+    else:
+        tip_atm = aa2tip[i]
+        atm_long = aa2long[i]
+        tip_indices[i] = atm_long.index(tip_atm)
+
+
 
 # resolve torsion indices
-torsion_indices = torch.full((NNAPROTAAS,4,4),0)
-torsion_can_flip = torch.full((NNAPROTAAS,10),False,dtype=torch.bool)
-for i in range(NNAPROTAAS):
+#  a negative index indicates the previous residue
+# order:
+#    omega/phi/psi: 0-2
+#    chi_1-4(prot): 3-6
+#    cb/cg bend: 7-9
+#    eps(p)/zeta(p): 10-11
+#    alpha/beta/gamma/delta: 12-15
+#    nu2/nu1/nu0: 16-18
+#    chi_1(na): 19
+torsion_indices = torch.full((NAATOKENS,NTOTALDOFS,4),0)
+torsion_can_flip = torch.full((NAATOKENS,NTOTALDOFS),False,dtype=torch.bool)
+for i in range(NPROTAAS):
     i_l, i_a = aa2long[i], aa2longalt[i]
+
+    # protein omega/phi/psi
+    torsion_indices[i,0,:] = torch.tensor([-1,-2,0,1]) # omega
+    torsion_indices[i,1,:] = torch.tensor([-2,0,1,2]) # phi
+    torsion_indices[i,2,:] = torch.tensor([0,1,2,3]) # psi (+pi)
+
+    # protein chis
     for j in range(4):
         if torsions[i][j] is None:
             continue
         for k in range(4):
             a = torsions[i][j][k]
-            torsion_indices[i,j,k] = i_l.index(a)
+            torsion_indices[i,3+j,k] = i_l.index(a)
             if (i_l.index(a) != i_a.index(a)):
                 torsion_can_flip[i,3+j] = True ##bb tors never flip
-# HIS is a special case
+
+    # CB/CG angles (only masking uses these indices)
+    torsion_indices[i,7,:] = torch.tensor([0,2,1,4]) # CB ang1
+    torsion_indices[i,8,:] = torch.tensor([0,2,1,4]) # CB ang2
+    torsion_indices[i,9,:] = torch.tensor([0,2,4,5]) # CG ang (arg 1 ignored)
+
+# HIS is a special case for flip
 torsion_can_flip[8,4]=False
 
+# DNA/RNA
+for i in range(NPROTAAS,NNAPROTAAS):
+    torsion_indices[i,10,:] = torch.tensor([-2,-9,-10,4])  # epsilon_prev
+    torsion_indices[i,11,:] = torch.tensor([-9,-10,4,6])   # zeta_prev
+    torsion_indices[i,12,:] = torch.tensor([7,6,4,3])     # alpha c5'-o5'-p-op1
+    torsion_indices[i,13,:] = torch.tensor([8,7,6,4])     # beta c4'-c5'-o5'-p
+    torsion_indices[i,14,:] = torch.tensor([9,8,7,6])     # gamma c3'-c4'-c5'-o5'
+    torsion_indices[i,15,:] = torch.tensor([2,9,8,7])     # delta c2'-c3'-c4'-c5'
+
+    torsion_indices[i,16,:] = torch.tensor([1,2,9,8])     # nu2
+    torsion_indices[i,17,:] = torch.tensor([0,1,2,9])     # nu1
+    torsion_indices[i,18,:] = torch.tensor([2,1,0,8])     # nu0
+
+    # NA chi
+    if torsions[i][0] is not None:
+        i_l = aa2long[i]
+        for k in range(4):
+            a = torsions[i][0][k]
+            torsion_indices[i,19,k] = i_l.index(a) # chi
+
+
+
 # build the mapping from atoms in the full rep (Nx27) to the "alternate" rep
-allatom_mask = torch.zeros((NNAPROTAAS,NTOTAL), dtype=torch.bool)
-long2alt = torch.zeros((NNAPROTAAS,NTOTAL), dtype=torch.long)
+allatom_mask = torch.zeros((NAATOKENS,NTOTAL), dtype=torch.bool)
+long2alt = torch.zeros((NAATOKENS,NTOTAL), dtype=torch.long)
 for i in range(NNAPROTAAS):
     i_l, i_lalt = aa2long[i],  aa2longalt[i]
     for j,a in enumerate(i_l):
@@ -438,9 +471,13 @@ for i in range(NNAPROTAAS):
         else:
             long2alt[i,j] = i_lalt.index(a)
             allatom_mask[i,j] = True
+for i in range(NNAPROTAAS, NAATOKENS):
+    for j in range(NTOTAL):
+        long2alt[i, j] = j
+allatom_mask[NNAPROTAAS:,1] = True
 
 # bond graph traversal
-num_bonds = torch.zeros((NNAPROTAAS,NTOTAL,NTOTAL), dtype=torch.long)
+num_bonds = torch.zeros((NAATOKENS,NTOTAL,NTOTAL), dtype=torch.long)
 for i in range(NNAPROTAAS):
     num_bonds_i = np.zeros((NTOTAL,NTOTAL))
     for (bnamei,bnamej) in aabonds[i]:
@@ -451,17 +488,42 @@ for i in range(NNAPROTAAS):
     num_bonds[i,...] = torch.tensor(num_bonds_i)
 
 
+# atom type indices
+idx2aatype = []
+for x in aa2type:
+    for y in x:
+        if y and y not in idx2aatype:
+            idx2aatype.append(y)
+aatype2idx = {x:i for i,x in enumerate(idx2aatype)}
+
+# element indices
+idx2elt = []
+for x in aa2elt:
+    for y in x:
+        if y and y not in idx2elt:
+            idx2elt.append(y)
+elt2idx = {x:i for i,x in enumerate(idx2elt)}
+
+
 # LJ/LK scoring parameters
-ljlk_parameters = torch.zeros((NNAPROTAAS,NTOTAL,5), dtype=torch.float)
-lj_correction_parameters = torch.zeros((NNAPROTAAS,NTOTAL,4), dtype=bool) # donor/acceptor/hpol/disulf
+atom_type_index = torch.zeros((NAATOKENS,NTOTAL), dtype=torch.long)
+element_index = torch.zeros((NAATOKENS,NTOTAL), dtype=torch.long)
+
+ljlk_parameters = torch.zeros((NAATOKENS,NTOTAL,5), dtype=torch.float)
+lj_correction_parameters = torch.zeros((NAATOKENS,NTOTAL,4), dtype=bool) # donor/acceptor/hpol/disulf
 for i in range(NNAPROTAAS):
     for j,a in enumerate(aa2type[i]):
         if (a is not None):
+            atom_type_index[i,j] = aatype2idx[a]
             ljlk_parameters[i,j,:] = torch.tensor( type2ljlk[a] )
             lj_correction_parameters[i,j,0] = (type2hb[a]==HbAtom.DO)+(type2hb[a]==HbAtom.DA)
             lj_correction_parameters[i,j,1] = (type2hb[a]==HbAtom.AC)+(type2hb[a]==HbAtom.DA)
             lj_correction_parameters[i,j,2] = (type2hb[a]==HbAtom.HP)
             lj_correction_parameters[i,j,3] = (a=="SH1" or a=="HS")
+    for j,a in enumerate(aa2elt[i]):
+        if (a is not None):
+            element_index[i,j] = elt2idx[a]
+
 
 
 # hbond scoring parameters
@@ -470,11 +532,11 @@ def donorHs(D,bonds,atoms):
     for (i,j) in bonds:
         if (i==D):
             idx_j = atoms.index(j)
-            if (idx_j>=14):  # if atom j is a hydrogen
+            if (idx_j>=NHEAVY):  # if atom j is a hydrogen
                 dHs.append(idx_j)
         if (j==D):
             idx_i = atoms.index(i)
-            if (idx_i>=14):  # if atom j is a hydrogen
+            if (idx_i>=NHEAVY):  # if atom j is a hydrogen
                 dHs.append(idx_i)
     assert (len(dHs)>0)
     return dHs
@@ -484,30 +546,30 @@ def acceptorBB0(A,hyb,bonds,atoms):
         for (i,j) in bonds:
             if (i==A):
                 B = atoms.index(j)
-                if (B<14):
+                if (B<NHEAVY):
                     break
             if (j==A):
                 B = atoms.index(i)
-                if (B<14):
+                if (B<NHEAVY):
                     break
         for (i,j) in bonds:
             if (i==atoms[B]):
                 B0 = atoms.index(j)
-                if (B0<14):
+                if (B0<NHEAVY):
                     break
             if (j==atoms[B]):
                 B0 = atoms.index(i)
-                if (B0<14):
+                if (B0<NHEAVY):
                     break
     elif (hyb == HbHybType.SP3 or hyb == HbHybType.RING):
         for (i,j) in bonds:
             if (i==A):
                 B = atoms.index(j)
-                if (B<14):
+                if (B<NHEAVY):
                     break
             if (j==A):
                 B = atoms.index(i)
-                if (B<14):
+                if (B<NHEAVY):
                     break
         for (i,j) in bonds:
             if (i==A and j!=atoms[B]):
@@ -521,8 +583,11 @@ def acceptorBB0(A,hyb,bonds,atoms):
 
 
 
-hbtypes = torch.full((NNAPROTAAS,NTOTAL,3),-1, dtype=torch.long) # (donortype, acceptortype, acchybtype)
-hbbaseatoms = torch.full((NNAPROTAAS,NTOTAL,2),-1, dtype=torch.long) # (B,B0) for acc; (D,-1) for don
+# hbtypes = torch.full((NNAPROTAAS,NTOTAL,3),-1, dtype=torch.long) # (donortype, acceptortype, acchybtype)
+# hbbaseatoms = torch.full((NNAPROTAAS,NTOTAL,2),-1, dtype=torch.long) # (B,B0) for acc; (D,-1) for don
+# hbpolys = torch.zeros((HbDonType.NTYPES,HbAccType.NTYPES,3,15)) # weight,xmin,xmax,ymin,ymax,c9,...,c0
+hbtypes = torch.full((NAATOKENS,NTOTAL,3),-1, dtype=torch.long) # (donortype, acceptortype, acchybtype)
+hbbaseatoms = torch.full((NAATOKENS,NTOTAL,2),-1, dtype=torch.long) # (B,B0) for acc; (D,-1) for don
 hbpolys = torch.zeros((HbDonType.NTYPES,HbAccType.NTYPES,3,15)) # weight,xmin,xmax,ymin,ymax,c9,...,c0
 
 for i in range(NNAPROTAAS):
@@ -560,13 +625,85 @@ for i in range(HbDonType.NTYPES):
         hbpolys[i,j,2,3:5] = torch.tensor(yrange)
         hbpolys[i,j,2,5:] = torch.tensor(coeffs)
 
-# kinematic parameters
-base_indices = torch.full((NNAPROTAAS,NTOTAL),0, dtype=torch.long)
-xyzs_in_base_frame = torch.ones((NNAPROTAAS,NTOTAL,4))
-RTs_by_torsion = torch.eye(4).repeat(NNAPROTAAS,7,1,1)
-reference_angles = torch.ones((NNAPROTAAS,3,2))
+# cartbonded scoring parameters
+# (0) inter-res
+cb_lengths_CN = (1.32868, 369.445)
+cb_angles_CACN = (2.02807,160)
+cb_angles_CNCA = (2.12407,96.53)
+cb_torsions_CACNH = (0.0,41.830) # also used for proline CACNCD
+cb_torsions_CANCO = (0.0,38.668)
 
+# note for the below, the extra amino acid corrsponds to cb params for HIS_D
+# (1) intra-res lengths
+cb_lengths = [[] for i in range(NAATOKENS+1)]
+for cst in cartbonded_data_raw['lengths']:
+    res_idx = aa2num[ cst['res'] ]
+    cb_lengths[res_idx].append( (
+        aa2long[res_idx].index(cst['atm1']),
+        aa2long[res_idx].index(cst['atm2']),
+        cst['x0'],cst['K']
+    ) )
+ncst_per_res=max([len(i) for i in cb_lengths])
+cb_length_t = torch.zeros(NAATOKENS+1,ncst_per_res,4)
+for i in range(NNAPROTAAS+1):
+    src = i
+    if (num2aa[i]=='UNK' or num2aa[i]=='MAS'):
+        src=aa2num['ALA']
+    if (len(cb_lengths[src])>0):
+        cb_length_t[i,:len(cb_lengths[src]),:] = torch.tensor(cb_lengths[src])
+
+# (2) intra-res angles
+cb_angles = [[] for i in range(NAATOKENS+1)]
+for cst in cartbonded_data_raw['angles']:
+    res_idx = aa2num[ cst['res'] ]
+    cb_angles[res_idx].append( (
+        aa2long[res_idx].index(cst['atm1']),
+        aa2long[res_idx].index(cst['atm2']),
+        aa2long[res_idx].index(cst['atm3']),
+        cst['x0'],cst['K']
+    ) )
+ncst_per_res=max([len(i) for i in cb_angles])
+cb_angle_t = torch.zeros(NAATOKENS+1,ncst_per_res,5)
+for i in range(NNAPROTAAS+1):
+    src = i
+    if (num2aa[i]=='UNK' or num2aa[i]=='MAS'):
+        src=aa2num['ALA']
+
+    if (len(cb_angles[src])>0):
+        cb_angle_t[i,:len(cb_angles[src]),:] = torch.tensor(cb_angles[src])
+
+# (3) intra-res torsions
+cb_torsions = [[] for i in range(NAATOKENS+1)]
+for cst in cartbonded_data_raw['torsions']:
+    res_idx = aa2num[ cst['res'] ]
+    cb_torsions[res_idx].append( (
+        aa2long[res_idx].index(cst['atm1']),
+        aa2long[res_idx].index(cst['atm2']),
+        aa2long[res_idx].index(cst['atm3']),
+        aa2long[res_idx].index(cst['atm4']),
+        cst['x0'],cst['K'],cst['period']
+    ) )
+ncst_per_res=max([len(i) for i in cb_torsions])
+cb_torsion_t = torch.zeros(NAATOKENS+1,ncst_per_res,7)
+cb_torsion_t[...,6]=1.0 # periodicity
 for i in range(NNAPROTAAS):
+    src = i
+    if (num2aa[i]=='UNK' or num2aa[i]=='MAS'):
+        src=aa2num['ALA']
+
+    if (len(cb_torsions[src])>0):
+        cb_torsion_t[i,:len(cb_torsions[src]),:] = torch.tensor(cb_torsions[src])
+
+
+
+# kinematic parameters
+base_indices = torch.full((NAATOKENS,NTOTAL),0, dtype=torch.long) # base frame that builds each atom
+xyzs_in_base_frame = torch.ones((NAATOKENS,NTOTAL,4)) # coords of each atom in the base frame
+RTs_by_torsion = torch.eye(4).repeat(NAATOKENS,NTOTALTORS,1,1) # torsion frames
+reference_angles = torch.ones((NAATOKENS,NPROTANGS,2)) # reference values for bendable angles
+
+## PROTEIN
+for i in range(NPROTAAS):
     i_l = aa2long[i]
     for name, base, coords in ideal_coords[i]:
         idx = i_l.index(name)
@@ -593,19 +730,19 @@ for i in range(NNAPROTAAS):
 
     # chi1 frame
     if torsions[i][0] is not None:
-        a0,a1,a2 = torsion_indices[i,0,0:3]
+        a0,a1,a2 = torsion_indices[i,3,0:3]
         RTs_by_torsion[i,3,:3,:3] = make_frame(
             xyzs_in_base_frame[i,a2,:3]-xyzs_in_base_frame[i,a1,:3],
             xyzs_in_base_frame[i,a0,:3]-xyzs_in_base_frame[i,a1,:3],
         )
         RTs_by_torsion[i,3,:3,3] = xyzs_in_base_frame[i,a2,:3]
 
-    # chi2~4 frame
+    # chi2/3/4 frame
     for j in range(1,4):
         if torsions[i][j] is not None:
-            a2 = torsion_indices[i,j,2]
+            a2 = torsion_indices[i,3+j,2]
             if ((i==18 and j==2) or (i==8 and j==2)):  # TYR CZ-OH & HIS CE1-HE1 a special case
-                a0,a1 = torsion_indices[i,j,0:2]
+                a0,a1 = torsion_indices[i,3+j,0:2]
                 RTs_by_torsion[i,3+j,:3,:3] = make_frame(
                     xyzs_in_base_frame[i,a2,:3]-xyzs_in_base_frame[i,a1,:3],
                     xyzs_in_base_frame[i,a0,:3]-xyzs_in_base_frame[i,a1,:3] )
@@ -614,7 +751,6 @@ for i in range(NNAPROTAAS):
                     xyzs_in_base_frame[i,a2,:3],
                     torch.tensor([-1.,0.,0.]), )
             RTs_by_torsion[i,3+j,:3,3] = xyzs_in_base_frame[i,a2,:3]
-            
 
     # CB/CG angles
     NCr = 0.5*(xyzs_in_base_frame[i,0,:3]+xyzs_in_base_frame[i,2,:3])
@@ -627,8 +763,92 @@ for i in range(NNAPROTAAS):
     reference_angles[i,1,:]=th_ang_v(CBr-CAr,NCpp)
     reference_angles[i,2,:]=th_ang_v(CGr,torch.tensor([-1.,0.,0.]))
 
-N_BACKBONE_ATOMS = 3
-N_HEAVY = 14 
+## NUCLEIC ACIDS
+for i in range(NPROTAAS, NNAPROTAAS):
+    i_l = aa2long[i]
+
+    for name, base, coords in ideal_coords[i]:
+        idx = i_l.index(name)
+        base_indices[i,idx] = base
+        xyzs_in_base_frame[i,idx,:3] = torch.tensor(coords)
+
+    # epsilon(p)/zeta(p) - like omega in protein, not used to build atoms
+    #                    - keep as identity
+    RTs_by_torsion[i,NPROTTORS+0,:3,:3] = torch.eye(3)
+    RTs_by_torsion[i,NPROTTORS+0,:3,3] = torch.zeros(3)
+    RTs_by_torsion[i,NPROTTORS+1,:3,:3] = torch.eye(3)
+    RTs_by_torsion[i,NPROTTORS+1,:3,3] = torch.zeros(3)
+
+    # nu1
+    RTs_by_torsion[i,NPROTTORS+7,:3,:3] = make_frame(
+        xyzs_in_base_frame[i,2,:3] , xyzs_in_base_frame[i,0,:3]
+    )
+    RTs_by_torsion[i,NPROTTORS+7,:3,3] = xyzs_in_base_frame[i,2,:3]
+    
+    # nu0 - currently not used for atom generation
+    RTs_by_torsion[i,NPROTTORS+8,:3,:3] = make_frame(
+        xyzs_in_base_frame[i,0,:3] , xyzs_in_base_frame[i,2,:3]
+    )
+    RTs_by_torsion[i,NPROTTORS+8,:3,3] = xyzs_in_base_frame[i,0,:3] # C2'
+    
+    # NA chi
+    if torsions[i][0] is not None:
+        a0,a1,a2 = torsion_indices[i,19,0:3]
+        RTs_by_torsion[i,NPROTTORS+9,:3,:3] = make_frame(
+            xyzs_in_base_frame[i,a2,:3], xyzs_in_base_frame[i,a0,:3]
+        )
+        RTs_by_torsion[i,NPROTTORS+9,:3,3] = xyzs_in_base_frame[i,a2,:3]
+
+    # nu2
+    RTs_by_torsion[i,NPROTTORS+6,:3,:3] = make_frame(
+        xyzs_in_base_frame[i,9,:3] , torch.tensor([-1.,0.,0.])
+    )
+    RTs_by_torsion[i,NPROTTORS+6,:3,3] = xyzs_in_base_frame[i,6,:3]
+    
+
+    # alpha
+    RTs_by_torsion[i,NPROTTORS+2,:3,:3] = make_frame(
+        xyzs_in_base_frame[i,4,:3], torch.tensor([-1.,0.,0.])
+    )
+    RTs_by_torsion[i,NPROTTORS+2,:3,3] = xyzs_in_base_frame[i,4,:3]
+    
+    # beta
+    RTs_by_torsion[i,NPROTTORS+3,:3,:3] = make_frame(
+        xyzs_in_base_frame[i,6,:3] , torch.tensor([-1.,0.,0.])
+    )
+    RTs_by_torsion[i,NPROTTORS+3,:3,3] = xyzs_in_base_frame[i,6,:3]
+    
+    # gamma
+    RTs_by_torsion[i,NPROTTORS+4,:3,:3] = make_frame(
+        xyzs_in_base_frame[i,7,:3] , torch.tensor([-1.,0.,0.])
+    )
+    RTs_by_torsion[i,NPROTTORS+4,:3,3] = xyzs_in_base_frame[i,7,:3]
+    
+    # delta
+    RTs_by_torsion[i,NPROTTORS+5,:3,:3] = make_frame(
+        xyzs_in_base_frame[i,8,:3] , torch.tensor([-1.,0.,0.])
+    )
+    RTs_by_torsion[i,NPROTTORS+5,:3,3] = xyzs_in_base_frame[i,8,:3]
+    
+
+# af: commenting these out: should use values from rf2aa.chemical.py
+# N_BACKBONE_ATOMS = 3
+# N_HEAVY = 14 
+
+#Small molecules
+xyzs_in_base_frame[NNAPROTAAS:,1, :3] = 0
+# general FAPE parameters
+frame_indices = torch.full((NAATOKENS,NFRAMES,3,2),0, dtype=torch.long)
+for i in range(NNAPROTAAS):
+    i_l = aa2long[i]
+    for j,x in enumerate(frames[i]):
+        if x is not None:
+            # frames are stored as (residue offset, atom position)
+            frame_indices[i,j,0] = torch.tensor((0, i_l.index(x[0])))
+            frame_indices[i,j,1] = torch.tensor((0, i_l.index(x[1])))
+            frame_indices[i,j,2] = torch.tensor((0, i_l.index(x[2])))
+
+
 def writepdb_multi(filename, atoms_stack, bfacts, seq_stack, backbone_only=False, chain_ids=None, use_hydrogens=True):
     """
     Function for writing multiple structural states of the same sequence into a single 
