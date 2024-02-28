@@ -19,7 +19,8 @@ inference:
   num_atoms_saved: 23
   scaffold_guided: False
   save_rna_oneletter: True
-  set_diffused_prot_to: 'ALA'
+  # set_diffused_prot_to: 'ALA'
+  set_diffused_prot_to: null
   set_diffused_dna_to: null
   set_diffused_rna_to: null
   protein_protein_hotspot_res: null
@@ -30,6 +31,11 @@ inference:
   dna_rna_hotspot_res: null
   use_poly_hotspots_t1d: False
   compute_pSSA: False
+  set_sequence: null
+  assume_canonical_pair_seq: False
+  update_seq_t: False
+  show_seq_under_t: -1
+  seq_logit_penalty: 1e2
   # align_motif: False
 
 preprocess:

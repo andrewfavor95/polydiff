@@ -99,6 +99,10 @@ class Sampler:
 
         self.index_map_dict, self.length_init = iu.get_index_map_dict(self._conf.contigmap.contigs)
 
+
+
+
+
         # Set up ss-adj matrix
         # This will be used for t2d conditioning:
         if self.use_ss_guidance:
@@ -109,6 +113,8 @@ class Sampler:
 
             # first priority: check for basepair range specifications (best way to specify):
             if self._conf.scaffoldguided.target_ss_pairs is not None:
+
+
                 # Here we add paired regions to the target ss matrix
                 self.target_ss_matrix = iu.ss_pairs_to_matrix(
                                                     self._conf.scaffoldguided.target_ss_pairs, 
@@ -116,6 +122,11 @@ class Sampler:
                                                     self.target_ss_matrix,
                                                     ss_pair_ori_list=self._conf.scaffoldguided.target_ss_pair_ori,
                                                     ).long()
+
+
+                # To fill in assumed bp partners, both conditions must be met.
+                if self._conf.inference.assume_canonical_pair_seq :
+                    find_canonical_seq_partners = True
 
             # second priority: check for ss-string specification (slightly less precise):
             elif self._conf.scaffoldguided.target_ss_string is not None:
@@ -130,9 +141,6 @@ class Sampler:
             # Force the multi-contact:
             if self._conf.scaffoldguided.force_multi_contacts is not None:
                 self.target_ss_matrix = iu.force_multi_contacts(self._conf.scaffoldguided.force_multi_contacts, self.index_map_dict, self.target_ss_matrix)
-
-            
-
 
 
             # # otherwise fall back to masking everything:
@@ -157,6 +165,22 @@ class Sampler:
 
         else:
             self.target_ss_matrix = None
+
+
+
+
+        # check if we want to set the sequence
+        if self._conf.inference.set_sequence is not None:
+            self.seq_spec_list = iu.get_sequence_spec(self._conf.inference.set_sequence,
+                                                    self.target_ss_matrix,
+                                                    self.index_map_dict,
+                                                    self._conf.contigmap,
+                                                    fill_canonical=self._conf.inference.assume_canonical_pair_seq,
+                                                    )
+        else:
+            self.seq_spec_list = None
+
+
 
 
         # Generate polymer hotspots:
@@ -257,6 +281,8 @@ class Sampler:
         self.model_adaptor.model = self.model
         # DJ additions 
         self.cur_rigid_tmplt = None 
+
+        self.seq_logit_penalty = float(self._conf.inference.seq_logit_penalty)
 
         # TODO: Add symmetrization RMSD check here
         if self._conf.seq_diffuser.seqdiff is None:
@@ -583,28 +609,48 @@ class Sampler:
 
         is_partial = self.diffuser_conf.partial_T is not None
 
-
-
-
         indep, is_diffused = self.model_adaptor.insert_contig(indep, self.contig_map, partial_T=is_partial) 
 
 
         # create a residue mask based on polymer type:
         # I think we want this to be on the gpu
-        self.polymer_mask = torch.zeros(1, indep.seq.shape[0], NAATOKENS).to(self.device)
-        self.polymer_mask[0, indep.is_protein,  0:22] = 1
-        self.polymer_mask[0, indep.is_dna,     22:27] = 1
-        self.polymer_mask[0, indep.is_rna,     27:32] = 1
+        self.seq_mask = torch.zeros(1, indep.seq.shape[0], NAATOKENS).to(self.device)
+        self.seq_mask[0, indep.is_protein,  0:22] = 1
+        self.seq_mask[0, indep.is_dna,     22:27] = 1
+        self.seq_mask[0, indep.is_rna,     27:32] = 1
 
 
         # set attribute for polymer mask tokens, and check that all positions are accounted for:
         # I think we want this to be on the cpu
-        self.polymer_mask_resi = torch.full_like(is_diffused, -1, dtype=indep.seq.dtype)
-        self.polymer_mask_resi[indep.is_protein] = MASKINDEX
-        self.polymer_mask_resi[indep.is_dna] = DNAMASKINDEX
-        self.polymer_mask_resi[indep.is_rna] = RNAMASKINDEX
-        assert ~(self.polymer_mask_resi < 0).any(), "SOME POSITIONS DONT HAVE A VALID POLYMER TYPE ASSIGNMENT"
+        self.seq_mask_resi = torch.full_like(is_diffused, -1, dtype=indep.seq.dtype)
+        self.seq_mask_resi[indep.is_protein] = MASKINDEX
+        self.seq_mask_resi[indep.is_dna] = DNAMASKINDEX
+        self.seq_mask_resi[indep.is_rna] = RNAMASKINDEX
+        assert ~(self.seq_mask_resi < 0).any(), "SOME POSITIONS DONT HAVE A VALID POLYMER TYPE ASSIGNMENT"
         
+
+        # if we want to provide a specific sequence, control it here:
+        # self.seq_spec_mask = torch.zeros(indep.seq.shape[0], NAATOKENS).to(self.device)
+        # AF: should probably add an assert thingie here to check polymer types
+        if self.seq_spec_list is not None:
+            for resi_loc, resi_int in self.seq_spec_list:
+                self.seq_mask[:, resi_loc, :] = 0
+                self.seq_mask[:, resi_loc, resi_int] = 1
+
+
+        # set_trace()
+        # self.seq_spec_mask = nn.one_hot(self.seq_spec_list, num_classes=NAATOKENS+1).to(self.device)
+        # F.one_hot(seq_spec_vec_cleaned, num_classes=NAATOKENS)
+        # self.seq_spec_mask = torch.where(self.seq_spec_list.unsqueeze(-1) == -1, torch.zeros_like(self.seq_spec_mask), self.seq_spec_mask)
+
+        # binary_matrix = 
+        
+        
+
+            # self.seq_spec_mask[0, indep.is_protein,  0:22] = 1
+            # self.seq_spec_mask[0, indep.is_dna,     22:27] = 1
+            # self.seq_spec_mask[0, indep.is_rna,     27:32] = 1
+
 
         # Control how many atoms we save in the pdb
         self.num_atoms_saved = self.inf_conf.num_atoms_saved
@@ -642,7 +688,7 @@ class Sampler:
             self.is_diffused = is_diffused
             # need to reset according to new is diffused mask 
             # indep.seq[self.is_diffused] = 21 # set any residues allowed to diffuse to masked
-            indep.seq = torch.where(self.is_diffused, self.polymer_mask_resi, indep.seq)
+            indep.seq = torch.where(self.is_diffused, self.seq_mask_resi, indep.seq)
 
             # create tensor denoting which residues should have perfect confidence
             # even though they may technically be diffused (moving)
@@ -671,7 +717,7 @@ class Sampler:
 
             # need to reset according to new is diffused mask 
             # indep.seq[self.is_diffused] = 21 # set any residues allowed to diffuse to masked
-            indep.seq = torch.where(self.is_diffused, self.polymer_mask_resi, indep.seq)
+            indep.seq = torch.where(self.is_diffused, self.seq_mask_resi, indep.seq)
 
             # diffuser sees the motif as not diffused (i.e. can't move)
             # just for initialization 
@@ -691,9 +737,9 @@ class Sampler:
             # indep.seq[self.is_diffused] = 21
 
             if self.inf_conf.supply_motif_seq:
-                indep.seq = torch.where(self.is_diffused_orig, self.polymer_mask_resi, indep.seq)
+                indep.seq = torch.where(self.is_diffused_orig, self.seq_mask_resi, indep.seq)
             else:
-                indep.seq = torch.where(self.is_diffused, self.polymer_mask_resi, indep.seq)
+                indep.seq = torch.where(self.is_diffused, self.seq_mask_resi, indep.seq)
 
             # diffuser will also diffuse everything
             diffuser_is_diffused = torch.clone(is_diffused_denoiser)
@@ -869,7 +915,6 @@ class Sampler:
             self.cur_symmsub    = symmsub.to(self.device)
 
             print('ENTERED SYMMETRY MODE*****************')
-
             # Now alter self.is_diffused to match new shapes 
             nneigh = len(symmsub)
             self.is_diffused = self.is_diffused.repeat(nneigh) # copy is_diffused for each subunit 
@@ -1373,7 +1418,7 @@ class NRBStyleSelfCond(Sampler):
                                             polymer_type_masks=self.inf_conf.mask_seq_by_polymer,
                                             )
                                             # target_ss_matrix=self.target_ss_matrix,
-        
+
         # Now we modify rfi to accomodate the new t2d features
         # Adding target ss_matrix if that is what we wanna do:
         if (self.target_ss_matrix is not None) and (twotemplate and threetemplate):
@@ -1618,20 +1663,24 @@ class NRBStyleSelfCond(Sampler):
 
         logits = logits.float()
         px0    = px0.float()
+
         # Modify logits if we want to use polymer masks:
         if self._conf.inference['mask_seq_by_polymer']:
-            logit_penalty = 1e4
-            logits = logits - logit_penalty*(torch.ones_like(self.polymer_mask)-self.polymer_mask)
+            # logit_penalty = 1e4
+            # logits = logits - logit_penalty*(torch.ones_like(self.seq_mask)-self.seq_mask)
+            logits = logits - self.seq_logit_penalty*(torch.ones_like(self.seq_mask)-self.seq_mask)
+            
 
         if self.seq_diffuser is None:
             # Default method of decoding sequence
             seq_probs   = torch.nn.Softmax(dim=-1)(logits.squeeze()/self.inf_conf.softmax_T)
             sampled_seq = torch.multinomial(seq_probs, 1).squeeze() # sample a single value from each position
-
+            
             pseq_0 = torch.nn.functional.one_hot(
                 sampled_seq, num_classes=rf2aa.chemical.NAATOKENS).to(self.device).float()
 
             pseq_0[~self.is_diffused] = seq_init[~self.is_diffused].to(self.device) # [L,22]
+
         else:
             # Sequence Diffusion
             assert 0, "IF WE DOING IT THIS WAY, NEED TO CHANGE TO ACCOMODATE NA TOKENS"
@@ -1643,7 +1692,9 @@ class NRBStyleSelfCond(Sampler):
             sampled_seq = torch.argmax(pseq_0, dim=-1)
 
         self._log.info(
-                f'Timestep {t}, current sequence: { rf2aa.chemical.seq2chars(torch.argmax(pseq_0, dim=-1).tolist())}')
+                f'Timestep {t}, current sequence: { rf2aa.chemical.full_seq2chars(torch.argmax(pseq_0, dim=-1).tolist())}')
+                # f'Timestep {t}, current sequence: { rf2aa.chemical.seq2chars(torch.argmax(pseq_0, dim=-1).tolist())}')
+
 
         # doing rigid motif symm scaffolding
         if self._conf.inference.rigid_symm_motif:
@@ -1680,6 +1731,15 @@ class NRBStyleSelfCond(Sampler):
             if self.cur_rigid_tmplt is None: 
                 pass
 
+        # show_seq_condition = (self._conf.inference.update_seq_t and (t <= self._conf.inference.show_seq_under_t))
+        # show_seq_condition = self._conf.inference.update_seq_t
+        # print('TEMP THING HERE')
+        if self._conf.inference.update_seq_t and (t <= self._conf.inference.show_seq_under_t):
+            show_seq_condition = 'show_full_seq'
+        elif self._conf.inference.update_seq_t and (self._conf.diffuser.aa_decode_steps > 0):
+            show_seq_condition = 'decode_seq'
+        else:
+            show_seq_condition = None
 
         if t > self._conf.inference.final_step:
 
@@ -1698,6 +1758,7 @@ class NRBStyleSelfCond(Sampler):
                 rigid_repeat_motif_kwargs=rigid_repeat_motif_kwargs,
                 origin_before_update=self._conf.inference.origin_before_update,
                 num_atoms_modeled=self._conf.inference.num_atoms_modeled,
+                update_seq_t=show_seq_condition ,
             )
 
             self.cur_rigid_tmplt = cur_rigid_tmplt

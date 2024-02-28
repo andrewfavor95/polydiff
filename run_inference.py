@@ -295,7 +295,19 @@ def sample_one(sampler,inf_conf, i_des, simple_logging=False):
             # assert_that(indep.xyz.shape).is_equal_to(x_t.shape)
             rf2aa.tensor_util.assert_same_shape(indep.xyz, x_t)
             indep.xyz = x_t
-                
+
+            # show_seq_condition = (inf_conf['inference']['update_seq_t'] and (t <= inf_conf['inference']['show_seq_under_t']))
+            # show_seq_condition = (inf_conf['inference']['update_seq_t'] and (t <= inf_conf['diffuser']['aa_decode_steps']))
+            show_seq_condition = inf_conf['inference']['update_seq_t']
+            if show_seq_condition:
+                # print(seq_t.nonzero()[:,-1])
+                # print('indep: ', indep.seq)
+                # print('new  : ', torch.argmax(seq_t, dim=-1))
+
+                indep.seq = torch.argmax(seq_t, dim=-1)
+                # set_trace()
+                # print(torch.argmax(seq_t, dim=-1))
+
             aa_model.assert_has_coords(indep.xyz, indep)
             
             px0_xyz_stack.append(px0)

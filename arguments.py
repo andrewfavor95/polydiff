@@ -374,6 +374,10 @@ def get_args(in_args=None):
             help="Weight on motif fape")
     loss_group.add_argument('-w_nonmotif_fape', type=float, default=0.0,
             help="Weight on nonmotif fape")
+    loss_group.add_argument('-w_ss_fape', type=float, default=0.0,
+            help="Weight on NA sec struct fape")
+
+
     loss_group.add_argument('-scale_prot_fape', type=float, default=1.0,
             help="Default scale of protein FAPE")
     loss_group.add_argument('-scale_dna_fape', type=float, default=1.0,
@@ -551,6 +555,7 @@ def get_args(in_args=None):
                 'scheduled_params',\
                 'w_motif_fape',
                 'w_nonmotif_fape',
+                'w_ss_fape',
                 'norm_fape',
                 'clamp_fape',
                 'scale_prot_fape',

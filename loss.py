@@ -340,15 +340,7 @@ def calc_str_loss(pred, true, mask_2d, same_chain, negative=False, fape_scale_ve
     t_tilde_ij = get_t(true[:,:,:,0], true[:,:,:,1], true[:,:,:,2], non_ideal=True)
     t_ij = get_t(pred[:,:,:,0], pred[:,:,:,1], pred[:,:,:,2])
 
-    # difference = torch.sqrt(torch.square(t_tilde_ij-t_ij).sum(dim=-1) + eps)
 
-    # if d_clamp != None:
-    #     clamp = torch.where(same_chain.bool(), d_clamp, d_clamp_inter)
-    #     clamp = clamp[None]
-    #     difference = torch.clamp(difference, max=clamp)
-    # loss = difference / A # (I, B, L, L)
-
-    # difference = torch.sqrt(torch.square(t_tilde_ij-t_ij).sum(dim=-1) + eps)
     difference = torch.sqrt(torch.square(t_tilde_ij-t_ij).sum(dim=-1) + eps)
     clamp = torch.zeros_like(difference)
     clamp[:,same_chain==1] = d_clamp_intra
@@ -374,7 +366,6 @@ def calc_str_loss(pred, true, mask_2d, same_chain, negative=False, fape_scale_ve
         mask = mask * torch.sqrt(fape_scale_vec[None,:] * fape_scale_vec[:,None]).unsqueeze(0)
 
     # calculate masked loss (ignore missing regions when calculate loss)
-    # loss = (mask[None]*loss).sum(dim=(1,2,3)) / (mask.sum()+eps) # (I)
     clamped_loss = (mask[None]*clamped_loss).sum(dim=(1,2,3)) / (mask.sum()+eps) # (I)
     unclamped_loss = (mask[None]*unclamped_loss).sum(dim=(1,2,3)) / (mask.sum()+eps) # (I)
     loss = mixing_factor *clamped_loss + (1-mixing_factor)*unclamped_loss

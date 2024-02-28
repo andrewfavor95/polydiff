@@ -1044,7 +1044,6 @@ class Diffuser():
         # Full atom diffusions at all timepoints 
         if diffuse_sidechains:
             # This section of code only works with integer sequence at the moment - NRB
-            # ipdb.set_trace()
             assert(seq.shape[-1] == L), 'Tried to feed non-integer sequence to diffuse torsions'
 
             # diffuse chi angles/planar angles and sequence information 
