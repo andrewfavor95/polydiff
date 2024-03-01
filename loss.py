@@ -379,6 +379,121 @@ def calc_str_loss(pred, true, mask_2d, same_chain, negative=False, fape_scale_ve
 
     return tot_loss, loss.detach() 
 
+
+
+def calc_dmat_loss(pred_ca, true_ca, mask_2d, same_chain, negative=False, d_clamp=10.0, d_clamp_intra=10.0, d_clamp_inter=30.0, A=10.0, gamma=0.99, eps=1e-6):
+    '''
+    Calculate full atom distance matrix loss
+    Input:
+        - pred: predicted coordinates (I, B, L, n_atom, 3)
+        - true: true coordinates (B, L, n_atom, 3)
+    Output: str loss
+    '''
+
+    I, B, L = pred_ca.shape[:3]
+
+    pred_dist = torch.cdist(pred_ca, pred_ca) # (I, B, L, L)
+    true_dist = torch.cdist(true_ca, true_ca).unsqueeze(0) # (1, B, L, L)
+
+
+    mask = torch.logical_and(true_dist > 0.0, true_dist < 20.0) # (1, B, L, L)
+    # update mask information
+    mask *= mask_2d[None]
+    if negative:
+        mask *= same_chain.bool()[None]
+
+    difference = torch.abs( (pred_dist - true_dist) + eps) # (I, B, L, L)
+
+
+    clamp = torch.zeros_like(difference)
+    clamp[:,same_chain==1] = d_clamp_intra
+    clamp[:,same_chain==0] = d_clamp_inter
+
+    mixing_factor = 0.9
+    unclamped_difference = difference.clone()
+    clamped_difference = torch.clamp(difference, max=clamp)
+
+    clamped_loss = clamped_difference / A 
+    unclamped_loss = unclamped_difference/A # (I, B, L, L)
+
+    # calculate masked loss (ignore missing regions when calculate loss)
+    clamped_loss = (mask*clamped_loss).sum(dim=(1,2,3)) / (mask.sum()+eps) # (I)
+    unclamped_loss = (mask*unclamped_loss).sum(dim=(1,2,3)) / (mask.sum()+eps) # (I)
+    loss = mixing_factor *clamped_loss + (1-mixing_factor)*unclamped_loss
+
+    # weighting loss
+    w_loss = torch.pow(torch.full((I,), gamma, device=pred_ca.device), torch.arange(I, device=pred_ca.device))
+    w_loss = torch.flip(w_loss, (0,))
+    w_loss = w_loss / w_loss.sum()
+
+    tot_loss = (w_loss * loss).sum()
+
+    return tot_loss, loss.detach() 
+
+
+# def calc_fa_dmat_loss(pred, true, mask_crds, same_chain, negative=False, d_clamp=10.0, d_clamp_intra=10.0, d_clamp_inter=30.0, A=10.0, gamma=0.99, eps=1e-6):
+#     '''
+#     Calculate full atom distance matrix loss
+#     Input:
+#         - pred: predicted coordinates (I, B, L, n_atom, 3)
+#         - true: true coordinates (B, L, n_atom, 3)
+#     Output: str loss
+#     '''
+
+
+    
+
+
+#     I = pred.shape[0]
+#     true = true.unsqueeze(0)
+#     # t_tilde_ij = get_t(true[:,:,:,0], true[:,:,:,1], true[:,:,:,2], non_ideal=True)
+#     # t_ij = get_t(pred[:,:,:,0], pred[:,:,:,1], pred[:,:,:,2])
+#     mask_2d_fa = mask_crds[:,None,:] * mask_crds[:,:,None]
+
+#     pred_dist = torch.cdist(pred, pred) # (I, B, L, L)
+#     true_dist = torch.cdist(true_ca, true_ca).unsqueeze(0) # (1, B, L, L)
+
+#     set_trace()
+
+
+#     difference = torch.sqrt(torch.square(t_tilde_ij-t_ij).sum(dim=-1) + eps)
+#     clamp = torch.zeros_like(difference)
+#     clamp[:,same_chain==1] = d_clamp_intra
+#     clamp[:,same_chain==0] = d_clamp_inter
+
+#     mixing_factor = 0.9
+#     unclamped_difference = difference.clone()
+#     clamped_difference = torch.clamp(difference, max=clamp)
+
+#     clamped_loss = clamped_difference / A 
+#     unclamped_loss = unclamped_difference/A # (I, B, L, L)
+
+#     # Get a mask information (ignore missing residue + inter-chain residues)
+#     # for positive cases, mask = mask_2d
+#     # for negative cases (non-interacting pairs) mask = mask_2d*same_chain
+#     if negative:
+#         mask = mask_2d * same_chain
+#     else:
+#         mask = mask_2d
+
+
+#     # calculate masked loss (ignore missing regions when calculate loss)
+#     clamped_loss = (mask[None]*clamped_loss).sum(dim=(1,2,3)) / (mask.sum()+eps) # (I)
+#     unclamped_loss = (mask[None]*unclamped_loss).sum(dim=(1,2,3)) / (mask.sum()+eps) # (I)
+#     loss = mixing_factor *clamped_loss + (1-mixing_factor)*unclamped_loss
+
+#     # weighting loss
+#     w_loss = torch.pow(torch.full((I,), gamma, device=pred.device), torch.arange(I, device=pred.device))
+#     w_loss = torch.flip(w_loss, (0,))
+#     w_loss = w_loss / w_loss.sum()
+
+#     tot_loss = (w_loss * loss).sum()
+
+#     return tot_loss, loss.detach() 
+
+
+
+
 def weighted_decay_sum(losses, gamma=0.99):
     assert len(losses.shape) == 1
     I = losses.shape[0]
@@ -836,39 +951,3 @@ def calc_lddt(pred_ca, true_ca, mask_crds, mask_2d, same_chain, negative=False, 
     true_lddt = true_lddt.sum(dim=(1,2)) / (mask_crds.sum() + eps)
     return true_lddt
 
-#fd allatom lddt
-def calc_allatom_lddt(P, Q, atm_mask, idx, same_chain, negative=False, eps=1e-8):
-    # Inputs
-    #  - P: predicted coordinates (L, 14, 3)
-    #  - Q: ground truth coordinates (L, 14, 3)
-    #  - atm_mask: valid atoms (L, 14)
-    #  - idx: residue index (L)
-
-    # distance matrix
-    Pij = torch.square(P[:,None,:,None,:]-P[None,:,None,:,:]) # (L, L, 14, 14)
-    Pij = torch.sqrt( Pij.sum(dim=-1) + eps)
-    Qij = torch.square(Q[:,None,:,None,:]-Q[None,:,None,:,:]) # (L, L, 14, 14)
-    Qij = torch.sqrt( Qij.sum(dim=-1) + eps)
-
-    # get valid pairs
-    pair_mask = torch.logical_and(Qij>0,Qij<15).float() # only consider atom pairs within 15A
-    # ignore missing atoms
-    pair_mask *= (atm_mask[:,None,:,None] * atm_mask[None,:,None,:]).float()
-    # ignore atoms within same residue
-    pair_mask *= (idx[:,None,None,None] != idx[None,:,None,None]).float() # (L, L, 14, 14)
-    if negative:
-        # ignore atoms between different chains
-        pair_mask *= same_chain.bool()[:,:,None,None]
-
-    delta_PQ = torch.abs(Pij-Qij) # (L, L, 14, 14)
-
-    lddt = torch.zeros( P.shape[:2], device=P.device ) # (L, 14)
-    for distbin in (0.5,1.0,2.0,4.0):
-        lddt += 0.25 * torch.sum( (delta_PQ<=distbin)*pair_mask, dim=(1,3)
-            ) / ( torch.sum( pair_mask, dim=(1,3) ) + 1e-8)
-    lddt = lddt.sum(dim=-1) / (atm_mask.sum(dim=-1)+1e-8) # L
-    
-    res_mask = atm_mask.any(dim=-1)
-    lddt = (res_mask*lddt).sum() / (res_mask.sum() + 1e-8)
-
-    return lddt

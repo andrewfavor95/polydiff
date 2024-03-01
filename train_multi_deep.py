@@ -372,7 +372,7 @@ class Trainer():
                   backprop_non_displacement_on_given=False, masks_1d={},
                   atom_frames=None, w_ligand_intra_fape=1.0, w_prot_lig_inter_fape=1.0, score_frames=False,
                   fape_scale_vec=None, scale_prot_fape=1.0, scale_dna_fape=1.0, scale_rna_fape=1.0, w_poly_cce=0.0, w_ss_dist=0.0, 
-                  w_ss_fape=0.0, w_trans_v_loss=0.0, w_rots_vf_loss=0.0,
+                  w_ss_fape=0.0, w_dmat=0.0,
                   ):
     
         # assuming all bad crds have been popped
@@ -425,9 +425,11 @@ class Trainer():
             'motif_fape'                : w_motif_fape*disp_tscale,
             'nonmotif_fape'             : w_nonmotif_fape*disp_tscale,
             'ss_fape'                   : w_ss_fape,
+            'dmatt'                     : w_dmat*disp_tscale,
             'ligand_intra_fape'         : w_ligand_intra_fape*disp_tscale,
             'prot_lig_inter_fape'       : w_prot_lig_inter_fape*disp_tscale,
             'poly_cce'                  : w_poly_cce,
+            'dmat'                      : w_dmat,
             # 'trans_v_loss'              : w_trans_v_loss*disp_tscale,
             # 'rots_vf_loss'              : w_rots_vf_loss*disp_tscale,
         }
@@ -444,13 +446,13 @@ class Trainer():
         if not score_frames:
             loss_weights['frame_sqL2'] = loss_weights['frame_sqL2']*0.0
             # THESE OTHER LOSS TERMS RELATE TO FRAME ORIENTATION
-            loss_weights['c6d_1'] = loss_weights['c6d_1']*0.0
-            loss_weights['c6d_2'] = loss_weights['c6d_2']*0.0
-            loss_weights['c6d_3'] = loss_weights['c6d_3']*0.0
+            # loss_weights['c6d_1'] = loss_weights['c6d_1']*0.0
+            # loss_weights['c6d_2'] = loss_weights['c6d_2']*0.0
+            # loss_weights['c6d_3'] = loss_weights['c6d_3']*0.0
 
-            loss_weights['ss_dist_1'] = loss_weights['ss_dist_1']*0.0
-            loss_weights['ss_dist_2'] = loss_weights['ss_dist_2']*0.0
-            loss_weights['ss_dist_3'] = loss_weights['ss_dist_3']*0.0
+            # loss_weights['ss_dist_1'] = loss_weights['ss_dist_1']*0.0
+            # loss_weights['ss_dist_2'] = loss_weights['ss_dist_2']*0.0
+            # loss_weights['ss_dist_3'] = loss_weights['ss_dist_3']*0.0
 
             # loss_weights['rots_vf_loss'] = loss_weights['rots_vf_loss']*0.0
 
@@ -636,64 +638,7 @@ class Trainer():
         loss_dict['frame_sqL2'] = loss_frame_dist.clone()
 
 
-
-
-
-
-        # # # NEW Rotation losses, written by afav, inspired by the flow matching stuff
-        # eps = 1e-6
-        # gamma = 0.99
-        # N_t, Ca_t, C_t = xyz_in[0,:,:,0], xyz_in[0,:,:,1], xyz_in[0,:,:,2]
-        # R_t, T_t = rf2aa.util.rigid_from_3_points(N_t, Ca_t, C_t, is_na=is_na)
-
-        # # decay on loss over iterations
-        # w_vec_loss = torch.pow(torch.full((I,), gamma, device=R_pred.device), torch.arange(I, device=R_pred.device))
-        # w_vec_loss = torch.flip(w_vec_loss, (0,))
-        # w_vec_loss = w_vec_loss / w_vec_loss.sum()
-
-        # # translation vector loss
-        # # loss_mask = masks_1d['loss_str_mask'].clone().to(pred_in.device)
-        # loss_mask = bb_frame_good[0,:] & masks_1d['loss_str_mask'].to(pred_in.device)
-        # loss_denom = torch.sum(loss_mask, dim=-1) * 3 + eps
-
-        # pred_trans_v = (T_t - T_pred)
-        # true_trans_v = (T_t - T_true).repeat((I,B,1))
-        # trans_error = (pred_trans_v - true_trans_v)**2
-
-        # if not unclamp:
-        #     trans_clamp = 10 # AF: should make trans_clamp a variable
-        #     trans_clamp = torch.tensor(trans_clamp**2)[None].to(trans_error.device)
-        #     trans_error = torch.where(trans_error>trans_clamp, trans_clamp, trans_error)
-
-        # trans_v_loss = torch.sum((trans_error * loss_mask[..., None]), dim=(-1,-2)) / loss_denom
-        # trans_v_loss = (w_vec_loss * trans_v_loss).sum()
-        # loss_dict['trans_v_loss'] = trans_v_loss
-
-
-        # # Rotation vector field loss
-        # rot_loss_mask = loss_mask * ~is_sm
-        # rot_loss_denom = torch.sum(rot_loss_mask, dim=-1) * 3 + eps
-
-        # pred_rots_vf = so3_utils.calc_rot_vf(R_t, R_pred)[:,0,:,:]
-        # true_rots_vf = so3_utils.calc_rot_vf(R_t, R_true.type(torch.float32)).repeat((I,B,1))
-
-        # # rots_vf_error = (true_rots_vf - pred_rots_vf)
-        # rots_vf_error = (true_rots_vf - pred_rots_vf)
-        # rots_vf_error = torch.nan_to_num(rots_vf_error)
-        # # rots_vf_loss = torch.sum(rots_vf_error ** 2 * rot_loss_mask[..., None],dim=(-1, -2)) / rot_loss_denom
-        # rots_vf_loss = torch.sum(((rots_vf_error ** 2) * rot_loss_mask[None,..., None]),dim=(-1, -2)) / rot_loss_denom
-        # rots_vf_loss = (w_vec_loss * rots_vf_loss).sum()
-
         
-        # loss_dict['rots_vf_loss'] = rots_vf_loss
-
-        # # set_trace()
-
-
-
-
-
-
         # convert to axis angle representation and calculate axis-angle loss 
         # axis_angle_pred = rot_conv.matrix_to_axis_angle(R_pred)
         # axis_angle_true = rot_conv.matrix_to_axis_angle(R_true)
@@ -844,6 +789,7 @@ class Trainer():
             l_fape_prot_sm_inter = float('nan')
 
 
+        
         # Add FAPE losses to loss dict 
         loss_s.append(str_loss)
 
@@ -854,9 +800,14 @@ class Trainer():
         loss_dict['ligand_intra_fape']   = l_fape_sm_intra
         loss_dict['prot_lig_inter_fape'] = l_fape_prot_sm_inter
 
+
         ########################
         # Done with FAPE calcs #
         ########################
+
+        # dmat_loss = calc_fa_dmat_loss(pred, true, mask_crds, same_chain)
+        dmat_loss, _ = calc_dmat_loss(pred[:,:,:,1,:], true[:,:,1,:], mask_2d, same_chain)
+        loss_dict['dmat']  = dmat_loss
 
 
         # Report RMSD on motif chunks 
@@ -1410,9 +1361,6 @@ class Trainer():
         print('About to enter train loader loop')
         for loader_out in train_loader:
 
-
-            
-
             indep, rfi_tp1_t, chosen_dataset, item, little_t, is_diffused, chosen_task, atomizer, masks_1d, item_context, score_frames = loader_out
             context_msg = f'rank: {rank}: {item_context}'
             score_frames = masks_1d['score_frames'] # bool, whether to score frames or not
@@ -1438,16 +1386,6 @@ class Trainer():
             else:
                 # fape_scale_vec = torch.ones_like(is_diffused).float()
                 fape_scale_vec = None
-
-
-            # Make this for poly class loss
-            # poly_class = torch.ones_like(is_diffused).int()
-            # poly_class[indep.is_protein] = 0
-            # poly_class[indep.is_dna] = 1
-            # poly_class[indep.is_rna] = 1
-            # poly_class = torch.nn.functional.one_hot(poly_class, num_classes=3)
-            # poly_class = poly_class.to(gpu)
-
             
 
             with error.context(context_msg):

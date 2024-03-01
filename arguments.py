@@ -337,6 +337,8 @@ def get_args(in_args=None):
             help='Weight on protein to ligand fape loss [10.0]')
     loss_group.add_argument('-w_lddt', type=float, default=0.1,
             help="Weight on predicted lddt loss [0.1]")
+    loss_group.add_argument('-w_dmat', type=float, default=0.0,
+            help="Weight on distance matrix loss")
     loss_group.add_argument('-w_all', type=float, default=0.5,
             help="Weight on MSA masked token prediction loss [0.5]")
     loss_group.add_argument('-w_aa', type=float, default=3.0,
@@ -537,6 +539,7 @@ def get_args(in_args=None):
                 'w_ligand_intra_fape',\
                 'w_prot_lig_inter_fape',\
                 'w_aa',\
+                'w_dmat',\
                 'w_poly_cce',\
                 'w_ss_dist',\
                 'w_lddt',\
