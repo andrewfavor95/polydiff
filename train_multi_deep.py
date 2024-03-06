@@ -14,7 +14,6 @@ from copy import deepcopy
 from collections import OrderedDict
 from datetime import date
 from contextlib import ExitStack
-import time 
 import torch
 import torch.nn as nn
 from pdb import set_trace
@@ -372,12 +371,14 @@ class Trainer():
                   backprop_non_displacement_on_given=False, masks_1d={},
                   atom_frames=None, w_ligand_intra_fape=1.0, w_prot_lig_inter_fape=1.0, score_frames=False,
                   fape_scale_vec=None, scale_prot_fape=1.0, scale_dna_fape=1.0, scale_rna_fape=1.0, w_poly_cce=0.0, w_ss_dist=0.0, 
-                  w_ss_fape=0.0, w_dmat=0.0,
+                  w_ss_fape=0.0, w_dmat=0.0, w_torsion=0.0, w_lfad=0.0,
                   ):
     
         # assuming all bad crds have been popped
         assert not torch.isnan(pred_in).any()
         assert not torch.isnan(true).any()
+
+        loss_time_start = time.time() # AFAV DELETE LATER
 
         gpu = pred_in.device
 
@@ -429,13 +430,13 @@ class Trainer():
             'ligand_intra_fape'         : w_ligand_intra_fape*disp_tscale,
             'prot_lig_inter_fape'       : w_prot_lig_inter_fape*disp_tscale,
             'poly_cce'                  : w_poly_cce,
-            'dmat'                      : w_dmat,
+            'dmat'                      : w_dmat*disp_tscale,
+            'torsion'                   : w_torsion*disp_tscale,
+            'lfad'                      : w_lfad*disp_tscale,
             # 'trans_v_loss'              : w_trans_v_loss*disp_tscale,
             # 'rots_vf_loss'              : w_rots_vf_loss*disp_tscale,
         }
-
-
-        # loss_weights['ss_dist'] = w_ss_dist*c6d_tscale
+        
 
         for i in range(4):
             loss_weights[f'c6d_{i}'] = w_dist*c6d_tscale
@@ -445,16 +446,6 @@ class Trainer():
 
         if not score_frames:
             loss_weights['frame_sqL2'] = loss_weights['frame_sqL2']*0.0
-            # THESE OTHER LOSS TERMS RELATE TO FRAME ORIENTATION
-            # loss_weights['c6d_1'] = loss_weights['c6d_1']*0.0
-            # loss_weights['c6d_2'] = loss_weights['c6d_2']*0.0
-            # loss_weights['c6d_3'] = loss_weights['c6d_3']*0.0
-
-            # loss_weights['ss_dist_1'] = loss_weights['ss_dist_1']*0.0
-            # loss_weights['ss_dist_2'] = loss_weights['ss_dist_2']*0.0
-            # loss_weights['ss_dist_3'] = loss_weights['ss_dist_3']*0.0
-
-            # loss_weights['rots_vf_loss'] = loss_weights['rots_vf_loss']*0.0
 
 
 
@@ -653,7 +644,13 @@ class Trainer():
         #######################
 
         # Structural loss
-        tot_str, str_loss = calc_str_loss(pred, true, mask_2d, same_chain, negative=negative, fape_scale_vec=None,
+        # tot_str, str_loss = calc_str_loss(pred, true, mask_2d, same_chain, negative=negative, fape_scale_vec=None,
+        #                                       A=10.0, d_clamp=None if unclamp else 10.0, gamma=1.0)
+        print('using fape scale vec')
+        print('using fape scale vec')
+        print('using fape scale vec')
+        # print(fape_scale_vec)
+        tot_str, str_loss = calc_str_loss(pred, true, mask_2d, same_chain, negative=negative, fape_scale_vec=fape_scale_vec,
                                               A=10.0, d_clamp=None if unclamp else 10.0, gamma=1.0)
     
         
@@ -801,9 +798,93 @@ class Trainer():
         loss_dict['prot_lig_inter_fape'] = l_fape_prot_sm_inter
 
 
-        ########################
-        # Done with FAPE calcs #
-        ########################
+        ###############################
+        # Done with FAPE calcs        #
+        ###############################
+
+
+
+
+        ############################################################
+        # Adding torsion angle loss and local full atom distance:  #
+        ############################################################
+
+        # I,L,N,D = pred_xyz_fa.shape
+
+        # make `mask_fa` for where we can predict full atoms coords
+        seq_true = label_aa_s.reshape(B, -1)
+        seq_pred = torch.argmax(logit_aa_s, dim=1)
+
+        seq_cutoff_local = 1
+        seq_neighbors_2d = torch.le(
+                                torch.abs(torch.arange(L)[:,None]-torch.arange(L)[None,:]), 
+                                seq_cutoff_local
+                                ).to(device=pred.device)
+        
+        resi_mask_2d = mask_2d.clone()
+        resi_mask_2d *= same_chain.bool()
+        resi_mask_2d *= seq_neighbors_2d
+        
+        converter = XYZConverter().to(device=pred.device)
+
+        num_BB_fa_prot = rf2aa.chemical.aa2long[rf2aa.chemical.aa2num['UNK']].index(None) # NOTE: MAYBE WANT TO MAKE THIS 4 TO NOT MESS WITH GLYCINE
+        num_BB_fa_dna  = rf2aa.chemical.aa2long[rf2aa.chemical.aa2num[' DX']].index(None)
+        num_BB_fa_rna  = rf2aa.chemical.aa2long[rf2aa.chemical.aa2num[' RX']].index(None)
+
+
+        mask_unk_crds = torch.zeros_like(mask_crds).bool()
+        mask_unk_crds[:,label_poly_s_flat==0,:num_BB_fa_prot] = True
+        mask_unk_crds[:,label_poly_s_flat==1,:num_BB_fa_dna]  = True
+        mask_unk_crds[:,label_poly_s_flat==2,:num_BB_fa_rna]  = True
+
+        unknown_seq_vec = torch.zeros_like(seq)
+        unknown_seq_vec[:,label_poly_s_flat==0] = rf2aa.chemical.aa2num['UNK']
+        unknown_seq_vec[:,label_poly_s_flat==1] = rf2aa.chemical.aa2num[' DX']
+        unknown_seq_vec[:,label_poly_s_flat==2] = rf2aa.chemical.aa2num[' RX']
+
+
+        # If we've predicted the correct sequence, then apply loss to all atoms, otherwise just backbone
+        mask_fa = torch.where(seq_true[...,None]==seq_pred[...,None], mask_crds, mask_unk_crds)
+        seq_for_scoring =  torch.where(seq_true==seq_pred, seq_pred, unknown_seq_vec)
+
+        # AF: should probably only compute torsion and full atom coord loss over atoms where there pred and true seq match
+        # otherwise just score full backbone atoms and torsions
+        ###################################
+        # Torsion loss:
+        ###################################
+
+        # true_tors, true_tors_alt, tors_mask, tors_planar = converter.get_torsions(true, seq, mask_in=mask_crds)
+        score_tors, score_tors_alt, score_tors_mask, score_tors_planar = converter.get_torsions(true, seq_for_scoring, mask_in=mask_fa)
+        
+        
+        true_alt = torch.zeros_like(true)
+        true_alt.scatter_(2, self.l2a[seq,:,None].repeat(1,1,1,3), true)
+        score_tors_mask *= mask_BB[...,None] # (B, L, 10)
+
+        # l_torsion = torsionAngleLoss(pred_tors,true_tors,true_tors_alt,tors_mask,tors_planar,eps = 1e-10)
+        l_torsion = torsionAngleLoss(pred_tors, score_tors, score_tors_alt, score_tors_mask, score_tors_planar, eps = 1e-10)
+
+        loss_dict['torsion'] = l_torsion
+
+        # _, true_xyz_fa = converter.compute_all_atom(seq, true[...,:3,:], true_tors)
+        # _, true_xyz_fa_alt = converter.compute_all_atom(seq, true_alt[...,:3,:], true_tors_alt)
+        # _, pred_xyz_fa = converter.compute_all_atom(seq, pred[-1,...], pred_tors[-1]) 
+
+        _, true_xyz_fa = converter.compute_all_atom(seq_for_scoring, true[...,:3,:], score_tors)
+        _, true_xyz_fa_alt = converter.compute_all_atom(seq_for_scoring, true_alt[...,:3,:], score_tors_alt)
+        _, pred_xyz_fa = converter.compute_all_atom(seq_for_scoring, pred[-1,...], pred_tors[-1]) 
+
+        ###################################
+        # Local full atom distance loss:
+        ###################################
+        if w_lfad > 0.0: # kind of takes long to calc this loss, so ignore if not using it
+
+            l_lfad = compute_LFAD(true_xyz_fa, true_xyz_fa_alt, pred_xyz_fa, resi_mask_2d, mask_fa, eps = 1e-10)
+
+            loss_dict['lfad'] = l_lfad
+        else:
+            loss_dict['lfad'] = 0.0
+
 
         # dmat_loss = calc_fa_dmat_loss(pred, true, mask_crds, same_chain)
         dmat_loss, _ = calc_dmat_loss(pred[:,:,:,1,:], true[:,:,1,:], mask_2d, same_chain)
@@ -972,6 +1053,11 @@ class Trainer():
         
         loss_dict['total_loss'] = float(tot_loss.detach())
         loss_dict = rf2aa.tensor_util.cpu(loss_dict)
+
+        loss_execution_time = time.time() - loss_time_start  #AFAV DELETE LATER!!!
+
+        print(f'TIME TO COMPUTE LOSS: {loss_execution_time}')
+
 
         return tot_loss, loss_dict, loss_weights
 
@@ -1361,7 +1447,10 @@ class Trainer():
         print('About to enter train loader loop')
         for loader_out in train_loader:
 
+
             indep, rfi_tp1_t, chosen_dataset, item, little_t, is_diffused, chosen_task, atomizer, masks_1d, item_context, score_frames = loader_out
+
+
             context_msg = f'rank: {rank}: {item_context}'
             score_frames = masks_1d['score_frames'] # bool, whether to score frames or not
 

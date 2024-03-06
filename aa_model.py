@@ -759,16 +759,19 @@ class Model:
 
         else:
 
+            # print('TEMP TEST AFAV SET ALL xyz_t to 3 atoms ')
+            xyz_t[is_diffused,3:,:] = float('nan')
+
             # Different number of atoms if protein, DNA, RNA, etc
             
-            if polymer_type_masks:
-                # How many backbone atoms do we need per polymer type?
-                xyz_t[is_diffused_dna,num_backbone_atoms_nucleic:,:] = float('nan')
-                xyz_t[is_diffused_rna,num_backbone_atoms_nucleic+1:,:] = float('nan')
-                xyz_t[is_diffused_protein,num_backbone_atoms_protein:,:] = float('nan')
+            # if polymer_type_masks:
+            #     # How many backbone atoms do we need per polymer type?
+            #     xyz_t[is_diffused_dna,num_backbone_atoms_nucleic:,:] = float('nan')
+            #     xyz_t[is_diffused_rna,num_backbone_atoms_nucleic+1:,:] = float('nan')
+            #     xyz_t[is_diffused_protein,num_backbone_atoms_protein:,:] = float('nan')
 
-            else:
-                xyz_t[is_diffused,3:,:] = float('nan')
+            # else:
+            #     xyz_t[is_diffused,3:,:] = float('nan')
 
 
         # DJ - check if using inference.start_from_input
@@ -788,7 +791,6 @@ class Model:
             # xyz_t = xyz_t.squeeze()[:,:NHEAVY,:]
             if polymer_type_masks:
                 # How many backbone atoms do we need per polymer type?
-                print('AF: MAYBE THIS PART IS MESSING UP THE MODEL! LINE 857 aa_model.py')
                 xyz_t[is_diffused_na, num_backbone_atoms_nucleic:, :] = float('nan')
                 xyz_t[is_diffused_protein, num_backbone_atoms_protein:, :] = float('nan')
                 # xyz_t[:,3:,:] = float('nan')
@@ -977,12 +979,15 @@ class Model:
         # xyz = torch.nan_to_num(xyz)
 
         # We probably want to include more atoms if diffusing a nucleic acid chain
-        if polymer_type_masks:
-            xyz[0, is_diffused_protein*~indep.is_sm, num_backbone_atoms_protein:] = torch.nan
-            xyz[0, is_diffused_rna*~indep.is_sm, num_backbone_atoms_nucleic+1:] = torch.nan # add one atom for hydroxyl
-            xyz[0, is_diffused_dna*~indep.is_sm, num_backbone_atoms_nucleic:] = torch.nan
-        else:
-            xyz[0, is_diffused*~indep.is_sm,3:] = torch.nan
+        # print('TEMP TEST AFAV SET ALL xyz_t to 3 atoms ')
+        xyz[0, is_diffused*~indep.is_sm,3:] = torch.nan
+
+        # if polymer_type_masks:
+        #     xyz[0, is_diffused_protein*~indep.is_sm, num_backbone_atoms_protein:] = torch.nan
+        #     xyz[0, is_diffused_rna*~indep.is_sm, num_backbone_atoms_nucleic+1:] = torch.nan # add one atom for hydroxyl
+        #     xyz[0, is_diffused_dna*~indep.is_sm, num_backbone_atoms_nucleic:] = torch.nan
+        # else:
+        #     xyz[0, is_diffused*~indep.is_sm,3:] = torch.nan
 
 
 
