@@ -2733,6 +2733,25 @@ class DistilledDataset(data.Dataset):
                 # ensure no sm atoms are masked in sequence 
                 is_masked_seq[indep.is_sm] = False
 
+            # Choose if we supply full sequence:
+            if self.preprocess_param['use_exp_prob_supply_seq']:
+                P_t_supply_seq = np.exp(
+                                -self.preprocess_param['exp_scale_supply_seq']*(t - self.preprocess_param['supply_seq_under_t'])
+                                )
+
+                seq_is_revealed = (np.random.rand() < P_t_supply_seq)
+                print(f'seq_is_revealed={seq_is_revealed}')
+
+                if seq_is_revealed:
+                    is_masked_seq[:] = False
+                    SHOW_SEQ = True
+                else:
+                    SHOW_SEQ = False
+
+
+
+
+
 
             
 
@@ -2797,7 +2816,7 @@ class DistilledDataset(data.Dataset):
             # Compute all strictly dependent model inputs from the independent inputs.
             rfi_tp1_t = []
             # score_frames = True # Default behavior, but can possibly switch to False based on next code block
-            score_frames = SCORE_FRAMES # Default behavior, but can possibly switch to False based on next code block
+            # score_frames = SCORE_FRAMES # Default behavior, but can possibly switch to False based on next code block
             for indep_diffused, t in zip(indep_diffused_tp1_t, t_list):
 
 
@@ -3038,9 +3057,6 @@ class DistilledDataset(data.Dataset):
 
 
 
-
-
-
             run_inference.seed_all(mask_gen_seed) # Reseed the RNGs for test stability.
             
             # assert not nans in rfis 
@@ -3055,8 +3071,9 @@ class DistilledDataset(data.Dataset):
                             assert not torch.isnan(v.squeeze(0)[:,1:2,:]).any(), f'nan in {k}'
                 
                 masks_1d['score_frames'] = SCORE_FRAMES
+                masks_1d['show_seq'] = SHOW_SEQ
 
-            return indep, rfi_tp1_t, chosen_dataset, sel_item, t, is_diffused, task, atomizer, masks_1d, item_context, score_frames
+            return indep, rfi_tp1_t, chosen_dataset, sel_item, t, is_diffused, task, atomizer, masks_1d, item_context
 
 
 class DistributedWeightedSampler(data.Sampler):

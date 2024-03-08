@@ -246,8 +246,12 @@ def get_args(in_args=None):
             help='fraction of time that we leave show the secondary structure (base pairing).')
     diff_group.add_argument('-p_show_poly_hotspots', default=0.2, type=float, 
             help='fraction of time that we compute and add polymer hotspot features to t2d.')
-
-
+    diff_group.add_argument('-use_exp_prob_supply_seq', default=False,
+            help='Do we want to sample from exponential distribution for deciding whether we sequence?')
+    diff_group.add_argument('-exp_scale_supply_seq', default=0.05, type=float,
+            help='exponential scalar for scheduling random provision of sequence.')
+    diff_group.add_argument('-supply_seq_under_t', default=-1, type=int, 
+            help='Only supply sequence below this t. Default -1 (so never supply for diffused region)')
 
     # Trunk module properties
     trunk_group = parser.add_argument_group("Trunk module parameters")
@@ -462,6 +466,7 @@ def get_args(in_args=None):
     args.na_fixed_inter = args.na_fixed_inter == 'True'
 
     args.use_exp_prob_supply_frames = args.use_exp_prob_supply_frames == 'True'
+    args.use_exp_prob_supply_seq = args.use_exp_prob_supply_seq == 'True'
 
     ic(args.sequence_decode)
     # parse the task lists
@@ -605,6 +610,9 @@ def get_args(in_args=None):
                   'p_show_ss',
                   'prop_ss_mask',
                   'p_show_poly_hotspots',
+                  'use_exp_prob_supply_seq',
+                  'exp_scale_supply_seq',
+                  'supply_seq_under_t',
                   ]:
         preprocess_param[param] = getattr(args, param)
     if not preprocess_param['sequence_decode']:

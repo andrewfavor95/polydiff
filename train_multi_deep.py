@@ -647,8 +647,6 @@ class Trainer():
         # tot_str, str_loss = calc_str_loss(pred, true, mask_2d, same_chain, negative=negative, fape_scale_vec=None,
         #                                       A=10.0, d_clamp=None if unclamp else 10.0, gamma=1.0)
         print('using fape scale vec')
-        print('using fape scale vec')
-        print('using fape scale vec')
         # print(fape_scale_vec)
         tot_str, str_loss = calc_str_loss(pred, true, mask_2d, same_chain, negative=negative, fape_scale_vec=fape_scale_vec,
                                               A=10.0, d_clamp=None if unclamp else 10.0, gamma=1.0)
@@ -1448,7 +1446,7 @@ class Trainer():
         for loader_out in train_loader:
 
 
-            indep, rfi_tp1_t, chosen_dataset, item, little_t, is_diffused, chosen_task, atomizer, masks_1d, item_context, score_frames = loader_out
+            indep, rfi_tp1_t, chosen_dataset, item, little_t, is_diffused, chosen_task, atomizer, masks_1d, item_context = loader_out
 
 
             context_msg = f'rank: {rank}: {item_context}'
@@ -1569,7 +1567,7 @@ class Trainer():
                     if counter%self.ACCUM_STEP != 0:
                         stack.enter_context(ddp_model.no_sync())
                     with torch.cuda.amp.autocast(enabled=USE_AMP):
-
+                        
                         rfo = aa_model.forward(
                                         ddp_model,
                                         rfi_t,

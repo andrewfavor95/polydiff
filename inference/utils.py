@@ -928,8 +928,6 @@ class Denoise():
                 
 
             elif update_seq_t == 'decode_seq':
-                print('TEMP HACK TO SEE IF WE CAN GET SIDECHAINS! DECODING SEQ')
-
                 seq_t = torch.argmax(seq_t, dim=-1).cpu() # [L]
                 pseq0 = torch.argmax(pseq0, dim=-1).cpu() # [L]
                 seq_next = self.reveal_residues(seq_t, pseq0, px0, t)
@@ -940,8 +938,6 @@ class Denoise():
                         pseq0, num_classes=rf2aa.chemical.NAATOKENS).float()
 
             elif update_seq_t == 'show_full_seq':
-                print('TEMP HACK TO SEE IF WE CAN GET SIDECHAINS! SHOWING FULL SEQ')
-
                 seq_t = torch.argmax(seq_t, dim=-1).cpu() # [L]
                 pseq0 = torch.argmax(pseq0, dim=-1).cpu() # [L]
                 torsions_next, _ = self.get_next_torsions(xt, px0, seq_t, pseq0, t, diffusion_mask=diffusion_mask, noise_scale = self.noise_scale_torsion)

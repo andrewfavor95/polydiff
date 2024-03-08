@@ -35,7 +35,7 @@ def update_dims(weights,key):
     # weights['templ_emb.emb.weight'] # Original shape: (64, 88)
     # weights['templ_emb.emb_t1d.weight'] # Original shape: (64, 52)
 
-    ipdb.set_trace()
+    # ipdb.set_trace()
     # weights['bind_pred.downsample.weight']
     # Adding 2D embedding features
     # d_t1d*2+d_t2d
