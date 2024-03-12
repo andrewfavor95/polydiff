@@ -165,7 +165,7 @@ class Trainer():
                  maxcycle=4, diffusion_param={}, preprocess_param={}, outdir=None, wandb_prefix='',
                  metrics=None, zero_weights=False, log_inputs=False, n_write_pdb=100,
                  reinitialize_missing_params=False, verbose_checks=False, saves_per_epoch=None, resume=False,
-                 grad_clip=0.2, polymer_focus=None, polymer_frac_cutoff=0.25):
+                 grad_clip=0.2, polymer_focus=None, polymer_frac_cutoff=0.25,wandb_project='RFD'):
 
         self.model_name = model_name #"BFF"
         self.ckpt_load_path = ckpt_load_path
@@ -208,6 +208,7 @@ class Trainer():
         self.diffusion_param = diffusion_param
         self.preprocess_param = preprocess_param
         self.wandb_prefix=wandb_prefix
+        self.wandb_project=wandb_project
         self.saves_per_epoch=saves_per_epoch
 
         # For diffusion
@@ -544,49 +545,14 @@ class Trainer():
 
 
         
-        # Sequence loss
-        if not self.seq_diffuser is None:
-            raise Exception('not implemented')
-            if self.seq_diffuser.continuous_seq():
-                # Continuous Analog Bit Diffusion
-                # Leave the shape of logit_aa_s as [L,21] so the model can learn to predict zero at 21st entry
-                logit_aa_s = logit_aa_s.squeeze() # [L,21]
-                logit_aa_s = logit_aa_s.transpose(0,1) # [L,21]
+        ######################################
+        #### sequence and poly-class loss ####
+        ######################################
 
-                label_aa_s = label_aa_s.squeeze() # [L]
-
-                loss = self.seq_diffuser.loss(seq_true=label_aa_s, seq_pred=logit_aa_s, diffusion_mask=~seq_diffusion_mask)
-                tot_loss += w_aa*loss # Not scaling loss by timestep
-            else:
-                # Discrete Diffusion 
-                # Reshape logit_aa_s from [B,21,L] to [B,L,20]. 20 aa since seq diffusion cannot handle gap character
-                # p_logit_aa_s = logit_aa_s[:,:20].transpose(1,2) # [B,L,21]
-                print('TRYING TO ADD MORE TOKENS!')
-                p_logit_aa_s = logit_aa_s[:,:32].transpose(1,2) # [B,L,21]
-
-                intseq_t = torch.argmax(seq_t, dim=-1)
-                loss, loss_aux, loss_vb = self.seq_diffuser.loss(x_t=intseq_t, x_0=seq, p_logit_x_0=p_logit_aa_s, t=t, diffusion_mask=seq_diffusion_mask)
-                tot_loss += w_aa*loss # Not scaling loss by timestep
-                
-                loss_dict['loss_aux'] = float(loss_aux.detach())
-                loss_dict['loss_vb']  = float(loss_vb.detach())
-        else:
-            # Classic Autoregressive Sequence Prediction
-            loss = self.loss_fn(logit_aa_s, label_aa_s.reshape(B, -1))
-            loss = loss * mask_aa_s.reshape(B, -1)
-            loss = loss.sum() / (mask_aa_s.sum() + 1e-8)
-
-        loss_s.append(loss[None].detach())
-        loss_dict['aa_cce'] = loss.clone()
-
-
-        # # Poly class loss
-        # # Define poly_ind_ranges as tensor indices
+        # Poly class cce loss:
         poly_ind_ranges = [slice(0, 22), slice(22, 27), slice(27, 32), slice(32, 80)]
-
         label_aa_s_flat = label_aa_s.flatten()
         label_poly_s_flat = torch.empty_like(label_aa_s_flat)
-
         logit_poly_s_list = []
         for i,ind_range in enumerate(poly_ind_ranges):
             logit_poly_s_list.append(torch.mean(logit_aa_s[:, ind_range, :],1))
@@ -597,14 +563,49 @@ class Trainer():
         label_poly_s = label_poly_s_flat.reshape(1, 1, label_aa_s.shape[-1])
         is_na = (label_poly_s_flat > 0)
 
-
         loss = self.loss_fn(logit_poly_s, label_poly_s.reshape(B, -1))
         loss = loss * mask_aa_s.reshape(B, -1)
         loss = loss.sum() / (mask_aa_s.sum() + 1e-8)
         loss_s.append(loss[None].detach())
         loss_dict['poly_cce'] = loss.clone()
 
+        # Sequence loss:
+        if not self.seq_diffuser is None:
+            # raise Exception('not implemented')
+            if self.seq_diffuser.continuous_seq():
+                # Continuous Analog Bit Diffusion
+                # Leave the shape of logit_aa_s as [L,21] so the model can learn to predict zero at 21st entry
+                logit_aa_s = logit_aa_s.squeeze() # [L,21]
+                logit_aa_s = logit_aa_s.transpose(0,1) # [L,21]
+                label_aa_s = label_aa_s.squeeze() # [L]
+                loss = self.seq_diffuser.loss(seq_true=label_aa_s, seq_pred=logit_aa_s, diffusion_mask=~seq_diffusion_mask)
+                tot_loss += w_aa*loss # Not scaling loss by timestep
+                
+            else:
+                # Discrete Diffusion 
+                # Reshape logit_aa_s from [B,21,L] to [B,L,20]. 20 aa since seq diffusion cannot handle gap character
+                print('TRYING TO ADD MORE TOKENS!')
+                p_logit_aa_s = logit_aa_s[:,:rf2aa.chemical.NNAPROTAAS].transpose(1,2) # [B,L,21]
 
+                intseq_t = torch.argmax(seq_t, dim=-1)
+                loss, loss_aux, loss_vb = self.seq_diffuser.loss(x_t=intseq_t, x_0=seq, p_logit_x_0=p_logit_aa_s, t=t, diffusion_mask=seq_diffusion_mask)
+                tot_loss += w_aa*loss # Not scaling loss by timestep
+                
+                loss_dict['loss_aux'] = float(loss_aux.detach())
+                loss_dict['loss_vb']  = float(loss_vb.detach())
+                # print(f'A.Fav has not yet tested discrete seq diff for multi polymer. It is on the to-do list... sorta.')
+                # raise NotImplementedError()
+
+        else:
+            # Classic Autoregressive Sequence Prediction
+            loss = self.loss_fn(logit_aa_s, label_aa_s.reshape(B, -1))
+            loss = loss * mask_aa_s.reshape(B, -1)
+            loss = loss.sum() / (mask_aa_s.sum() + 1e-8)
+
+        loss_s.append(loss[None].detach())
+        loss_dict['aa_cce'] = loss.clone()
+
+        
 
         ######################################
         #### squared L2 loss on rotations ####
@@ -1207,12 +1208,21 @@ class Trainer():
                 name=None
                 id=self.resume
                 resume='must'
+            # wandb.init(
+            #         project="motif_scaffold_na",
+            #         entity="bakerlab", 
+            #         name=name,
+            #         id=id,
+            #         resume=resume)
             wandb.init(
-                    project="motif_scaffold_na",
+                    project=self.wandb_project,
                     entity="bakerlab", 
                     name=name,
                     id=id,
                     resume=resume)
+
+
+            
             print(f'{wandb.run.id=}')
 
             all_param = {}
@@ -1963,6 +1973,7 @@ def make_trainer(args, model_param, loader_param, loss_param, diffusion_param, p
                     grad_clip=args.grad_clip,
                     polymer_focus=args.polymer_focus,
                     polymer_frac_cutoff=args.polymer_frac_cutoff,
+                    wandb_project=args.wandb_project,
                     )
     return train
 

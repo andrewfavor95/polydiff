@@ -2354,7 +2354,7 @@ def default_dataset_configs(loader_param, debug=False):
         'diff':         loader_na_complex_diff},
         weights_dict["na_compl"]
     )
-    
+
     tf_distill_config = WeightedDataset(train_ID_dict["distil_tf"], train_dict["distil_tf"], {
         'seq2str':      rf2aa.data_loader.loader_na_complex,
         'str2seq':      rf2aa.data_loader.loader_na_complex, 
@@ -3015,16 +3015,23 @@ class DistilledDataset(data.Dataset):
                 if (np.random.rand() <= self.preprocess_param['p_show_poly_hotspots']):
                     # print('GETTING HOTSPOTS!!!!!!!')
 
-                    
-                    poly_hotspot_matrix = make_poly_hotspots_vec(indep,
-                                                        contact_cutoff = 8.0,
-                                                        cum_contact_lim = 16.0,
-                                                        max_hotspots = 3,
-                                                        min_close_contacts = 3,
-                                                        seq_dist_cutoff = 3,
-                                                        p_interchain=0.95,
-                                                        )
-                    
+                    try:
+                        poly_hotspot_matrix = make_poly_hotspots_vec(indep,
+                                                            cum_contact_lim = 16.0,
+                                                            close_contact_cutoff = 16.0,
+                                                            max_hotspots = 5,
+                                                            min_close_contacts = 3,
+                                                            seq_dist_cutoff = 3,
+                                                            p_interchain=0.95,
+                                                            n_smooth_iters_2d=1,
+                                                            n_smooth_iters_1d=3,
+                                                            kernel_size_2d=5,
+                                                            kernel_size_1d=5,
+                                                            )
+                    except:
+                        poly_hotspot_matrix = torch.zeros((indep.seq.size(0),6)).long()
+
+
                     # # """
                     # # UNCOMMENT WHEN WE WANT PNG OF SS DURING TRAINING!
                     # # """
@@ -3032,18 +3039,23 @@ class DistilledDataset(data.Dataset):
                     #     item_id_for_fig = sel_item["CHAINID"]
                     # else:
                     #     item_id_for_fig = np.random.randint(200)
-                    # debug_png_filepath = f'/home/afavor/git/RFD_AF/3template_na/pngs_training/{chosen_dataset}__{item_id_for_fig}__t_{t}.png'
+                    # debug_png_filepath = f'/home/afavor/git/RFD_AF/elwynn_new_frames/pngs_training/{chosen_dataset}__{item_id_for_fig}__t_{t}.png'
                     # poly_hotspot_matrix = make_poly_hotspots_vec(indep,
-                    #                                             contact_cutoff = 8.0,
-                    #                                             cum_contact_lim = 16.0,
-                    #                                             max_hotspots = 3,
-                    #                                             use_conv_smoothing=False,
-                    #                                             min_close_contacts = 3,
-                    #                                             seq_dist_cutoff = 3,
-                    #                                             p_interchain=0.8,
-                    #                                             png_filepath=debug_png_filepath
-                    #                                             )
+                    #                                     cum_contact_lim = 16.0,
+                    #                                     close_contact_cutoff = 16.0,
+                    #                                     max_hotspots = 5,
+                    #                                     min_close_contacts = 3,
+                    #                                     seq_dist_cutoff = 3,
+                    #                                     p_interchain=0.95,
+                    #                                     n_smooth_iters_2d=1,
+                    #                                     n_smooth_iters_1d=3,
+                    #                                     kernel_size_2d=5,
+                    #                                     kernel_size_1d=5,
+                    #                                     png_filepath=debug_png_filepath,
+                    #                                     )
 
+
+                    
                 else:
                     poly_hotspot_matrix = torch.zeros((indep.seq.size(0),6)).long()
 
@@ -3071,7 +3083,7 @@ class DistilledDataset(data.Dataset):
                             assert not torch.isnan(v.squeeze(0)[:,1:2,:]).any(), f'nan in {k}'
                 
                 masks_1d['score_frames'] = SCORE_FRAMES
-                masks_1d['show_seq'] = SHOW_SEQ
+                # masks_1d['show_seq'] = SHOW_SEQ
 
             return indep, rfi_tp1_t, chosen_dataset, sel_item, t, is_diffused, task, atomizer, masks_1d, item_context
 

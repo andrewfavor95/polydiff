@@ -917,15 +917,21 @@ class Denoise():
             torsions_next = torch.zeros(1,1)
 
             if self.seq_diffuser:
-                # assert 0, "MODIFY THIS TO ACCOMODATE NA TOKENS!"
-                # seq_next = self.seq_diffuser.get_next_sequence(seq_t[:,:20], pseq0, t, seq_diffusion_mask) # [L,20]
-                # # Add zeros to make the sequence have 22 classes and match the AR case
-                # zeros = torch.zeros(L,2)
-                # seq_next = torch.cat((seq_next, zeros), dim=-1) # [L,22]
+                seq_next = self.seq_diffuser.get_next_sequence(seq_t[:,:rf2aa.chemical.NNAPROTAAS], pseq0, t, seq_diffusion_mask) # [L,32]
+                zeros = torch.zeros(L, rf2aa.chemical.NAATOKENS-rf2aa.chemical.NNAPROTAAS).to(device=seq_next.device) # [L,80-32]
+                seq_next = torch.cat((seq_next, zeros), dim=-1) # [L,80]
 
-                seq_next = self.seq_diffuser.get_next_sequence(seq_t[:,:rf2aa.chemical.NAATOKENS], 
-                                                                pseq0, t, seq_diffusion_mask) # [L,20]
-                
+                # AF: experimental... how we handle torsions and full atom coords I guess.
+                if update_seq_t is not None:
+                    # seq_t = torch.argmax(seq_t, dim=-1).cpu() # [L]
+                    # pseq0 = torch.argmax(pseq0, dim=-1).cpu() # [L]
+                    # torsions_next, _ = self.get_next_torsions(xt, px0, seq_t, pseq0, t, diffusion_mask=diffusion_mask, noise_scale = self.noise_scale_torsion)
+                    torsions_next, _ = self.get_next_torsions(xt, px0, torch.argmax(seq_t, dim=-1).cpu(), torch.argmax(pseq0, dim=-1).cpu(), t, 
+                                                diffusion_mask=diffusion_mask, 
+                                                noise_scale = self.noise_scale_torsion
+                                                )
+                    _, fullatom_next = converter.compute_all_atom(torch.argmax(seq_t, dim=-1).cpu()[None], frames_next[None].to(torch.float32), torsions_next[None])
+
 
             elif update_seq_t == 'decode_seq':
                 seq_t = torch.argmax(seq_t, dim=-1).cpu() # [L]

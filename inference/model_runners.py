@@ -609,7 +609,7 @@ class Sampler:
 
         is_partial = self.diffuser_conf.partial_T is not None
 
-        indep, is_diffused = self.model_adaptor.insert_contig(indep, self.contig_map, partial_T=is_partial) 
+        indep, is_diffused = self.model_adaptor.insert_contig(indep, self.contig_map, partial_T=is_partial, seq_spec=self.seq_spec_list) 
 
 
         # create a residue mask based on polymer type:
@@ -632,13 +632,15 @@ class Sampler:
         # if we want to provide a specific sequence, control it here:
         # self.seq_spec_mask = torch.zeros(indep.seq.shape[0], NAATOKENS).to(self.device)
         # AF: should probably add an assert thingie here to check polymer types
+        # While we're here, we can manually update self.mask_seq to be all positions 
+        # where we either (1) have a motif, or (2) have user-defined sequence
+        self.mask_seq = ~is_diffused.clone() # How we handle situaton (1), make motif positions True
         if self.seq_spec_list is not None:
             for resi_loc, resi_int in self.seq_spec_list:
                 self.seq_mask[:, resi_loc, :] = 0
                 self.seq_mask[:, resi_loc, resi_int] = 1
+                self.mask_seq[resi_loc] = True # How we handle situation (2), make resi spec positions True
 
-
-        # set_trace()
         # self.seq_spec_mask = nn.one_hot(self.seq_spec_list, num_classes=NAATOKENS+1).to(self.device)
         # F.one_hot(seq_spec_vec_cleaned, num_classes=NAATOKENS)
         # self.seq_spec_mask = torch.where(self.seq_spec_list.unsqueeze(-1) == -1, torch.zeros_like(self.seq_spec_mask), self.seq_spec_mask)
@@ -688,7 +690,9 @@ class Sampler:
             self.is_diffused = is_diffused
             # need to reset according to new is diffused mask 
             # indep.seq[self.is_diffused] = 21 # set any residues allowed to diffuse to masked
-            indep.seq = torch.where(self.is_diffused, self.seq_mask_resi, indep.seq)
+            # indep.seq = torch.where(self.is_diffused, self.seq_mask_resi, indep.seq)
+            print("AF: maybe temporary, I don't like this section of code...")
+            indep.seq = torch.where(self.mask_seq, indep.seq, self.seq_mask_resi)
 
             # create tensor denoting which residues should have perfect confidence
             # even though they may technically be diffused (moving)
@@ -717,7 +721,10 @@ class Sampler:
 
             # need to reset according to new is diffused mask 
             # indep.seq[self.is_diffused] = 21 # set any residues allowed to diffuse to masked
-            indep.seq = torch.where(self.is_diffused, self.seq_mask_resi, indep.seq)
+            # indep.seq = torch.where(self.is_diffused, self.seq_mask_resi, indep.seq)
+            print("AF: maybe temporary, I don't like this section of code...")
+            indep.seq = torch.where(self.mask_seq, indep.seq, self.seq_mask_resi)
+
 
             # diffuser sees the motif as not diffused (i.e. can't move)
             # just for initialization 
@@ -737,7 +744,8 @@ class Sampler:
             # indep.seq[self.is_diffused] = 21
 
             if self.inf_conf.supply_motif_seq:
-                indep.seq = torch.where(self.is_diffused_orig, self.seq_mask_resi, indep.seq)
+                # indep.seq = torch.where(self.is_diffused_orig, self.seq_mask_resi, indep.seq)
+                indep.seq = torch.where(self.mask_seq, indep.seq, self.seq_mask_resi)
             else:
                 indep.seq = torch.where(self.is_diffused, self.seq_mask_resi, indep.seq)
 
@@ -949,6 +957,7 @@ class Sampler:
         # ic(indep.xyz.shape)
         # assert False
         print('Total AA modeled: ', indep.xyz.shape[0])
+
         return indep
 
     def _preprocess(self, seq, xyz_t, t, repack=False):
@@ -1682,14 +1691,20 @@ class NRBStyleSelfCond(Sampler):
             pseq_0[~self.is_diffused] = seq_init[~self.is_diffused].to(self.device) # [L,22]
 
         else:
+            
             # Sequence Diffusion
-            assert 0, "IF WE DOING IT THIS WAY, NEED TO CHANGE TO ACCOMODATE NA TOKENS"
+            # assert 0, "IF WE DOING IT THIS WAY, NEED TO CHANGE TO ACCOMODATE NA TOKENS"
             pseq_0 = logits.squeeze()
-            pseq_0 = pseq_0[:,:20]
+            # pseq_0 = pseq_0[:,:20]
+            # pseq_0 = pseq_0[:,:rf2aa.chemical.NAATOKENS]
+            pseq_0 = pseq_0[:,:rf2aa.chemical.NNAPROTAAS]
+            # # p_logit_aa_s = logit_aa_s[:,:rf2aa.chemical.NNAPROTAAS].transpose(1,2) # [B,L,21]
+            # pseq_0[self.mask_seq.squeeze()] = seq_init[self.mask_seq.squeeze(),:rf2aa.chemical.NNAPROTAAS].to(self.device)
+            # # pseq_0[self.mask_seq.squeeze()] = seq_init[self.mask_seq.squeeze(),:rf2aa.chemical.NAATOKENS].to(self.device)
 
-            pseq_0[self.mask_seq.squeeze()] = seq_init[self.mask_seq.squeeze(),:20].to(self.device)
-
+            pseq_0[self.mask_seq] = seq_init[self.mask_seq,:rf2aa.chemical.NNAPROTAAS].to(self.device)
             sampled_seq = torch.argmax(pseq_0, dim=-1)
+            
 
         self._log.info(
                 f'Timestep {t}, current sequence: { rf2aa.chemical.full_seq2chars(torch.argmax(pseq_0, dim=-1).tolist())}')
@@ -1748,7 +1763,7 @@ class NRBStyleSelfCond(Sampler):
                 px0=px0,
                 t=t,
                 diffusion_mask=~self.is_diffused,
-                seq_diffusion_mask=~self.is_diffused,
+                seq_diffusion_mask=self.mask_seq,
                 seq_t=seq_t,
                 pseq0=pseq_0,
                 diffuse_sidechains=self.preprocess_conf.sidechain_input,

@@ -5,23 +5,15 @@ import os
 from scipy.spatial.transform import Rotation as scipy_R
 from scipy.spatial.transform import Slerp 
 
-from util import rigid_from_3_points, get_torsions
-
-from util import torsion_indices as TOR_INDICES 
-from util import torsion_can_flip as TOR_CAN_FLIP
-from util import reference_angles as REF_ANGLES
-
-from util_module import ComputeAllAtomCoords
-
 from diff_util import th_min_angle, th_interpolate_angles, get_aa_schedule 
 from diffusion import get_beta_schedule, cosine_interp
 
 from chemical import INIT_CRDS 
 import igso3
 import time 
-
+from rf2aa.chemical import NAATOKENS, NNAPROTAAS, MASKINDEX, UNKINDEX, DNAMASKINDEX, RNAMASKINDEX
+from pdb import set_trace
 from icecream import ic  
-
 
 torch.set_printoptions(sci_mode=False)
 
@@ -457,11 +449,16 @@ class DiscreteSeqDiffuser():
         '''
     
         # Sampling from 0-19 since upper bound is exclusive
-        sampled_seq = torch.randint(low=0, high=20, size=seq_t.shape) # [L]
+        # sampled_seq = torch.randint(low=0, high=20, size=seq_t.shape) # [L]
+        sampled_seq = torch.randint(low=0, high=NNAPROTAAS, size=seq_t.shape) # [L]
+
+        
     
         seq_t[~seq_diffusion_mask] = sampled_seq[~seq_diffusion_mask]
     
-        seq_T = torch.nn.functional.one_hot(seq_t, num_classes=22).float()
+        # seq_T = torch.nn.functional.one_hot(seq_t, num_classes=22).float()
+        seq_T = torch.nn.functional.one_hot(seq_t, num_classes=NNAPROTAAS).float()
+        NNAPROTAAS
     
         return seq_T
         
@@ -531,7 +528,8 @@ class ContinuousSeqDiffuser():
                  schedule_params={},
                  loss_type='l2_loss'):
 
-        self.K = 20 # Mask and gap characters not allowed
+        # self.K = 20 # Mask and gap characters not allowed
+        self.K = NNAPROTAAS # Mask and gap characters not allowed
 
         # analog bits are in range [-self.bitscale, self.bitscale]
         # This is also the std dev of the noise added during the forward process
@@ -682,12 +680,14 @@ class ContinuousSeqDiffuser():
         '''
 
         if self.loss_type == 'l2_loss':
-            true_bits = self.seq2bits(seq_true, K=21)
+            # true_bits = self.seq2bits(seq_true, K=21)
+            true_bits = self.seq2bits(seq_true, K=NAATOKENS)
 
             return self.l2_loss(true_bits, seq_pred)
 
         if self.loss_type == 'sigmoid':
-            true_bits = self.seq2bits(seq_true, K=21)
+            # true_bits = self.seq2bits(seq_true, K=21)
+            true_bits = self.seq2bits(seq_true, K=NAATOKENS)
 
             return self.sigmoid_loss(true_bits, seq_pred)
         else:
@@ -763,11 +763,15 @@ class ContinuousSeqDiffuser():
         '''
         L = seq_t.shape[0]
 
-        mean = torch.zeros(L,20)
-        std  = torch.full((L,20), self.bitscale)
-        sampled_seq = torch.normal(mean, std)
+        # mean = torch.zeros(L,20)
+        # std  = torch.full((L,20), self.bitscale)
+        # sampled_seq = torch.normal(mean, std)
+        # seq_T = self.seq2bits(seq_t.clone(), K=20) # [L,20]
 
-        seq_T = self.seq2bits(seq_t.clone(), K=20) # [L,20]
+        mean = torch.zeros(L,NNAPROTAAS)
+        std  = torch.full((L,NNAPROTAAS), self.bitscale)
+        sampled_seq = torch.normal(mean, std)
+        seq_T = self.seq2bits(seq_t.clone(), K=NNAPROTAAS) # [L,20]
 
         seq_T[~seq_diffusion_mask] = sampled_seq[~seq_diffusion_mask]
 
@@ -788,8 +792,11 @@ class ContinuousSeqDiffuser():
         sigma = ((1-self.alphabar_schedule[t_idx-1])/(1-self.alphabar_schedule[t_idx]))*self.beta_schedule[t_idx]*self.bitscale
 
         a = ((torch.sqrt(self.alphabar_schedule[t_idx-1] + eps)*self.beta_schedule[t_idx])/(1-self.alphabar_schedule[t_idx]))*pseq_0
-        b = ((torch.sqrt(1-self.beta_schedule[t_idx] + eps)*(1-self.alphabar_schedule[t_idx-1]))/(1-self.alphabar_schedule[t_idx]))*seq_t
+        # b = ((torch.sqrt(1-self.beta_schedule[t_idx] + eps)*(1-self.alphabar_schedule[t_idx-1]))/(1-self.alphabar_schedule[t_idx]))*seq_t
 
+        # AF: Really gotta be consistent with how many tokens we use for "K" during both training and inference.
+        b = ((torch.sqrt(1-self.beta_schedule[t_idx] + eps)*(1-self.alphabar_schedule[t_idx-1]))/(1-self.alphabar_schedule[t_idx]))*seq_t[:,:self.K]
+        
         mu = a + b
 
         return mu, sigma
@@ -820,13 +827,16 @@ class ContinuousSeqDiffuser():
     
         # get noise at timestep t
         mu, sigma = self.get_seq_mu_xt_x0(seq_t=seq_t, pseq_0=pseq0, t_idx=t_idx)
-    
+        sigma = sigma.to(mu.device)
+
         sampled_seq = torch.normal(mu, sigma) # [L,K]
-        delta = sampled_seq - seq_t
-    
+        # delta = sampled_seq - seq_t[:,:self.K]
+
+        # AF: Really gotta be consistent with how many tokens we use for "K" during both training and inference.
+        delta = sampled_seq - seq_t[:,:self.K]
         if not seq_diffusion_mask is None:
             delta[seq_diffusion_mask,:] = 0
     
-        seq_t_1 = seq_t + delta # [L,K]
+        seq_t_1 = seq_t[:,:self.K] + delta # [L,K]
     
         return seq_t_1

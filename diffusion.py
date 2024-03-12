@@ -931,11 +931,11 @@ class Diffuser():
                     center_crds=True, 
                     symmRs=None,
                     motif_only_2d=False,
-                    is_na=None, 
+                    # is_na=None, 
                     is_protein=None, 
                     is_dna=None, 
                     is_rna=None, 
-                    num_frames_na=1, 
+                    # num_frames_na=1, 
                     ):
         """
         Given full atom xyz, sequence and atom mask, diffuse the protein 

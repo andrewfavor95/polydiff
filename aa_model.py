@@ -446,7 +446,7 @@ class Model:
                 return RFO(*model(**input))
 
 
-    def insert_contig(self, indep, contig_map, partial_T=False, refine=False):
+    def insert_contig(self, indep, contig_map, partial_T=False, seq_spec=None, refine=False):
         """
         Assembl
         """
@@ -614,6 +614,11 @@ class Model:
         is_diffused_sm = torch.zeros(n_sm).bool()
         is_diffused = torch.cat((is_diffused_prot, is_diffused_sm))
 
+        # If there is a user-defined sequence, we need to update the indep here.
+        if seq_spec is not None:
+            for i, aa_i in seq_spec:
+                o.seq[i] = aa_i
+
         # To see the shapes of the indep struct with contig inserted
         # print(rf2aa.tensor_util.info(rf2aa.tensor_util.to_ordered_dict(o)))
         if refine: 
@@ -621,6 +626,7 @@ class Model:
         else:
             o.xyz2 = o.xyz.clone() # DJ - three template, dummy xyz for now
 
+        
         return o, is_diffused
 
 
@@ -737,8 +743,8 @@ class Model:
         t1d = torch.cat((t1d, strconf), dim=-1)
         t1d = t1d.float()
 
-        num_backbone_atoms_protein = 3 # we can make this variable later if we want
-        num_backbone_atoms_nucleic = self.conf['preprocess']['num_atoms_na']
+        # num_backbone_atoms_protein = 3 # we can make this variable later if we want
+        # num_backbone_atoms_nucleic = self.conf['preprocess']['num_atoms_na']
         # atom_trim_range = self.conf['inference']['num_atoms_modeled']
         # if self.conf['inference']['num_atoms_modeled']>=num_backbone_atoms_nucleic :
         #     atom_trim_range = self.conf['inference']['num_atoms_modeled']
@@ -779,24 +785,28 @@ class Model:
         # AF - only do this when doing inference, not during training.
         # if ('inference' in self.conf) and (self.conf.preprocess.sequence_decode):
         if ('inference' in self.conf) and (self.conf.inference.start_from_input):
-            print('Warning: start_from_input is True, so chopping off atoms after 14')
+            print(f'Warning: start_from_input is True, so chopping off atoms after {NHEAVY}')
             # assert 0, 'FOR ANDREW (note to self): check this line to see if we actually need to change, or how to best handle with both prot and NA: xyz_t = xyz_t.squeeze()[:,:14,:]'
             
             # atom_trim_range = self.conf['preprocess']['num_atoms_input'] # AF: default to 14, but can control how many
 
             # xyz_t = xyz_t.squeeze()[:,:atom_trim_range,:]
-            xyz_t = xyz_t.squeeze()[:,:14,:]
-            # xyz_t = xyz_t.squeeze()[:,:NHEAVY,:]
+            # xyz_t = xyz_t.squeeze()[:,:14,:]
+            # NHEAVYPROT
+
+            xyz_t = xyz_t.squeeze()[:,:NHEAVY,:]
             # ipdb.set_trace()
             # xyz_t = xyz_t.squeeze()[:,:NHEAVY,:]
-            if polymer_type_masks:
-                # How many backbone atoms do we need per polymer type?
-                xyz_t[is_diffused_na, num_backbone_atoms_nucleic:, :] = float('nan')
-                xyz_t[is_diffused_protein, num_backbone_atoms_protein:, :] = float('nan')
-                # xyz_t[:,3:,:] = float('nan')
+            # if polymer_type_masks:
+            #     # How many backbone atoms do we need per polymer type?
+            #     xyz_t[is_diffused_na, num_backbone_atoms_nucleic:, :] = float('nan')
+            #     xyz_t[is_diffused_protein, num_backbone_atoms_protein:, :] = float('nan')
+            #     # xyz_t[:,3:,:] = float('nan')
 
-            else:
-                xyz_t[:,3:,:] = float('nan')
+            # else:
+            #     xyz_t[:,3:,:] = float('nan')
+
+            xyz_t[:,3:,:] = float('nan')
 
 
         #     # atom_trim_range = self.conf['preprocess']['num_atoms_input'] # AF: default to 14, but can control how many
@@ -1246,24 +1256,11 @@ def centre(indep, is_diffused):
         xyz = xyz - center
         indep.natstack = indep.natstack - center
     indep.xyz = xyz
-    # set_trace()
+    
 
 def diffuse(conf, diffuser, indep, is_diffused, t):
     
     indep.xyz = add_fake_frame_legs(indep.xyz, indep.is_sm)
-
-    # Process nucleic acid shit
-    # ipdb.set_trace()
-    if conf['preprocess']['mask_by_polymer_type']:
-        if conf['preprocess']['num_atoms_na']:
-            num_atoms_na = conf['preprocess']['num_atoms_na']
-        else:
-            num_atoms_na = 3
-
-        # assert (num_atoms_na % 3) == 0
-
-        num_frames_na = num_atoms_na//3
-
 
     if t == diffuser.T: 
         t_list = [t,t]
@@ -1280,10 +1277,7 @@ def diffuse(conf, diffuser, indep, is_diffused, t):
         't_list'                  :t_list,
         'diffuse_sidechains'      :conf['preprocess']['sidechain_input'],
         'include_motif_sidechains':conf['preprocess']['motif_sidechain_input'],
-        # 'include_na_sidechains':conf['preprocess']['na_sidechain_input'],
         'is_sm': indep.is_sm,
-        'is_na': indep.is_na,
-        'num_frames_na': num_frames_na,
         'is_protein': indep.is_protein,
         'is_dna': indep.is_dna,
         'is_rna': indep.is_rna,

@@ -60,10 +60,6 @@ def get_args(in_args=None):
             help="output directory")
     train_group.add_argument("-grad_clip", default=0.2, action='store', type=float,
             help='grad norm clipping value')
-    train_group.add_argument("-polymer_focus", default=None,
-            help="filter training set items by whether they contain a specific polymer type")
-    train_group.add_argument("-polymer_frac_cutoff", type=float, default=0.25,
-            help="minimum fraction of input that is of specified polymer class")
 
     # data-loading parameters
     data_group = parser.add_argument_group("data loading parameters")
@@ -150,6 +146,10 @@ def get_args(in_args=None):
     data_group.add_argument('-p_add_bp_partners',type=float, default=0.0, help='When generating masks, do we want to find basepair partners and apply same behavior between them?')
     data_group.add_argument('-p_canonical_bp_filter',type=float, default=0.0, help='When generating sec struct estimation, how often do we want to use canonical basepair filter?')
     data_group.add_argument('-prop_ss_mask', default=0.5, type=float,  help='fraction of the 2d sec struct template that gets masked.')
+    data_group.add_argument("-polymer_focus", default=None,
+            help="filter training set items by whether they contain a specific polymer type")
+    data_group.add_argument("-polymer_frac_cutoff", type=float, default=0.25,
+            help="minimum fraction of input that is of specified polymer class")
     # data_group.add_argument('-contact_cut', type=int, default=8,
     #         help='Distance between protein and non-protein (sm, na) atoms to classify them as in contact')
     # data_group.add_argument('-chunk_size_min', type=int, default=1,
@@ -412,6 +412,8 @@ def get_args(in_args=None):
             help= 'for fixbb tasks, keep one chain complete. This is the maximum length of that chain (should be <60ish residues from max_length, so there is enough of the other chain)')
     parser.add_argument('-wandb_prefix', type=str, required=True,
             help='Prefix for name of session on wandb. This MUST be specified - make it clear what general parameters were used')
+    parser.add_argument('-wandb_project', type=str, required=True,
+            help='Project name for where we save this run in WandB')
     parser.add_argument('-metric', type=lambda m: getattr(metrics, m), action='append')
     parser.add_argument('-log_inputs', action='store_true', default=False)
     parser.add_argument('-n_write_pdb', type=int, default=100)
@@ -434,8 +436,6 @@ def get_args(in_args=None):
     preprocess_group.add_argument('-d_t2d', type=int, default = 44,
             help = 'dimension of t2d raw inputs')
     preprocess_group.add_argument('-motif_only_2d', action='store_true', default=False)
-    preprocess_group.add_argument('-num_atoms_na', type=int, default=14,
-            help='How many backbone atoms do we use for nucleic acid diffusion?')
 
     preprocess_group.add_argument('-twotemplate', default="True", choices=("True","False"),
             help="do we want to use the twotemplate method")
@@ -604,7 +604,6 @@ def get_args(in_args=None):
                   'p_show_motif_seq',
                   'mask_by_polymer_type',
                   'show_polymer_type_t1d',
-                  'num_atoms_na',
                   'twotemplate',
                   'threetemplate',
                   'p_show_ss',

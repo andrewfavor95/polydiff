@@ -356,9 +356,9 @@ def save_outputs(sampler, out_prefix, indep, denoised_xyz_stack, px0_xyz_stack, 
     final_seq = seq_stack[-1]
 
     if sampler._conf.seq_diffuser.seqdiff is not None:
-        assert 0, "BEFORE USING THIS SEQ DIFFUSON OPTION, MODIFY TO INCLUDE NA BASE TOKENS!"
         # When doing sequence diffusion the model does not make predictions beyond category 19
-        final_seq = final_seq[:,:20] # [L,20]
+        final_seq = final_seq[:,:rf2aa.chemical.NNAPROTAAS] # [L,32]
+        
 
     # All samplers now use a one-hot seq so they all need this step
     final_seq = torch.argmax(final_seq, dim=-1)
