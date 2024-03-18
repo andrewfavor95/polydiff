@@ -31,7 +31,7 @@ from rf2aa.tensor_util import assert_equal
 from rf2aa.util_module import XYZConverter
 from rf2aa.util import get_frames, is_protein, is_nucleic, is_DNA, is_RNA, is_atom
 from rf2aa.RoseTTAFoldModel import RoseTTAFoldModule
-from rf2aa.loss import compute_general_FAPE, mask_unresolved_frames
+from rf2aa.loss import compute_general_FAPE, mask_unresolved_frames, calc_allatom_lddt
 
 
 import loss_aa
@@ -372,9 +372,9 @@ class Trainer():
                   backprop_non_displacement_on_given=False, masks_1d={},
                   atom_frames=None, w_ligand_intra_fape=1.0, w_prot_lig_inter_fape=1.0, score_frames=False,
                   fape_scale_vec=None, scale_prot_fape=1.0, scale_dna_fape=1.0, scale_rna_fape=1.0, w_poly_cce=0.0, w_ss_dist=0.0, 
-                  w_ss_fape=0.0, w_dmat=0.0, w_torsion=0.0, w_lfad=0.0,
+                  w_ss_fape=0.0, w_dmat=0.0, w_torsion=0.0, w_lfad=0.0, w_fa_fape=0.0,
                   ):
-    
+   
         # assuming all bad crds have been popped
         assert not torch.isnan(pred_in).any()
         assert not torch.isnan(true).any()
@@ -433,7 +433,9 @@ class Trainer():
             'poly_cce'                  : w_poly_cce,
             'dmat'                      : w_dmat*disp_tscale,
             'torsion'                   : w_torsion*disp_tscale,
-            'lfad'                      : w_lfad*disp_tscale,
+            # 'lfad'                      : w_lfad*disp_tscale,
+            # 'fa_lddt'                   : w_fa_lddt*disp_tscale,
+            'fa_fape'                   : w_fa_fape*disp_tscale,
             # 'trans_v_loss'              : w_trans_v_loss*disp_tscale,
             # 'rots_vf_loss'              : w_rots_vf_loss*disp_tscale,
         }
@@ -536,10 +538,7 @@ class Trainer():
 
             ss_loss = (ss_mask_2d_*ss_loss).sum() / (ss_mask_2d_.sum() + eps)
             loss_s.append(ss_loss[None].detach())
-
-
             
-
             loss_dict[f'c6d_{i}'] = loss.clone()
             loss_dict[f'ss_dist_{i}'] = ss_loss.clone()
 
@@ -618,15 +617,14 @@ class Trainer():
         # get predicted frames 
         # R_pred,_ = rf2aa.util.rigid_from_3_points(N_pred.reshape(I*B,L,3), Ca_pred.reshape(I*B,L,3), C_pred.reshape(I*B,L,3),is_na=is_na)
         R_pred, T_pred = rf2aa.util.rigid_from_3_points(N_pred.reshape(I*B,L,3), Ca_pred.reshape(I*B,L,3), C_pred.reshape(I*B,L,3),is_na=is_na)
-        
-        R_pred = R_pred.reshape(I,B,L,3,3)
+        R_pred_frame_loss = R_pred.reshape(I,B,L,3,3)
         # get true frames 
         # R_true,_ = rf2aa.util.rigid_from_3_points(N_true, Ca_true, C_true, is_na=is_na)
         R_true, T_true = rf2aa.util.rigid_from_3_points(N_true, Ca_true, C_true, is_na=is_na)
 
         
         # calculate frame distance loss 
-        loss_frame_dist = loss_aa.frame_distance_loss(R_pred, R_true.squeeze(), is_sm) # NOTE: loss calc assumes batch size 1 due to squeeze 
+        loss_frame_dist = loss_aa.frame_distance_loss(R_pred_frame_loss, R_true.squeeze(), is_sm) # NOTE: loss calc assumes batch size 1 due to squeeze 
         loss_dict['frame_sqL2'] = loss_frame_dist.clone()
 
 
@@ -813,16 +811,15 @@ class Trainer():
         # make `mask_fa` for where we can predict full atoms coords
         seq_true = label_aa_s.reshape(B, -1)
         seq_pred = torch.argmax(logit_aa_s, dim=1)
-
-        seq_cutoff_local = 1
-        seq_neighbors_2d = torch.le(
-                                torch.abs(torch.arange(L)[:,None]-torch.arange(L)[None,:]), 
-                                seq_cutoff_local
-                                ).to(device=pred.device)
         
+
         resi_mask_2d = mask_2d.clone()
-        resi_mask_2d *= same_chain.bool()
-        resi_mask_2d *= seq_neighbors_2d
+        idx_vec = torch.arange(L)
+        seq_dist_mat = torch.abs(idx_vec[:,None]-idx_vec[None,:])
+        str_dist_mat = torch.cdist(true[:,:,1,:],true[:,:,1,:])
+        seq_neighbors_1to10 = torch.logical_or((seq_dist_mat >= 10 ) , (seq_dist_mat <= 1 )).to(device=pred.device)[None,:,:]
+        str_neighbors_clamp = ( str_dist_mat <= dclamp )
+        resi_mask_2d *= torch.logical_or(seq_neighbors_1to10 , str_neighbors_clamp)
         
         converter = XYZConverter().to(device=pred.device)
 
@@ -860,34 +857,108 @@ class Trainer():
         true_alt.scatter_(2, self.l2a[seq,:,None].repeat(1,1,1,3), true)
         score_tors_mask *= mask_BB[...,None] # (B, L, 10)
 
-        # l_torsion = torsionAngleLoss(pred_tors,true_tors,true_tors_alt,tors_mask,tors_planar,eps = 1e-10)
         l_torsion = torsionAngleLoss(pred_tors, score_tors, score_tors_alt, score_tors_mask, score_tors_planar, eps = 1e-10)
 
         loss_dict['torsion'] = l_torsion
 
-        # _, true_xyz_fa = converter.compute_all_atom(seq, true[...,:3,:], true_tors)
-        # _, true_xyz_fa_alt = converter.compute_all_atom(seq, true_alt[...,:3,:], true_tors_alt)
-        # _, pred_xyz_fa = converter.compute_all_atom(seq, pred[-1,...], pred_tors[-1]) 
+        # AF: I do not need to calculate this, since we know ground truth. Just wasting time and memory.
+        # _, true_xyz_fa = converter.compute_all_atom(seq_for_scoring, true[...,:3,:], score_tors)
+        # # _, true_xyz_fa_alt = converter.compute_all_atom(seq_for_scoring, true_alt[...,:3,:], score_tors_alt)
+        # # _, pred_xyz_fa = converter.compute_all_atom(seq_for_scoring, pred[-1,...], pred_tors[-1]) 
+        # # _, pred_xyz_fa = converter.compute_all_atom(seq.repeat(I,1), pred[:,0,:,:,:], pred_tors[:,0,:,:,:])
+        _, pred_xyz_fa = converter.compute_all_atom(seq_for_scoring.repeat(I,1), pred[:,0,:,:,:], pred_tors[:,0,:,:,:])
 
-        _, true_xyz_fa = converter.compute_all_atom(seq_for_scoring, true[...,:3,:], score_tors)
-        _, true_xyz_fa_alt = converter.compute_all_atom(seq_for_scoring, true_alt[...,:3,:], score_tors_alt)
-        _, pred_xyz_fa = converter.compute_all_atom(seq_for_scoring, pred[-1,...], pred_tors[-1]) 
+        #######################################
+        # full atom FAPE and lddt loss        #
+        #######################################
 
-        ###################################
-        # Local full atom distance loss:
-        ###################################
-        if w_lfad > 0.0: # kind of takes long to calc this loss, so ignore if not using it
+        # # A.Fav: we recompute this one because we only wanna score on atoms that are shared by the seq prediciton.
+        
+        # close_resi_mask_2d = torch.logical_or(resi_mask_2d , ( torch.cdist(true[:,:,1,:],true[:,:,1,:]) <= dclamp ))
+        # frame_atom_mask_2d_fa = torch.einsum('bfn,bra->bfnra', frame_mask_BB, mask_fa).bool() # B, L, nframes, L, natoms
+        # frame_atom_mask_2d_fa *= resi_mask_2d[:, :,None, :, None].bool().expand(-1,-1,nframes,-1, rf2aa.chemical.NTOTAL)
 
-            l_lfad = compute_LFAD(true_xyz_fa, true_xyz_fa_alt, pred_xyz_fa, resi_mask_2d, mask_fa, eps = 1e-10)
+        # print(f'MASK_SUM= {frame_atom_mask_2d_fa.sum()} , MASK_SHAPE={frame_atom_mask_2d_fa.shape}')
 
-            loss_dict['lfad'] = l_lfad
+        # set_trace()
+        
+
+        # # inputs: frame_mask_BB, mask_fa, frame_mask, resi_mask
+
+
+        # # IN HERE: calc_fa_fape(pred_xyz_fa, true, mask_fa, frames_BB, frame_mask_BB, resi_mask_2d, is_na=is_na)
+        # # IN FUNC: calc_fa_fape(pred_xyz_fa, true, atom_mask, frames, frame_mask, resi_mask_2d, is_na=None):
+
+        # # Then define frame_atom_mask_2d inside func using (frame_mask_BB, mask_fa, frame_mask, resi_mask_2d, and resi_mask_2d )
+        # # BUT CONSIDER DEFINING frame_atom_mask_2d OUT HERE SO WE CAN REUSE FOR OTHER LOSS FUNCTIONS!
+                    
+
+
+        # frame_atom_mask_2d_fa = torch.einsum('bfn,bra->bfnra', frame_mask_BB, mask_fa).bool() # B, L, nframes, L, natoms
+        # frame_atom_mask_2d_fa *= resi_mask_2d[:, :,None, :, None].bool().expand(-1,-1,frame_mask.shape[-1],-1, rf2aa.chemical.NTOTAL)
+
+
+
+        # WHAT TO USE AS INPUT:
+        # calc_fa_fape(pred_xyz_fa, true, mask_fa, frames_BB, frame_mask_BB, frame_atom_mask_2d_fa,
+
+
+        # # set_trace()
+        # mixing_factor = 0.9
+        # l_fa_fape_clamped, _, _ = compute_general_FAPE(pred_xyz_fa, true, atom_mask = mask_fa, frames = frames_BB, frame_mask = frame_mask_BB, frame_atom_mask_2d = frame_atom_mask_2d_fa, dclamp = dclamp, Z = Z)
+        # l_fa_fape_unclamp, _, _ = compute_general_FAPE(pred_xyz_fa, true, atom_mask = mask_fa, frames = frames_BB, frame_mask = frame_mask_BB, frame_atom_mask_2d = frame_atom_mask_2d_fa, dclamp = 25.0, Z = 25.0)
+        # l_fa_fape = (mixing_factor*l_fa_fape_clamped) + (1-mixing_factor)*l_fa_fape_unclamp
+        # l_fa_fape = weighted_decay_sum(l_fa_fape, gamma=0.99)
+
+        frame_atom_mask_2d_fa = torch.einsum('bfn,bra->bfnra', frame_mask_BB, mask_fa).bool() # B, L, nframes, L, natoms
+        frame_atom_mask_2d_fa *= resi_mask_2d[:, :,None, :, None].bool().expand(-1,-1,nframes,-1, rf2aa.chemical.NTOTAL)
+        print(f'MASK_SUM= {frame_atom_mask_2d_fa.sum()} , MASK_SHAPE={frame_atom_mask_2d_fa.shape}')
+        # max_fa_fape_2d_mask_size = 2287162
+        max_fa_fape_2d_mask_size = 2280000
+        below_fa_size_limit = frame_atom_mask_2d_fa.sum() < max_fa_fape_2d_mask_size
+        if below_fa_size_limit: # This is a very expensive loss function and we cannot compute if L > 500
+            # too_big_for_fa_fape = False
+            mixing_factor = 0.9
+            l_fa_fape_clamped, _, _ = compute_general_FAPE(pred_xyz_fa, true, atom_mask = mask_fa, frames = frames_BB, frame_mask = frame_mask_BB, frame_atom_mask_2d = frame_atom_mask_2d_fa, dclamp = dclamp, Z = Z)
+            l_fa_fape_unclamp, _, _ = compute_general_FAPE(pred_xyz_fa, true, atom_mask = mask_fa, frames = frames_BB, frame_mask = frame_mask_BB, frame_atom_mask_2d = frame_atom_mask_2d_fa, dclamp = 25.0, Z = 25.0)
+            l_fa_fape = (mixing_factor*l_fa_fape_clamped) + (1-mixing_factor)*l_fa_fape_unclamp
+            l_fa_fape = weighted_decay_sum(l_fa_fape, gamma=0.99)
+            
         else:
-            loss_dict['lfad'] = 0.0
+            # too_big_for_fa_fape = True
+            loss_weights['fa_fape'] = loss_weights['fa_fape']*0.0
+            l_fa_fape = float('nan')
+
+        loss_dict['fa_fape'] = l_fa_fape
+
+
+
+
+
+        # l_fa_fape = calc_fa_fape_efficient(pred_xyz_fa, true, mask_fa, frames_BB, frame_mask_BB, resi_mask_2d, is_na=is_na)
+        # l_fa_fape = calc_fa_fape(pred_xyz_fa, true, mask_fa, frames_BB, frame_mask_BB, resi_mask_2d, is_na=is_na)
+        # loss_dict['fa_fape'] = l_fa_fape
+
+        
+        # if (w_fa_fape > 0.0) and (L <= 500): # This is a very expensive loss function and we cannot compute if L > 500
+        #     mixing_factor = 0.9
+        #     l_fa_fape_clamped, _, _ = compute_general_FAPE(pred_xyz_fa, true, atom_mask = mask_fa, frames = frames_BB, frame_mask = frame_mask_BB, frame_atom_mask_2d = frame_atom_mask_2d_fa, dclamp = dclamp, Z = Z)
+        #     l_fa_fape_unclamp, _, _ = compute_general_FAPE(pred_xyz_fa, true, atom_mask = mask_fa, frames = frames_BB, frame_mask = frame_mask_BB, frame_atom_mask_2d = frame_atom_mask_2d_fa, dclamp = 25.0, Z = 25.0)
+        #     l_fa_fape = (mixing_factor*l_fa_fape_clamped) + (1-mixing_factor)*l_fa_fape_unclamp
+        #     l_fa_fape = weighted_decay_sum(l_fa_fape, gamma=0.99)
+            
+        # else:
+        #     loss_weights['fa_fape'] = loss_weights['fa_fape']*0.0
+        #     l_fa_fape = float('nan')
+        # loss_dict['fa_fape'] = l_fa_fape
+
+
 
 
         # dmat_loss = calc_fa_dmat_loss(pred, true, mask_crds, same_chain)
         dmat_loss, _ = calc_dmat_loss(pred[:,:,:,1,:], true[:,:,1,:], mask_2d, same_chain)
         loss_dict['dmat']  = dmat_loss
+
 
 
         # Report RMSD on motif chunks 
@@ -917,9 +988,10 @@ class Trainer():
                                                      had_sm, 
                                                      had_prot_motif,
                                                      had_ss_shown,
+                                                     below_fa_size_limit,
                                                      )
                     
-            
+
 
         # tot_loss += 0.0 * (pred_tors.mean() + pred_lddt.mean())
 

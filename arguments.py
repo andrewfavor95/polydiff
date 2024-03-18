@@ -384,8 +384,8 @@ def get_args(in_args=None):
             help="Weight on NA sec struct fape")
     loss_group.add_argument('-w_torsion', type=float, default=0.0,
             help="Weight on torsion angle loss")
-    loss_group.add_argument('-w_lfad', type=float, default=0.0,
-            help="Weight on Local Full-Atom Distance loss")
+    loss_group.add_argument('-w_fa_fape', type=float, default=0.0,
+            help="Weight on full atom fape loss")
 
 
     loss_group.add_argument('-scale_prot_fape', type=float, default=1.0,
@@ -571,7 +571,7 @@ def get_args(in_args=None):
                 'norm_fape',
                 'clamp_fape',
                 'w_torsion',
-                'w_lfad',
+                'w_fa_fape',
                 'scale_prot_fape',
                 'scale_dna_fape',
                 'scale_rna_fape',

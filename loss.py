@@ -4,8 +4,10 @@ from opt_einsum import contract as einsum
 
 # from util import rigid_from_3_points, get_mu_xt_x0
 from util import get_mu_xt_x0
-from rf2aa.util import rigid_from_3_points
+from rf2aa.util import rigid_from_3_points, is_nucleic, is_protein
+from rf2aa.loss import mask_unresolved_frames
 from kinematics import get_dih, th_kabsch
+from rf2aa.chemical import NFRAMES, NTOTAL
 from scoring import HbHybType
 from icecream import ic
 from diff_util import th_min_angle 
@@ -337,8 +339,11 @@ def calc_str_loss(pred, true, mask_2d, same_chain, negative=False, fape_scale_ve
     '''
     I = pred.shape[0]
     true = true.unsqueeze(0)
+
+
     t_tilde_ij = get_t(true[:,:,:,0], true[:,:,:,1], true[:,:,:,2], non_ideal=True)
     t_ij = get_t(pred[:,:,:,0], pred[:,:,:,1], pred[:,:,:,2])
+
 
 
     difference = torch.sqrt(torch.square(t_tilde_ij-t_ij).sum(dim=-1) + eps)
@@ -554,7 +559,75 @@ def torsionAngleLoss( alpha, alphanat, alphanat_alt, tors_mask, tors_planar, eps
     return l_tors+0.02*l_norm+0.02*l_planar
 
 
-def compute_LFAD(true_xyz_fa, true_xyz_fa_alt, pred_xyz_fa, resi_mask_2d, mask_fa_in, eps = 1e-10, clamp=10, A=10, mixing_factor = 0.9):
+# def compute_LFAD(true_xyz_fa, true_xyz_fa_alt, pred_xyz_fa, resi_mask_2d, mask_fa_in, eps = 1e-10, clamp=10, A=10, mixing_factor = 0.9):
+#     """
+#     Written by AF.
+#     This is a local full atom distance loss. 
+#     This loss computes the difference between distance matrices, 
+#     where pairwise distances are defined for every single pair of atoms within a local window around a residue.
+#     this local window is limited to: 
+#         * within the same chain, +1 or -1 residue in the chain.
+#         * within 15 angstroms max distance between atom pairs.
+#     """
+#     def _compute_FAD_i(true_xyz_fa, true_xyz_fa_alt, pred_xyz_fa, mask_fa_in, eps = 1e-10, clamp=10, A=10, mixing_factor = 0.9):
+#         """
+#         Full atom difference calculation, called as a subtask for local residue indices
+#         This is necessary to avoid memory explosion.
+#         """
+#         I,L,N,D = pred_xyz_fa.shape
+
+#         pred_xyz_flat_fa     = pred_xyz_fa.view(I, L*N, D)
+#         true_xyz_flat_fa     = true_xyz_fa.view(I, L*N, D)
+#         true_xyz_flat_fa_alt = true_xyz_fa_alt.view(I, L*N, D)
+#         mask_flat_fa         = mask_fa_in.view(I, L*N)
+
+#         pred_dmat_flat_fa     = torch.cdist(pred_xyz_flat_fa, pred_xyz_flat_fa)
+#         true_dmat_flat_fa     = torch.cdist(true_xyz_flat_fa, true_xyz_flat_fa)
+#         true_dmat_flat_fa_alt = torch.cdist(true_xyz_flat_fa_alt, true_xyz_flat_fa_alt)
+
+#         mask_flat_fa_2d  = mask_flat_fa[...,None] * mask_flat_fa[None,...]
+#         mask_flat_fa_2d *= torch.logical_and( true_dmat_flat_fa > 0.0,  true_dmat_flat_fa < 15.0 )
+#         mask_flat_fa_2d *= ~torch.eye(L*N, device=pred_xyz_fa.device)[None,...].bool()
+
+#         difference = torch.square( pred_dmat_flat_fa - true_dmat_flat_fa) 
+#         difference_alt = torch.square( pred_dmat_flat_fa - true_dmat_flat_fa_alt) 
+
+#         unclamped_loss = difference.clone().view(I,L,N,L,N) / A
+#         clamped_loss = torch.clamp(difference, max=clamp).view(I,L,N,L,N) / A
+#         unclamped_loss_alt = difference_alt.clone().view(I,L,N,L,N) / A
+#         clamped_loss_alt = torch.clamp(difference_alt, max=clamp).view(I,L,N,L,N) / A
+
+#         mask_fa_2d = mask_flat_fa_2d.view(I,L,N,L,N) 
+
+#         unclamped_loss = (mask_fa_2d*unclamped_loss).sum(dim=(2,4)) / (mask_fa_2d.sum(dim=(2,4))+eps)
+#         clamped_loss = (mask_fa_2d*clamped_loss).sum(dim=(2,4)) / (mask_fa_2d.sum(dim=(2,4))+eps)
+#         unclamped_loss_alt = (mask_fa_2d*unclamped_loss_alt).sum(dim=(2,4)) / (mask_fa_2d.sum(dim=(2,4))+eps)
+#         clamped_loss_alt = (mask_fa_2d*clamped_loss_alt).sum(dim=(2,4)) / (mask_fa_2d.sum(dim=(2,4))+eps)
+        
+
+#         loss = (mixing_factor*clamped_loss) + (1-mixing_factor)*unclamped_loss
+#         loss_alt = (mixing_factor*clamped_loss_alt) + (1-mixing_factor)*unclamped_loss_alt
+
+#         loss_min, _ = torch.min(torch.cat([loss, loss_alt],dim=0), dim=0, keepdim=True)
+        
+#         return loss_min.mean()
+        
+#     L_tot = pred_xyz_fa.shape[1]
+#     loss_tot = 0.0
+
+#     for i in range(L_tot):
+#         local_resi_inds_i = torch.nonzero(resi_mask_2d[0,i, :]).flatten()
+
+#         if len(local_resi_inds_i) > 0:
+#             loss_tot += _compute_FAD_i(true_xyz_fa.index_select(1,local_resi_inds_i), 
+#                                         true_xyz_fa_alt.index_select(1,local_resi_inds_i), 
+#                                         pred_xyz_fa.index_select(1,local_resi_inds_i), 
+#                                         mask_fa_in.index_select(1,local_resi_inds_i))
+
+#     return loss_tot/L_tot
+
+
+def compute_LFAD(true_xyz_fa, pred_xyz_fa, resi_mask_2d, mask_fa_in, eps = 1e-10, clamp=10, A=10, mixing_factor = 0.9):
     """
     Written by AF.
     This is a local full atom distance loss. 
@@ -564,60 +637,67 @@ def compute_LFAD(true_xyz_fa, true_xyz_fa_alt, pred_xyz_fa, resi_mask_2d, mask_f
         * within the same chain, +1 or -1 residue in the chain.
         * within 15 angstroms max distance between atom pairs.
     """
-    def _compute_FAD_i(true_xyz_fa, true_xyz_fa_alt, pred_xyz_fa, mask_fa_in, eps = 1e-10, clamp=10, A=10, mixing_factor = 0.9):
+    def _compute_FAD_i(true_xyz_fa, pred_xyz_fa, mask_fa_in, eps = 1e-10, clamp=10, A=10, mixing_factor = 0.9):
         """
         Full atom difference calculation, called as a subtask for local residue indices
         This is necessary to avoid memory explosion.
         """
-        I,L,N,D = pred_xyz_fa.shape
 
+        I,L,N,D = pred_xyz_fa.shape
+        set_trace()
         pred_xyz_flat_fa     = pred_xyz_fa.view(I, L*N, D)
-        true_xyz_flat_fa     = true_xyz_fa.view(I, L*N, D)
-        true_xyz_flat_fa_alt = true_xyz_fa_alt.view(I, L*N, D)
-        mask_flat_fa         = mask_fa_in.view(I, L*N)
+        # true_xyz_flat_fa     = true_xyz_fa.view(I, L*N, D)
+        true_xyz_flat_fa     = true_xyz_fa.view(1, L*N, D)
+        # true_xyz_flat_fa_alt = true_xyz_fa_alt.view(I, L*N, D)
+        mask_flat_fa         = mask_fa_in.view(1, L*N)
 
         pred_dmat_flat_fa     = torch.cdist(pred_xyz_flat_fa, pred_xyz_flat_fa)
         true_dmat_flat_fa     = torch.cdist(true_xyz_flat_fa, true_xyz_flat_fa)
-        true_dmat_flat_fa_alt = torch.cdist(true_xyz_flat_fa_alt, true_xyz_flat_fa_alt)
+        # true_dmat_flat_fa_alt = torch.cdist(true_xyz_flat_fa_alt, true_xyz_flat_fa_alt)
 
         mask_flat_fa_2d  = mask_flat_fa[...,None] * mask_flat_fa[None,...]
         mask_flat_fa_2d *= torch.logical_and( true_dmat_flat_fa > 0.0,  true_dmat_flat_fa < 15.0 )
         mask_flat_fa_2d *= ~torch.eye(L*N, device=pred_xyz_fa.device)[None,...].bool()
 
         difference = torch.square( pred_dmat_flat_fa - true_dmat_flat_fa) 
-        difference_alt = torch.square( pred_dmat_flat_fa - true_dmat_flat_fa_alt) 
+        # difference_alt = torch.square( pred_dmat_flat_fa - true_dmat_flat_fa_alt) 
 
         unclamped_loss = difference.clone().view(I,L,N,L,N) / A
         clamped_loss = torch.clamp(difference, max=clamp).view(I,L,N,L,N) / A
-        unclamped_loss_alt = difference_alt.clone().view(I,L,N,L,N) / A
-        clamped_loss_alt = torch.clamp(difference_alt, max=clamp).view(I,L,N,L,N) / A
+        # unclamped_loss_alt = difference_alt.clone().view(I,L,N,L,N) / A
+        # clamped_loss_alt = torch.clamp(difference_alt, max=clamp).view(I,L,N,L,N) / A
 
         mask_fa_2d = mask_flat_fa_2d.view(I,L,N,L,N) 
 
         unclamped_loss = (mask_fa_2d*unclamped_loss).sum(dim=(2,4)) / (mask_fa_2d.sum(dim=(2,4))+eps)
         clamped_loss = (mask_fa_2d*clamped_loss).sum(dim=(2,4)) / (mask_fa_2d.sum(dim=(2,4))+eps)
-        unclamped_loss_alt = (mask_fa_2d*unclamped_loss_alt).sum(dim=(2,4)) / (mask_fa_2d.sum(dim=(2,4))+eps)
-        clamped_loss_alt = (mask_fa_2d*clamped_loss_alt).sum(dim=(2,4)) / (mask_fa_2d.sum(dim=(2,4))+eps)
+        # unclamped_loss_alt = (mask_fa_2d*unclamped_loss_alt).sum(dim=(2,4)) / (mask_fa_2d.sum(dim=(2,4))+eps)
+        # clamped_loss_alt = (mask_fa_2d*clamped_loss_alt).sum(dim=(2,4)) / (mask_fa_2d.sum(dim=(2,4))+eps)
         
 
         loss = (mixing_factor*clamped_loss) + (1-mixing_factor)*unclamped_loss
-        loss_alt = (mixing_factor*clamped_loss_alt) + (1-mixing_factor)*unclamped_loss_alt
+        # loss_alt = (mixing_factor*clamped_loss_alt) + (1-mixing_factor)*unclamped_loss_alt
 
-        loss_min, _ = torch.min(torch.cat([loss, loss_alt],dim=0), dim=0, keepdim=True)
+        # loss_min, _ = torch.min(torch.cat([loss, loss_alt],dim=0), dim=0, keepdim=True)
         
-        return loss_min.mean()
+        # return loss_min.mean()
+        return loss.mean()
         
+
     L_tot = pred_xyz_fa.shape[1]
     loss_tot = 0.0
 
     for i in range(L_tot):
+
+        set_trace()
         local_resi_inds_i = torch.nonzero(resi_mask_2d[0,i, :]).flatten()
 
         if len(local_resi_inds_i) > 0:
-            loss_tot += _compute_FAD_i(true_xyz_fa.index_select(1,local_resi_inds_i), 
-                                        true_xyz_fa_alt.index_select(1,local_resi_inds_i), 
-                                        pred_xyz_fa.index_select(1,local_resi_inds_i), 
-                                        mask_fa_in.index_select(1,local_resi_inds_i))
+            # loss_tot += _compute_FAD_i(true_xyz_fa.index_select(1,local_resi_inds_i), 
+            #                             pred_xyz_fa.index_select(1,local_resi_inds_i), 
+            #                             mask_fa_in.index_select(1,local_resi_inds_i))
+            loss_tot += _compute_FAD_i(true_xyz_fa.index_select(1,local_resi_inds_i), pred_xyz_fa.index_select(1,local_resi_inds_i), mask_fa_in.index_select(1,local_resi_inds_i))
+
 
     return loss_tot/L_tot
 
@@ -1020,4 +1100,61 @@ def calc_lddt(pred_ca, true_ca, mask_crds, mask_2d, same_chain, negative=False, 
     true_lddt = mask_crds[None]*true_lddt
     true_lddt = true_lddt.sum(dim=(1,2)) / (mask_crds.sum() + eps)
     return true_lddt
+
+
+# def calc_fa_fape(pred_xyz_fa, true_xyz_fa, atom_mask, frames, frame_mask, resi_mask_2d,
+#                     is_na=None, Z=10.0, dclamp=10.0, dclamp_2d=None, mixing_factor=0.9, gamma=0.99, eps=1e-4):
+#     """
+#     AF: function for calculating full atom fape, given full torsion predicted coords.
+#     """
+
+
+#     I, L, natoms, _ = pred_xyz_fa.shape
+
+#     full_atom_mask_2d = torch.einsum('bfn,bra->bfnra', frame_mask[:,:,:1], atom_mask).bool() # B, L, nframes, L, natoms
+#     full_atom_mask_2d *= resi_mask_2d[:, :,None, :, None].bool().expand(-1,-1,-1,-1, natoms) 
+#     print(f'MASK SIZE= {full_atom_mask_2d.sum()}')
+    
+
+#     pred_xyz_fa = pred_xyz_fa.view(I,1,L,natoms,3)
+#     N_pred  = pred_xyz_fa[:,:,:,0]
+#     Ca_pred = pred_xyz_fa[:,:,:,1]
+#     C_pred  = pred_xyz_fa[:,:,:,2]
+#     R_pred,T_pred = rigid_from_3_points(N_pred, Ca_pred , C_pred, is_na=is_na)
+#     R_pred = R_pred.view(I,1,L,1,3,3).expand(-1,-1,-1,natoms,-1,-1)
+#     T_pred = T_pred.view(I,1,L,1,3).expand(-1,-1,-1,natoms,-1)
+#     X_ij_pred = (pred_xyz_fa.transpose(2,1) - T_pred).view(I,1,L,L,natoms,3).transpose(4,3)
+#     t_fa_ij_pred = einsum('iblnkj, iblnmk -> ilbmnj', R_pred, X_ij_pred)
+    
+#     true_xyz_fa = true_xyz_fa.view(1,1,L,natoms,3)
+#     N_true  = true_xyz_fa[:,:,:,0]
+#     Ca_true = true_xyz_fa[:,:,:,1]
+#     C_true  = true_xyz_fa[:,:,:,2]
+#     R_true,T_true = rigid_from_3_points(N_true, Ca_true , C_true, is_na=is_na)
+#     R_true = R_true.view(1,1,L,1,3,3).expand(-1,-1,-1,natoms,-1,-1)
+#     T_true = T_true.view(1,1,L,1,3).expand(-1,-1,-1,natoms,-1)
+#     X_ij_true = (true_xyz_fa.transpose(2,1) - T_true).view(1,1,L,L,natoms,3).transpose(4,3)
+#     t_fa_ij_true = einsum('iblnkj, iblnmk -> ilbmnj', R_true, X_ij_true)
+
+
+#     difference = torch.sqrt(torch.square(t_fa_ij_pred-t_fa_ij_true).sum(dim=-1) + eps)
+
+#     unclamped_loss = difference.clone() / Z
+#     clamped_loss = torch.clamp(difference, max=dclamp) / Z
+
+#     clamped_loss   = (full_atom_mask_2d*clamped_loss).sum(dim=(1,2,3,4)) / (full_atom_mask_2d.sum()+eps)
+#     unclamped_loss = (full_atom_mask_2d*unclamped_loss).sum(dim=(1,2,3,4)) / (full_atom_mask_2d.sum()+eps)
+
+
+#     l_fa_fape = (mixing_factor*clamped_loss) + ((1-mixing_factor)*unclamped_loss)
+
+#     l_fa_fape = weighted_decay_sum(l_fa_fape, gamma=gamma)
+
+#     return l_fa_fape
+
+
+
+
+
+
 
