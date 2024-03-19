@@ -803,6 +803,7 @@ def calc_BB_bond_geom_absolute(pred, eps=1e-6, ideal_NC=1.329, ideal_CACN=-0.441
     bang_loss = CACN_loss + CNCA_loss
 
     return blen_loss, bang_loss
+    
 def calc_BB_bond_geom(pred, true, mask_crds, eps=1e-6):
     '''
     Calculate backbone bond geometry (bond length and angle) and put loss on them

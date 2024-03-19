@@ -388,6 +388,20 @@ def get_args(in_args=None):
             help="Weight on full atom fape loss")
 
 
+    loss_group.add_argument('-w_inter_fape', type=float, default=2.0,
+            help="Weight on inter-chain backbone fape in loss function [2.0]")
+    loss_group.add_argument('-w_bond', type=float, default=0.0,
+            help="Weight on predicted bond loss [0.0]")
+    loss_group.add_argument('-w_atom_bond', type=float, default=0.0,
+            help="Weight on atom bond loss [0.0]")
+    loss_group.add_argument('-w_skip_bond', type=float, default=0.0,
+            help="Weight on skip bond distance loss [0.0]") 
+    loss_group.add_argument('-w_rigid', type=float, default=0.0,
+            help="Weight on rigid body distance loss [0.0]")  
+    loss_group.add_argument('-w_clash', type=float, default=0.0,
+            help="Weight on clash loss [0.0]")
+
+
     loss_group.add_argument('-scale_prot_fape', type=float, default=1.0,
             help="Default scale of protein FAPE")
     loss_group.add_argument('-scale_dna_fape', type=float, default=1.0,
@@ -572,6 +586,15 @@ def get_args(in_args=None):
                 'clamp_fape',
                 'w_torsion',
                 'w_fa_fape',
+
+                'w_inter_fape',
+                'w_bond',
+                'w_atom_bond',
+                'w_skip_bond',
+                'w_rigid',
+                'w_clash',
+                
+
                 'scale_prot_fape',
                 'scale_dna_fape',
                 'scale_rna_fape',
