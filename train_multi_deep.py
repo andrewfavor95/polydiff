@@ -375,6 +375,7 @@ class Trainer():
                   fape_scale_vec=None, scale_prot_fape=1.0, scale_dna_fape=1.0, scale_rna_fape=1.0, w_poly_cce=0.0, w_ss_dist=0.0, 
                   w_ss_fape=0.0, w_dmat=0.0, w_torsion=0.0, w_lfad=0.0, w_fa_fape=0.0,
                   w_bond=0.0, w_atom_bond=0.0, w_skip_bond=0.0, w_rigid=0.0, w_clash=0.0, w_inter_fape=0.0, 
+                  use_poly_tscale_seq_loss=False,
                   ):
    
         # assuming all bad crds have been popped
@@ -464,6 +465,11 @@ class Trainer():
         else:
             had_ss_shown = False
             loss_weights['ss_fape'] = loss_weights['ss_fape']*0.0
+
+
+
+
+
 
         # Displacement prediction loss between xyz prev and xyz_true
         if unclamp:
@@ -582,6 +588,8 @@ class Trainer():
                 label_aa_s = label_aa_s.squeeze() # [L]
                 loss = self.seq_diffuser.loss(seq_true=label_aa_s, seq_pred=logit_aa_s, diffusion_mask=~seq_diffusion_mask)
                 # tot_loss += w_aa*loss # Not scaling loss by timestep
+
+
                 
             else:
                 # Discrete Diffusion 
@@ -599,13 +607,33 @@ class Trainer():
                 # raise NotImplementedError()
 
         else:
+
             # Classic Autoregressive Sequence Prediction
             loss = self.loss_fn(logit_aa_s, label_aa_s.reshape(B, -1))
             loss = loss * mask_aa_s.reshape(B, -1)
             loss = loss.sum() / (mask_aa_s.sum() + 1e-8)
 
+
         loss_s.append(loss[None].detach())
         loss_dict['aa_cce'] = loss.clone()
+
+
+
+        
+
+        # If we are using the poly tscale, the aa_cce loss weight is already factored in, so we need to set to 1.0 in dict
+        if use_poly_tscale_seq_loss:
+            # recompute item in loss_dict to be composite of aa and poly cce:
+            loss_dict['aa_cce'] = (aa_tscale*loss_dict['aa_cce']) + ((1-aa_tscale)*loss_dict['poly_cce'])
+            loss_weights['aa_cce'] = 1.0
+            loss_weights['poly_cce'] = 0.0 # Don't need this, since it's now included in aa_cce term.
+
+        # 
+        # if use_poly_tscale_seq_loss:
+        #     loss_weights['aa_cce'] = 1.0
+        #     loss_weights['poly_cce'] = 0.0 # Don't need this, since it's now included in aa_cce term.
+
+
 
         
 
@@ -690,9 +718,6 @@ class Trainer():
         #                                      A=norm_fape/2, d_clamp=None if unclamp else clamp_fape/2, gamma=1.0)
 
 
-        # FAPE on inter-chain:
-        # mask_2d_inter= ~same_chain * mask_2d
-        tot_str_inter, _ = calc_str_loss(pred, true, ~same_chain.bool()*mask_2d , same_chain, negative=negative, fape_scale_vec=fape_scale_vec, gamma=1.0)
 
 
 
@@ -801,7 +826,7 @@ class Trainer():
         loss_dict['ss_fape']             = tot_ss_fape
         loss_dict['ligand_intra_fape']   = l_fape_sm_intra
         loss_dict['prot_lig_inter_fape'] = l_fape_prot_sm_inter
-        loss_dict['inter_fape']          = tot_str_inter
+        
 
 
         ###############################
@@ -867,10 +892,16 @@ class Trainer():
         score_tors_mask *= mask_BB[...,None] # (B, L, 10)
 
         l_torsion = torsionAngleLoss(pred_tors, score_tors, score_tors_alt, score_tors_mask, score_tors_planar, eps = 1e-10)
-
         loss_dict['torsion'] = l_torsion
 
 
+        dmat_loss, _ = calc_dmat_loss(pred[:,:,:,1,:], true[:,:,1,:], mask_2d, same_chain)
+        loss_dict['dmat']  = dmat_loss
+
+
+        # cart bonded (bond geometry)
+        bond_loss = rf2aa.loss.calc_BB_bond_geom(seq[0], pred_allatom[0:1], idx)
+        loss_dict['bond_loss'] = bond_loss
 
         # lddts (allatom) + lddt loss
         # lddt_loss, allatom_lddt = calc_allatom_lddt_loss(
@@ -884,62 +915,82 @@ class Trainer():
         # # _, pred_xyz_fa = converter.compute_all_atom(seq_for_scoring, pred[-1,...], pred_tors[-1]) 
         # # _, pred_xyz_fa = converter.compute_all_atom(seq.repeat(I,1), pred[:,0,:,:,:], pred_tors[:,0,:,:,:])
 
+
+
+
         # AF: SHOULD I USE THIS, OR SHOULD I USE 
         _, pred_xyz_fa = converter.compute_all_atom(seq_for_scoring.repeat(I,1), pred[:,0,:,:,:], pred_tors[:,0,:,:,:])
-
-        #######################################
-        # full atom FAPE and lddt loss        #
-        #######################################
-
         # # A.Fav: we recompute this one because we only wanna score on atoms that are shared by the seq prediciton.
+        mixing_factor = 0.9
 
-        frame_atom_mask_2d_fa = torch.einsum('bfn,bra->bfnra', frame_mask_BB, mask_fa).bool() # B, L, nframes, L, natoms
-        frame_atom_mask_2d_fa *= resi_mask_2d[:, :,None, :, None].bool().expand(-1,-1,nframes,-1, rf2aa.chemical.NTOTAL)
+        frame_atom_mask_2d = torch.einsum('bfn,bra->bfnra', frame_mask_BB, mask_fa).bool() # B, L, nframes, L, natoms
+        frame_atom_mask_2d_fa = frame_atom_mask_2d*resi_mask_2d[:, :,None, :, None].bool().expand(-1,-1,nframes,-1, rf2aa.chemical.NTOTAL)
+        frame_atom_mask_2d_inter = frame_atom_mask_2d*same_chain[:, :,None, :, None].bool().expand(-1,-1,nframes,-1, rf2aa.chemical.NTOTAL)
         # print(f'MASK_SUM= {frame_atom_mask_2d_fa.sum()} , MASK_SHAPE={frame_atom_mask_2d_fa.shape}')
         # max_fa_fape_2d_mask_size = 2287162
         max_fa_fape_2d_mask_size = 2280000
         # max_fa_fape_2d_mask_size = 9999999
         below_fa_size_limit = frame_atom_mask_2d_fa.sum() < max_fa_fape_2d_mask_size
         if below_fa_size_limit: # This is a very expensive loss function and we cannot compute if L > 500
-            mixing_factor = 0.9
+            #######################################
+            # full atom FAPE and lddt loss        #
+            #######################################
             l_fa_fape_clamped, _, _ = compute_general_FAPE(pred_xyz_fa, true, atom_mask = mask_fa, frames = frames_BB, frame_mask = frame_mask_BB, frame_atom_mask_2d = frame_atom_mask_2d_fa, dclamp = dclamp, Z = Z)
             l_fa_fape_unclamp, _, _ = compute_general_FAPE(pred_xyz_fa, true, atom_mask = mask_fa, frames = frames_BB, frame_mask = frame_mask_BB, frame_atom_mask_2d = frame_atom_mask_2d_fa, dclamp = 25.0, Z = 25.0)
             l_fa_fape = (mixing_factor*l_fa_fape_clamped) + (1-mixing_factor)*l_fa_fape_unclamp
             l_fa_fape = weighted_decay_sum(l_fa_fape, gamma=0.99)
-            # l_fa_fape_clamped, _, _ = compute_general_FAPE(pred_allatom, true, atom_mask = mask_fa, frames = frames_BB, frame_mask = frame_mask_BB, frame_atom_mask_2d = frame_atom_mask_2d_fa, dclamp = dclamp, Z = Z)
-            # l_fa_fape_unclamp, _, _ = compute_general_FAPE(pred_allatom, true, atom_mask = mask_fa, frames = frames_BB, frame_mask = frame_mask_BB, frame_atom_mask_2d = frame_atom_mask_2d_fa, dclamp = 25.0, Z = 25.0)
-            # l_fa_fape = (mixing_factor*l_fa_fape_clamped) + (1-mixing_factor)*l_fa_fape_unclamp
-            # 
+
+            # Testing two ways of computing this stuff
+            l_inter_fape_clamped, _, _ = compute_general_FAPE(pred_allatom, true, atom_mask = mask_fa, frames = frames_BB, frame_mask = frame_mask_BB, frame_atom_mask_2d = frame_atom_mask_2d_inter, dclamp = dclamp, Z = Z)
+            l_inter_fape_unclamp, _, _ = compute_general_FAPE(pred_allatom, true, atom_mask = mask_fa, frames = frames_BB, frame_mask = frame_mask_BB, frame_atom_mask_2d = frame_atom_mask_2d_inter, dclamp = 25.0, Z = 25.0)
+            l_inter_fape = ((mixing_factor*l_inter_fape_clamped) + (1-mixing_factor)*l_inter_fape_unclamp).sum()
             
+            ###################################
+            # NEW BOND GEOM LOSSES:           #
+            ###################################
+            dist_matrix = rf2aa.data_loader.get_bond_distances(bond_feats)[None,...].to(device=pred.device)
+            bond_feats = bond_feats[None,...].to(device=pred.device)
+            # clash [use all atoms not just those in native]
+            clash_loss = rf2aa.loss.calc_lj(
+                seq[0], pred_allatom, 
+                self.aamask, bond_feats, 
+                dist_matrix, self.ljlk_parameters, self.lj_correction_parameters, self.num_bonds,lj_lin=lj_lin)
+
+
+            loss_dict['clash_loss'] = clash_loss[0].detach()
+
+            if torch.any(mask_BB[0]):
+                atom_bond_loss, skip_bond_loss, rigid_loss = rf2aa.loss.calc_atom_bond_loss(
+                    pred=pred_allatom[:,mask_BB[0]],
+                    true=true[:,mask_BB[0]],
+                    bond_feats=bond_feats[:,mask_BB[0]][:,:,mask_BB[0]],
+                    seq=seq[:,mask_BB[0]]
+                )
+            else:
+                atom_bond_loss = torch.tensor(0, device=pred.device)
+                skip_bond_loss = torch.tensor(0, device=pred.device)
+                rigid_loss = torch.tensor(0, device=pred.device)
+
         else:
             # too_big_for_fa_fape = True
-            loss_weights['fa_fape'] = loss_weights['fa_fape']*0.0
-            l_fa_fape = float('nan')
-
-        # loss_dict['fa_fape'] = l_fa_fape.mean()
-        loss_dict['fa_fape'] = l_fa_fape
-        # l_fa_fape
-
-
-        # dmat_loss = calc_fa_dmat_loss(pred, true, mask_crds, same_chain)
-        # pred_dist = torch.cdist(pred_ca, pred_ca)
-        dmat_loss, _ = calc_dmat_loss(pred[:,:,:,1,:], true[:,:,1,:], mask_2d, same_chain)
-        loss_dict['dmat']  = dmat_loss
+            # loss_weights['fa_fape']    = loss_weights['fa_fape']*0.0
+            # loss_weights['inter_fape'] = loss_weights['inter_fape']*0.0
+            l_fa_fape    = float('nan')
+            l_inter_fape = float('nan')
+            atom_bond_loss = float('nan')
+            skip_bond_loss = float('nan')
+            rigid_loss = float('nan')
 
 
+        loss_dict['fa_fape']    = l_fa_fape
+        loss_dict['inter_fape'] = l_inter_fape
+        loss_dict['atom_bond_loss'] = atom_bond_loss
+        loss_dict['skip_bond_loss'] = skip_bond_loss
+        loss_dict['rigid_loss'] = rigid_loss
 
 
-        ###################################
-        # NEW BOND GEOM LOSSES:           #
-        ###################################
-        
 
-        # cart bonded (bond geometry)
-        bond_loss = rf2aa.loss.calc_BB_bond_geom(seq[0], pred_allatom[0:1], idx)
-        # if w_bond > 0.0:
-        #     tot_loss += w_bond*bond_loss
-        # loss_dict['bond_geom'] = bond_loss.detach()
-        loss_dict['bond_loss'] = bond_loss
+
 
         
         
@@ -957,60 +1008,36 @@ class Trainer():
         # # loss_dict['bond_loss'] = bond_loss.detach()
         # loss_dict['bond_loss'] += bond_loss.detach()
 
-        # set_trace()
-
 
         
-        dist_matrix = rf2aa.data_loader.get_bond_distances(bond_feats)[None,...].to(device=pred.device)
-        bond_feats = bond_feats[None,...].to(device=pred.device)
-        # clash [use all atoms not just those in native]
-        clash_loss = rf2aa.loss.calc_lj(
-            seq[0], pred_allatom, 
-            self.aamask, bond_feats, 
-            dist_matrix, self.ljlk_parameters, self.lj_correction_parameters, self.num_bonds,lj_lin=lj_lin)
+        # dist_matrix = rf2aa.data_loader.get_bond_distances(bond_feats)[None,...].to(device=pred.device)
+        # bond_feats = bond_feats[None,...].to(device=pred.device)
+        # # clash [use all atoms not just those in native]
+        # clash_loss = rf2aa.loss.calc_lj(
+        #     seq[0], pred_allatom, 
+        #     self.aamask, bond_feats, 
+        #     dist_matrix, self.ljlk_parameters, self.lj_correction_parameters, self.num_bonds,lj_lin=lj_lin)
 
-        # if w_clash > 0.0:
-        #     tot_loss += w_clash*clash_loss.mean()
 
-        loss_dict['clash_loss'] = clash_loss[0].detach()
-        
-        # set_trace()
 
-        if torch.any(mask_BB[0]):
-            # atom_bond_loss, skip_bond_loss, rigid_loss = rf2aa.loss.calc_atom_bond_loss(
-            #     pred=pred_allatom[:,mask_BB[0]],
-            #     true=true[:,mask_BB[0]],
-            #     bond_feats=bond_feats[:,mask_BB[0]][:,:,mask_BB[0]],
-            #     seq=seq[:,mask_BB[0]]
-            # )
+        # loss_dict['clash_loss'] = clash_loss[0].detach()
 
-            atom_bond_loss, skip_bond_loss, rigid_loss = rf2aa.loss.calc_atom_bond_loss(
-                pred=pred_allatom[:,mask_BB[0]],
-                true=true[:,mask_BB[0]],
-                bond_feats=bond_feats[:,mask_BB[0]][:,:,mask_BB[0]],
-                seq=seq[:,mask_BB[0]]
-            )
-            # atom_bond_loss, skip_bond_loss, rigid_loss = rf2aa.loss.calc_atom_bond_loss(pred=pred_allatom[:,mask_BB[0]],true=true[:,mask_BB[0]],bond_feats=bond_feats[:,mask_BB[0]][:,:,mask_BB[0]],seq=seq[:,mask_BB[0]] )
-            # atom_bond_loss, skip_bond_loss, rigid_loss = rf2aa.loss.calc_atom_bond_loss(pred=pred_xyz_fa[:,mask_BB[0]],true=true[:,mask_BB[0]],bond_feats=bond_feats[:,mask_BB[0]][:,:,mask_BB[0]],seq=seq[:,mask_BB[0]])
-        else:
-            atom_bond_loss = torch.tensor(0, device=pred.device)
-            skip_bond_loss = torch.tensor(0, device=pred.device)
-            rigid_loss = torch.tensor(0, device=pred.device)
+        # if torch.any(mask_BB[0]):
+        #     atom_bond_loss, skip_bond_loss, rigid_loss = rf2aa.loss.calc_atom_bond_loss(
+        #         pred=pred_allatom[:,mask_BB[0]],
+        #         true=true[:,mask_BB[0]],
+        #         bond_feats=bond_feats[:,mask_BB[0]][:,:,mask_BB[0]],
+        #         seq=seq[:,mask_BB[0]]
+        #     )
+        # else:
+        #     atom_bond_loss = torch.tensor(0, device=pred.device)
+        #     skip_bond_loss = torch.tensor(0, device=pred.device)
+        #     rigid_loss = torch.tensor(0, device=pred.device)
 
-        # if w_atom_bond >= 0.0:
-        #     tot_loss += w_atom_bond*atom_bond_loss
-        # loss_dict['atom_bond_loss'] = ( atom_bond_loss.detach() )
-        loss_dict['atom_bond_loss'] = atom_bond_loss
+        # loss_dict['atom_bond_loss'] = atom_bond_loss
+        # loss_dict['skip_bond_loss'] = skip_bond_loss
+        # loss_dict['rigid_loss'] = rigid_loss
 
-        # if w_skip_bond >= 0.0:
-        #     tot_loss += w_skip_bond*skip_bond_loss
-        # loss_dict['skip_bond_loss'] = ( skip_bond_loss.detach() )
-        loss_dict['skip_bond_loss'] = skip_bond_loss
-
-        # if w_rigid >= 0.0:
-        #     tot_loss += w_rigid*rigid_loss
-        # loss_dict['rigid_loss'] = ( rigid_loss.detach() )
-        loss_dict['rigid_loss'] = rigid_loss
 
 
         # Report RMSD on motif chunks 
@@ -1781,7 +1808,6 @@ class Trainer():
                         # print('TEMPORARY CHECK! NOT SURE WHY WE DO THIS!!!!')
                         xyz_t[:] = 0
                         seq_t[:] = 0
-                        # set_trace()
 
 
                         # get atomized frames for general FAPE computation in calc_loss

@@ -253,6 +253,7 @@ def get_args(in_args=None):
     diff_group.add_argument('-supply_seq_under_t', default=-1, type=int, 
             help='Only supply sequence below this t. Default -1 (so never supply for diffused region)')
 
+
     # Trunk module properties
     trunk_group = parser.add_argument_group("Trunk module parameters")
     trunk_group.add_argument('-n_extra_block', type=int, default=4,
@@ -414,6 +415,8 @@ def get_args(in_args=None):
                 help="Clamp for FAPE loss (max distance applied)")
     loss_group.add_argument('-backprop_non_displacement_on_given',action='store_true', default=False,
             help='True, apply all losses, not just the displacement loss on the given region')
+    loss_group.add_argument('-use_poly_tscale_seq_loss', default=False, action='store_true',
+            help='Weight sequence loss by poly type based on the tscale.')
 
     # other parameters
     parser.add_argument('-task_names', default='diff',
@@ -593,7 +596,7 @@ def get_args(in_args=None):
                 'w_skip_bond',
                 'w_rigid',
                 'w_clash',
-                
+                'use_poly_tscale_seq_loss',
 
                 'scale_prot_fape',
                 'scale_dna_fape',
