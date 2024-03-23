@@ -178,6 +178,7 @@ denoiser:
   noise_scale_ca: 1
   noise_scale_frame: 1
   noise_scale_torsion: 1
+  seq_decode_mode: distance_based
 
 ppi:
   hotspot_res: null

@@ -237,8 +237,8 @@ class DecodeSchedule():
 
     def __init__(self, L, visible, aa_decode_steps=40, mode='distance_based'):
 
-        # only distance based for now
-        assert mode in ['distance_based']# , 'uniform_linear', 'ar_fixbb']
+        # only distance based or logit based for now
+        assert mode in ['distance_based','delta_prob_based']# , 'uniform_linear', 'ar_fixbb']
         self.mode = mode
 
         self.visible = visible
@@ -256,7 +256,7 @@ class DecodeSchedule():
             self.ndecode_per_step = [len(a) for a in ndecode_per_step]
 
 
-    def get_next_idx(self, cur_indices, dmap):
+    def get_next_idx(self, cur_indices, dmap, ):
         """
         Given indices being currently sampled and a distance map, return one more index which is allowed to
         be sampled at the same time as cur indices
@@ -286,7 +286,8 @@ class DecodeSchedule():
         return best_idx_global
 
 
-    def get_decode_positions(self, t_idx, px0):
+    # def get_decode_positions(self, t_idx, px0):
+    def get_decode_positions(self, t_idx, px0, seq_t, seq_px0):
         """
         Returns the next (0-indexed) positions to decode for this timestep
         """
@@ -316,6 +317,21 @@ class DecodeSchedule():
                 decode_list.append(int(decode_idx))
                 self.visible[decode_idx] = True # set this now because get_next_idx depends on it
                 self.T[decode_idx] = t_idx+1    # now that we know this residue is decoded, set its big T value
+
+        elif self.mode == 'delta_prob_based':
+            # Perform delta probability based sampling
+            current_probs = torch.gather(seq_px0.cpu(), 1, seq_t.view(-1, 1))
+            dprob = seq_px0.cpu() - current_probs
+            print('AFAV IN PROGRESS IMPLEMENTING!!!!')
+            print('AFAV IN PROGRESS IMPLEMENTING!!!!')
+            print('AFAV IN PROGRESS IMPLEMENTING!!!!')
+            print('AFAV IN PROGRESS IMPLEMENTING!!!!')
+            print('AFAV IN PROGRESS IMPLEMENTING!!!!')
+            print('AFAV IN PROGRESS IMPLEMENTING!!!!')
+            raise NotImplementedError(f'Andrew needs to finish using torch.multinomial to implement this option')
+            set_trace()
+
+    
 
         return decode_list
 
@@ -358,7 +374,9 @@ class Denoise():
                  aa_decode_steps=100,
                  potential_manager=None,
                  softmax_T=1e-5,
-                 partial_T=None):
+                 partial_T=None,
+                 seq_decode_mode='distance_based', # option to update sequence by logit difference
+                 ):
         """
         
         Parameters:
@@ -382,6 +400,7 @@ class Denoise():
         self.noise_scale_torsion = noise_scale_torsion
         self.aa_decode_steps=aa_decode_steps
         self.potential_manager = potential_manager
+        self.seq_decode_mode = seq_decode_mode
         self._log = logging.getLogger(__name__)
 
 
@@ -398,7 +417,8 @@ class Denoise():
         # amino acid decoding schedule 
         #out = get_aa_schedule(T,L,nsteps=aa_decode_steps)
         #self.aa_decode_times, self.decode_order, self.idx2steps, self.aa_mask_stack = out
-        if seq_diffuser is None: self.decode_scheduler = DecodeSchedule(L, visible, aa_decode_steps, mode='distance_based')
+
+        if seq_diffuser is None: self.decode_scheduler = DecodeSchedule(L, visible, aa_decode_steps, mode=self.seq_decode_mode)
 
     @property
     def idx2steps(self):
@@ -475,9 +495,11 @@ class Denoise():
         
         if t <= self.aa_decode_steps:
             t_idx = t-1
-            decode_positions           = self.decode_scheduler.get_decode_positions(t_idx, px0)
+            # decode_positions           = self.decode_scheduler.get_decode_positions(t_idx, px0)
+            decode_positions           = self.decode_scheduler.get_decode_positions(t_idx, px0, seq_t, seq_px0)
             replacement                = seq_px0[decode_positions]
             replacement                = replacement.to(next_seq.device)
+            
             next_seq[decode_positions] = replacement
 
         return next_seq
@@ -507,21 +529,13 @@ class Denoise():
 
         ### initialize full atom reps to calculate torsions 
         RAD = True # use radians for angle stuff 
-        # set_trace()
-        # build 27-atom representations
-        # if not xt.shape[1] == 27:
-        #     xt_full = torch.full((L,27,3),np.nan).float()
+        # build representation with num_atoms=rf2aa.chemical.NTOTAL
         if not xt.shape[1] == rf2aa.chemical.NTOTAL:
             xt_full = torch.full((L,rf2aa.chemical.NTOTAL,3),np.nan).float()
             # xt_full[:,:14,:] = xt[:,:14]
             xt_full[:,:NHEAVY,:] = xt[:,:NHEAVY]
 
             
-
-
-        # if not px0.shape[1] == 27:
-        #     px0_full = torch.full((L,27,3),np.nan).float()
-
         if not px0.shape[1] == rf2aa.chemical.NTOTAL:
             px0_full = torch.full((L,rf2aa.chemical.NTOTAL,3),np.nan).float()
             # px0_full[:,:14,:] = px0[:,:14]
@@ -530,7 +544,6 @@ class Denoise():
 
 
         # there is no situation where we should have any NaN BB crds here  
-        # mask = torch.full((L, 27), False)
         mask = torch.full((L, rf2aa.chemical.NTOTAL), False)
         # set_trace()
         # mask[:,:14] = True 
@@ -662,10 +675,6 @@ class Denoise():
             next_seq = self.reveal_residues(seq_t, seq_px0, px0, t)
         else:
             next_seq = None
-        # try:
-            
-        # except:
-            # set_trace()
 
         return next_torsions_trig, next_seq
 
@@ -915,7 +924,6 @@ class Denoise():
             fullatom_next[:,:,:3] = frames_next[None]
             # This is never used so just make it a fudged tensor - NRB
             torsions_next = torch.zeros(1,1)
-
             if self.seq_diffuser:
                 seq_next = self.seq_diffuser.get_next_sequence(seq_t[:,:rf2aa.chemical.NNAPROTAAS], pseq0, t, seq_diffusion_mask) # [L,32]
                 zeros = torch.zeros(L, rf2aa.chemical.NAATOKENS-rf2aa.chemical.NNAPROTAAS).to(device=seq_next.device) # [L,80-32]
@@ -935,22 +943,35 @@ class Denoise():
 
             elif update_seq_t == 'decode_seq':
                 seq_t = torch.argmax(seq_t, dim=-1).cpu() # [L]
-                pseq0 = torch.argmax(pseq0, dim=-1).cpu() # [L]
-                seq_next = self.reveal_residues(seq_t, pseq0, px0, t)
+                
+                # Set next sequence to random max prob at randomly selected positions:
+                if self.seq_decode_mode=='delta_prob_based': # for this we need to keep pseq0 as probabilities
+                    # set_trace()
+                    seq_next = self.reveal_residues(seq_t, pseq0, px0, t) 
+                    pseq0 = torch.argmax(pseq0, dim=-1).cpu() # [L] # convert to max prob after using prob to sample seq
+                else: # otherwise (default) just use max prob before finding next seq
+                    pseq0 = torch.argmax(pseq0, dim=-1).cpu() # [L]
+                    seq_next = self.reveal_residues(seq_t, pseq0, px0, t)
+                    
+                # Update atoms and torsions:
                 torsions_next, _ = self.get_next_torsions(xt, px0, seq_t, pseq0, t, diffusion_mask=diffusion_mask, noise_scale = self.noise_scale_torsion, get_seq_next=False)
-                _,fullatom_next = converter.compute_all_atom(
-                    seq_t[None], frames_next[None].to(torch.float32), torsions_next[None])
-                seq_next = torch.nn.functional.one_hot(
-                        pseq0, num_classes=rf2aa.chemical.NAATOKENS).float()
+                _,fullatom_next = converter.compute_all_atom(seq_t[None], frames_next[None].to(torch.float32), torsions_next[None])
+                
+                # convert seq_next to onehot
+                seq_next = torch.nn.functional.one_hot(seq_next, num_classes=rf2aa.chemical.NAATOKENS).float()
+
 
             elif update_seq_t == 'show_full_seq':
                 seq_t = torch.argmax(seq_t, dim=-1).cpu() # [L]
                 pseq0 = torch.argmax(pseq0, dim=-1).cpu() # [L]
+
+                # Update atoms and torsions:
                 torsions_next, _ = self.get_next_torsions(xt, px0, seq_t, pseq0, t, diffusion_mask=diffusion_mask, noise_scale = self.noise_scale_torsion)
                 _,fullatom_next = converter.compute_all_atom(
                     seq_t[None], frames_next[None].to(torch.float32), torsions_next[None])
-                seq_next = torch.nn.functional.one_hot(
-                        pseq0, num_classes=rf2aa.chemical.NAATOKENS).float()
+
+                # Set next sequence directly to max prob resi per position:
+                seq_next = torch.nn.functional.one_hot(pseq0, num_classes=rf2aa.chemical.NAATOKENS).float()
 
 
             else:
@@ -2576,7 +2597,6 @@ def get_repeat_t2d_mask(L, con_hal_idx0, contig_map, ij_is_visible, nrepeat, sup
     # initially empty
     chunk_ij_visible = torch.eye(nchunk_total)
     # fill in user-defined visibility
-    # set_trace()
     for S in ij_is_visible:
         for i in S:
             for j in S: 
@@ -2596,7 +2616,6 @@ def get_repeat_t2d_mask(L, con_hal_idx0, contig_map, ij_is_visible, nrepeat, sup
     # make 1D array designating which chunks are motif
     is_motif = torch.zeros(L)
     is_motif[con_hal_idx0_full] = 1 
-    # set_trace()
     # fill in 2d mask
     for i in range(len(chunk_range_inds_full)):
         for j in range(len(chunk_range_inds_full)):

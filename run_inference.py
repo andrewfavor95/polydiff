@@ -259,7 +259,7 @@ def rename_ligand_atoms(ref_fn, out_fn):
         for line in lines2:
             print(line, file=f)
 
-def sample_one(sampler,inf_conf, i_des, simple_logging=False):
+def sample_one(sampler, inf_conf, i_des, simple_logging=False):
         # For intermediate output logging
         indep = sampler.sample_init()
         
@@ -296,18 +296,11 @@ def sample_one(sampler,inf_conf, i_des, simple_logging=False):
             rf2aa.tensor_util.assert_same_shape(indep.xyz, x_t)
             indep.xyz = x_t
 
-            # show_seq_condition = (inf_conf['inference']['update_seq_t'] and (t <= inf_conf['inference']['show_seq_under_t']))
-            # show_seq_condition = (inf_conf['inference']['update_seq_t'] and (t <= inf_conf['diffuser']['aa_decode_steps']))
-            show_seq_condition = inf_conf['inference']['update_seq_t']
-            if show_seq_condition:
-                # print(seq_t.nonzero()[:,-1])
-                # print('indep: ', indep.seq)
-                # print('new  : ', torch.argmax(seq_t, dim=-1))
-
+            # Controls whether we set indep's sequence as the model's predictions while denoising/revealing
+            if inf_conf['inference']['update_seq_t']:
                 indep.seq = torch.argmax(seq_t, dim=-1)
-                # set_trace()
-                # print(torch.argmax(seq_t, dim=-1))
 
+            
             aa_model.assert_has_coords(indep.xyz, indep)
             
             px0_xyz_stack.append(px0)
