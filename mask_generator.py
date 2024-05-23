@@ -14,7 +14,7 @@ import assertpy
 from pdb import set_trace
 import signal
 import matplotlib.pyplot as plt
-from util import get_pair_ss_partners, get_start_stop_inds
+from util import get_pair_ss_partners, get_start_stop_inds, get_chain_range_inds
 
 #####################################
 # Misc functions for mask generation
@@ -458,7 +458,6 @@ def _get_diffusion_mask_bridge(xyz, prop_low, prop_high, in_chain_mask, mode, ma
         last_range  = (from_j, to_j)
 
     else: # Else we assume basic seq distance
-        # set_trace()
         first_range = ( chn_start,chn_start + start_delta )
         last_range  = (chn_stop - stop_delta,  chn_stop)
 
@@ -501,13 +500,35 @@ def get_diffusion_mask_bridge(indep, atom_mask, low_prop, high_prop, broken_prop
 
     mask2d, is_motif = _get_diffusion_mask_bridge(indep.xyz, low_prop, high_prop, in_chain_mask, mask_mode, ij_visi_prob=ij_visi_prob)
 
+    return (mask2d, is_motif), None
 
-    # png_filename = f'/home/afavor/git/RFD_AF/3template_na/pngs_training/bridge_tasks/{mask_mode}__{np.random.randint(5000)}.png'
-    # fig, ax = plt.subplots(nrows=1,ncols=1,figsize=(15,30))
-    # ax.imshow(mask2d.cpu().numpy())
-    # ax.set_title('Precomputed SS matrix')
-    # plt.savefig(png_filename)
-    # plt.close(fig)
+
+def get_diffusion_mask_dock(indep, atom_mask, low_prop, high_prop, broken_prop):
+    """
+    AF: docking task.
+    the idea here is to force RF to learn how to completely map from t2d to a 3d structure
+    * ij-visibility is just same chain, and everything is a motif, so losses completely penalize outputs
+        if we get left-handed helices, etc.
+    * the omega, theta, phi components of t2d are NOT symmetric matrices, a
+        nd peirwise representation should encode chirality.
+    """
+
+    L = indep.xyz.shape[0]
+    # Not worth doing this shit if too small. Default to unconditional task.
+    if L<=5:
+        return get_unconditional_3template(indep, atom_mask, low_prop, high_prop, broken_prop)
+
+
+    chain_range_inds = get_chain_range_inds(indep.same_chain)
+    n_chains = len(chain_range_inds)
+    # Not doing this shit if single chain. Default to bridge task. (in the future, modify to choose from various options)
+    if n_chains < 2: # Need at least 2 chains to do docking. If only one chain, fall back to a bridging task.
+        return get_diffusion_mask_bridge(indep, atom_mask, low_prop, high_prop, broken_prop)
+
+    print(f'DOING DOCK TASK! n_chains={n_chains}')
+    # If we have a large enough multi-chain complex, we can do the docking task:
+    mask2d = indep.same_chain.bool() # ij-visibility is based on what's in the same chain
+    is_motif = torch.ones(L).bool() # in docking task, everything is a motif! 
 
 
     return (mask2d, is_motif), None
@@ -1979,7 +2000,9 @@ def generate_masks(indep, task, loader_params, chosen_dataset, full_chain=None, 
         # cond_A = ((get_diffusion_mask_chunked in mask_fns) or (get_triple_contact in mask_fns))
         
 
-        cond_A = ((get_diffusion_mask_chunked in mask_fns) or (get_triple_contact in mask_fns) or (get_unconditional_3template in mask_fns) or (get_diffusion_mask_bridge in mask_fns))
+        # cond_A = ((get_diffusion_mask_chunked in mask_fns) or (get_triple_contact in mask_fns) or (get_unconditional_3template in mask_fns) or (get_diffusion_mask_bridge in mask_fns)  or (get_diffusion_mask_dock in mask_fns))
+        cond_A = any(fn in mask_fns for fn in [get_diffusion_mask_chunked, get_triple_contact, get_unconditional_3template, get_diffusion_mask_bridge, get_diffusion_mask_dock])
+
         cond_B = (type(diffusion_mask) == tuple)
         if  (cond_A and cond_B):
             # this means a mask generator which is aware of 3template diffusion was used 
@@ -2210,7 +2233,6 @@ def generate_masks(indep, task, loader_params, chosen_dataset, full_chain=None, 
     else:
         sys.exit(f'Masks cannot be generated for the {task} task!')
 
-    # set_trace()
     # if (task != 'seq2str') and (not loader_params['SM_ONLY']):
     #    assert torch.sum(~input_seq_mask) > 0, f'Task = {task}, dataset = {chosen_dataset}, full chain = {full_chain}'
 

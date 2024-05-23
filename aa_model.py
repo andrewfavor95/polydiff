@@ -316,8 +316,7 @@ def make_indep(pdb, ligand=None):
     bond_feats[:Ls[0], :Ls[0]] = rf2aa.util.get_protein_bond_feats(Ls[0])
     # bond_feats[:Ls[0], :Ls[0]] = rf2aa.util.bond_feats_from_Ls(chain_length_list)
     # bond_feats2 = rf2aa.util.bond_feats_from_Ls(chain_length_list)
-
-    # ipdb.set_trace()
+    
     if ligand:
         bond_feats[Ls[0]:, Ls[0]:] = rf2aa.util.get_bond_feats(mol)
 
@@ -592,10 +591,8 @@ class Model:
         # o.bond_feats[n_prot:, n_prot:] = indep.bond_feats[n_prot_ref:, n_prot_ref:]
 
         hal_by_ref_d = dict(zip(contig_map.ref_idx0, contig_map.hal_idx0))
-
         def hal_by_ref(ref):
             return hal_by_ref_d[ref]
-
         hal_by_ref = np.vectorize(hal_by_ref, otypes=[float])
         o.chirals[...,:-1] = torch.tensor(hal_by_ref(o.chirals[...,:-1]))
 

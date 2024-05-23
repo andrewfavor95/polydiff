@@ -109,6 +109,7 @@ def mask_sequence_chunks(is_masked, p=0.5):
     
     return is_masked
 
+
     
 # # More complicated version splits error in CA-N and CA-C (giving more accurate CB position)
 # # It returns the rigid transformation from local frame to global frame
@@ -1365,6 +1366,24 @@ def ss_matrix_to_t2d_feats(ss_matrix):
 
 
 def get_pair_ss_partners(seq, xyz, mask, sel, len_s, vert_diff_cutoff=6.69730945, incl_protein=True, centroid_cutoff=6.20250967, bp_cutoff=3.20732419, eps=1e-6, seq_cutoff=2, base_angle_cutoff=0.06184608, canonical_partner_filter=False):
+    """
+    Function for checking base-pair partners.
+    Args:
+        seq
+        xyz
+        mask
+        sel
+        len_s
+        ...
+
+    returns:
+        cond.long(): 2d symmetric integer matrix of 0s and 1s, where 1s indicate that two NA bases are paired.
+
+
+    IMPORTANT: This is being extensively re-written right now. I just used this old version as a placeholder so that I could run tests.
+
+    """
+
 
     seq_neighbors = torch.le(torch.abs(sel[:,None]-sel[None,:]), seq_cutoff)
     is_protein = torch.logical_and((0 <= seq),(seq <= 21))
@@ -1410,11 +1429,8 @@ def get_pair_ss_partners(seq, xyz, mask, sel, len_s, vert_diff_cutoff=6.69730945
 
     # Compute the centroid of the points
     centroid = torch.nanmean(base_atom_xyz, dim=1, keepdim=True)
-    
     centroid_contact_dist = torch.cdist(centroid[:,0,:],centroid[:,0,:])
-
     centroid_in_contact = (torch.cdist(centroid[:,0,:],centroid[:,0,:]) < centroid_cutoff)
-
     cond[~is_protein,:][:,~is_protein] = torch.logical_and(cond[~is_protein,:][:,~is_protein], centroid_in_contact)
 
 
@@ -1448,9 +1464,135 @@ def get_pair_ss_partners(seq, xyz, mask, sel, len_s, vert_diff_cutoff=6.69730945
     base_close_vert_dist = (d_ij_on_norm_i <= vert_diff_cutoff)
     cond[~is_protein,:][:,~is_protein] = torch.logical_and(cond[~is_protein,:][:,~is_protein], base_close_vert_dist)
     
+    # Ensure symmetry.
     cond = torch.logical_or(cond, cond.t())
-    
+
+    # Final filter: check for canonical base pairing.
+    # probably bad for RNA, but might help DNA folks during training or someshit.
+    if canonical_partner_filter:
+
+        # initialize as all false, then add in true where possible.
+        bp_partners_canon = torch.zeros((len_s, len_s), dtype=torch.bool, device=xyz.device)
+
+        # Define the conditions as boolean masks
+        cond_AA = (seq[:, None] == 22) | (seq[:, None] == 27)
+        cond_TU = (seq[:, None] == 25) | (seq[:, None] == 30)
+        cond_CC = (seq[:, None] == 23) | (seq[:, None] == 28)
+        cond_GG = (seq[:, None] == 24) | (seq[:, None] == 29)
+
+        # Update the matrix based on the conditions
+        bp_partners_canon[cond_AA & cond_TU.T] = True
+        bp_partners_canon[cond_TU & cond_AA.T] = True
+        bp_partners_canon[cond_CC & cond_GG.T] = True
+        bp_partners_canon[cond_GG & cond_CC.T] = True
+        # This should be symmetric by definion. 
+        # TO DO: write test to check for symmetry of bp_partners_canon
+
+
+        # update conditions of base pairing to satisfy all conditions
+        cond = torch.logical_and(cond, bp_partners_canon)
+
+
+    # If we want to return this matrix as integer, rather than boolean.
     return cond.long()
+
+
+
+
+
+def compute_pSSA(ss_string, xyz, seq, 
+                network_params_in=None,
+                representative_res_ind=29, # RG has most atoms to reference
+                frame_atom_0=" O4'", 
+                frame_atom_1=" C1'", 
+                frame_atom_2=" C2'",
+                only_basepairs=False,
+                eps=1e-8):
+
+
+
+
+    def find_any_bracket_pairs(s, open_symbol, close_symbol):
+        stack = []
+        pairs = []
+
+        for i, char in enumerate(s):
+            if char == open_symbol:
+                stack.append(i)
+            elif char == close_symbol:
+                if stack:
+                    pairs.append((stack.pop(), i))
+                else:
+                    raise ValueError(f"No matching open parenthesis for closing parenthesis at index {i}")
+
+        if stack:
+            raise ValueError(f"No matching closing parenthesis for open parenthesis at index {stack[0]}")
+
+        return pairs
+
+    def find_loop_bases(s):
+        loop_bases = []
+        for i, char in enumerate(s):
+            if char == '.':
+                loop_bases.append(i)
+                
+        return loop_bases
+
+
+    open_symbols  = ['(','[','{','<','5','i','f','b']
+    close_symbols = [')',']','}','>','3','j','t','e']
+    loop_symbols  = ['.','&',','] # For now we just treating breaks as loops, cuz dssr is fallible.
+
+
+    all_pair_dict = {}
+    for pair_ind, (open_symbol, close_symbol) in enumerate(zip(open_symbols, close_symbols)):
+
+        num_opens = len([ _ for _ in ss_string if _ == open_symbol])
+        num_close = len([ _ for _ in ss_string if _ == close_symbol])
+        assert num_opens==num_close , "number of base pairs must be an even number... must be an error somewhere..."
+        
+        all_pair_dict[pair_ind] = find_any_bracket_pairs(ss_string, open_symbol, close_symbol)
+        
+
+    ss_element_list = []
+        
+    for pair_ind in all_pair_dict.keys():
+        paired_base_list = all_pair_dict[pair_ind]
+        for i,j in paired_base_list:
+            ss_element_list.append(('P',i,j))
+
+
+    if not only_basepairs:
+        for i, char in enumerate(ss_string):
+            if char in loop_symbols: 
+                ss_element_list.append(('L',i,i))
+
+    L = len(seq)
+    P_mat = get_pair_ss_partners(seq, xyz[0], torch.ones((L,23)).bool(), torch.arange(L), L)
+    
+    pSSA_vec = torch.zeros(L)
+    num_positions_counted = 0
+    for i, ss_element_i in enumerate(ss_element_list):
+
+        row_ind = ss_element_i[1]
+        col_ind = ss_element_i[2]
+
+        if ss_element_i[0]=='L':
+            P_not_i = torch.cat((P_mat[row_ind,:col_ind], P_mat[row_ind,col_ind+1:]),dim=-1)
+            assert row_ind==col_ind, "Loop positions must be self-paired by definition. Must be an error somewhere."
+            tot_prob_i = (1.0-torch.max(P_not_i)) + eps
+            pSSA_vec[row_ind] = tot_prob_i
+
+        elif ss_element_i[0]=='P':
+            tot_prob_i = (0.5*P_mat[row_ind,col_ind] + 0.5*P_mat[col_ind,row_ind]) + eps
+            pSSA_vec[row_ind] = tot_prob_i
+            pSSA_vec[col_ind] = tot_prob_i
+
+
+
+
+    return pSSA_vec
+    
 
 
 
@@ -1474,6 +1616,37 @@ def get_start_stop_inds(mask_vec):
 
 
 
+def get_chain_range_inds(same_chain):
+    """
+    takes same_chain array (from indep) and gets chain start stop inds from it
+    """
+
+    L = same_chain.shape[0]
+
+    chain_range_inds = []
+    chain_breaks_list = []
+
+    for l_i in range(L-1):
+        cond1 = same_chain[l_i,l_i]==1
+        cond2 = same_chain[l_i+1,l_i+1]==1
+        cond3 = same_chain[l_i,l_i+1]==0
+        cond4 = same_chain[l_i+1,l_i]==0
+
+        if all([cond1, cond2, cond3, cond4]):
+            chain_breaks_list.append([l_i,l_i+1])
+
+    chain_range_inds.append(0) # full structure start ind
+    for break_inds in chain_breaks_list:
+        chain_range_inds.extend(break_inds)
+    chain_range_inds.append(L-1) # full structure stop ind
+    
+    chain_range_tuples = []
+    for i in range(len(chain_range_inds)//2): 
+        chain_range_tuples.append(
+            (chain_range_inds[2*i], chain_range_inds[(2*i)+1])
+            )
+
+    return chain_range_tuples
 
 
 
@@ -1937,140 +2110,6 @@ def get_start_stop_inds(mask_vec):
 
 
 
-
-def compute_pSSA(ss_string, xyz, seq, 
-                network_params_in=None,
-                representative_res_ind=29, # RG has most atoms to reference
-                frame_atom_0=" O4'", 
-                frame_atom_1=" C1'", 
-                frame_atom_2=" C2'",
-                only_basepairs=False):
-
-
-
-
-    def find_any_bracket_pairs(s, open_symbol, close_symbol):
-        stack = []
-        pairs = []
-
-        for i, char in enumerate(s):
-            if char == open_symbol:
-                stack.append(i)
-            elif char == close_symbol:
-                if stack:
-                    pairs.append((stack.pop(), i))
-                else:
-                    raise ValueError(f"No matching open parenthesis for closing parenthesis at index {i}")
-
-        if stack:
-            raise ValueError(f"No matching closing parenthesis for open parenthesis at index {stack[0]}")
-
-        return pairs
-
-    def find_loop_bases(s):
-        loop_bases = []
-        for i, char in enumerate(s):
-            if char == '.':
-                loop_bases.append(i)
-                
-        return loop_bases
-
-
-    open_symbols  = ['(','[','{','<','5','i','f','b']
-    close_symbols = [')',']','}','>','3','j','t','e']
-    loop_symbols  = ['.','&',','] # For now we just treating breaks as loops, cuz dssr is fallible.
-
-
-    all_pair_dict = {}
-    for pair_ind, (open_symbol, close_symbol) in enumerate(zip(open_symbols, close_symbols)):
-
-        num_opens = len([ _ for _ in ss_string if _ == open_symbol])
-        num_close = len([ _ for _ in ss_string if _ == close_symbol])
-        assert num_opens==num_close , "number of base pairs must be an even number... must be an error somewhere..."
-        
-        all_pair_dict[pair_ind] = find_any_bracket_pairs(ss_string, open_symbol, close_symbol)
-        
-
-    ss_element_list = []
-        
-    for pair_ind in all_pair_dict.keys():
-        paired_base_list = all_pair_dict[pair_ind]
-        for i,j in paired_base_list:
-            ss_element_list.append(('P',i,j))
-
-
-    if not only_basepairs:
-        for i, char in enumerate(ss_string):
-            if char in loop_symbols: 
-                ss_element_list.append(('L',i,i))
-
-
-    if network_params_in:
-        network_params = network_params_in
-    else:
-
-        network_params ={
-            'fc1_w': torch.tensor([[-0.2386, -0.3275, -0.3491,  0.4477,  0.8526, -3.0067, -1.5363],
-                                    [-0.1860,  0.3721, -0.1883,  0.1263,  0.5563, -2.2224, -1.4701],
-                                    [-0.1579,  0.2265, -1.0069,  0.3789,  0.4825, -2.0054, -1.1969]]),
-            'fc1_b': torch.tensor([-1.6262, -1.7848, -1.9741]),
-            'fc2_w': torch.tensor([[-1.5385, -0.2681, -0.1609],
-                                    [ 1.3806,  0.4991,  0.1363],
-                                    [ 0.0748,  0.0310,  0.4322]]),
-            'fc2_b': torch.tensor([ 1.2666, -1.4560,  0.0421]),
-            'fc_out_w': torch.tensor([[-1.3313,  1.1436,  0.1296]]),
-            'fc_out_b': torch.tensor([-1.1276]),
-        }
-
-
-    # Get frame atoms:
-    frame_atom_inds = torch.tensor([rf2aa.chemical.aa2long[representative_res_ind].index(frame_atom_0),
-                                    rf2aa.chemical.aa2long[representative_res_ind].index(frame_atom_1),
-                                    rf2aa.chemical.aa2long[representative_res_ind].index(frame_atom_2)])
-    frame_xyz = xyz[None,None,0,:,frame_atom_inds,:]
-
-
-    B, T, L = frame_xyz.shape[:3]
-
-    c6d = rf2aa.kinematics.xyz_to_c6d(frame_xyz[:,:,:,:3].view(B*T,L,3,3))
-    c6d = c6d.view(B, T, L, L, 4)
-
-    orien = torch.cat((torch.sin(c6d[...,1:]), torch.cos(c6d[...,1:])), dim=-1) # (B, T, L, L, 6)
-    t2d = torch.cat((c6d[...,0:1], orien), dim=-1)[0,...]
-    D_in = t2d.shape[-1] # input feature dimension
-    D_out = 1 # output feature dimension
-
-    # Prepare t2d feats for forward pass
-    x = t2d.reshape(B*L*L, D_in)
-    
-    # Pass through the network
-    x = torch.matmul(x,network_params['fc1_w'].T) + network_params['fc1_b']
-    x = torch.matmul(x,network_params['fc2_w'].T) + network_params['fc2_b']
-    x = torch.matmul(x,network_params['fc_out_w'].T) + network_params['fc_out_b']
-
-    x = x.reshape(B, L, L, D_out)
-    
-    P_mat = torch.sigmoid(x + x.permute(0,2,1,3))[0,:,:,0]  # Using sigmoid to get values between 0 and 1 (matrix of bp probabilities)
-
-    pSSA_vec = torch.zeros(L)
-    num_positions_counted = 0
-    for i, ss_element_i in enumerate(ss_element_list):
-
-        if ss_element_i[0]=='L':
-            P_not_i = torch.cat((P_mat[ss_element_i[1],:ss_element_i[2]], P_mat[ss_element_i[1],ss_element_i[2]+1:]),dim=-1)
-            pSSA_vec[ss_element_i[1]] = (1-torch.max(P_not_i))+1e-8
-
-        elif ss_element_i[0]=='P':
-            pSSA_vec[1] = P_mat[ss_element_i[1],ss_element_i[2]]
-
-
-    print('WARNING! THE FUNCTIONALITY OF OUR pSSA SYSTEM IS STILL SUB-OPTIMAL!!!')
-    print('WARNING! THE FUNCTIONALITY OF OUR pSSA SYSTEM IS STILL SUB-OPTIMAL!!!')
-    print('WARNING! THE FUNCTIONALITY OF OUR pSSA SYSTEM IS STILL SUB-OPTIMAL!!!')
-
-
-    return pSSA_vec
-    
 
 
 

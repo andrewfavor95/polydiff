@@ -21,7 +21,7 @@ from contextlib import ExitStack
 import time 
 import torch
 import torch.nn as nn
-import ipdb
+from pdb import set_trace
 from torch.utils import data
 import math 
 import argparse
@@ -30,13 +30,66 @@ sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'RF2-al
 
 
 
+# def update_dims(weights,key):
+
+#     # Adding 2D embedding features
+#     # d_t1d*2+d_t2d
+#     if True:
+#         pt1_add_dim     = new_t2d - orig_t2d
+#         pt2_add_dim     = new_t1d - orig_t1d
+#         pt3_add_dim     = new_t1d - orig_t1d 
+        
+#         pt1_emb_zeros   = torch.zeros(64, pt1_add_dim)
+#         pt2_emb_zeros   = torch.zeros(64, pt2_add_dim)
+#         pt3_emb_zeros   = torch.zeros(64, pt3_add_dim)
+
+#         '''
+#         The way that the t2d input to embedding is created is not straightforward
+#         It looks like this:
+
+#             # Prepare 2D template features
+#             left = t1d.unsqueeze(3).expand(-1,-1,-1,L,-1)
+#             right = t1d.unsqueeze(2).expand(-1,-1,L,-1,-1)
+
+#             templ = torch.cat((t2d, left, right), -1) # (B, T, L, L, 109)
+#             templ = self.emb(templ) # Template templures (B, T, L, L, d_templ)
+#         '''
+#         set_trace()
+#         new_emb_weights = torch.cat( (weights['templ_emb.emb.weight'][:,:orig_t2d], pt1_emb_zeros), dim=-1 )
+#         new_emb_weights = torch.cat( (new_emb_weights, weights['templ_emb.emb.weight'][:,orig_t2d:orig_t2d+orig_t1d], pt2_emb_zeros), dim=-1 )
+#         new_emb_weights = torch.cat( (new_emb_weights, weights['templ_emb.emb.weight'][:,orig_t2d+orig_t1d:], pt3_emb_zeros), dim=-1 )
+
+#         weights['templ_emb.emb.weight']     = new_emb_weights
+
+#         print(f'Shape of t2d: {new_emb_weights.shape}')
+        
+#     # Adding 1D embedding features
+#     # d_t1d+d_tor
+#     if True:
+#         t1d_weights_dim = new_t1d + orig_dtor
+#         t1d_add_dim     = t1d_weights_dim - orig_t1d - orig_dtor
+        
+#         t1d_zeros       = torch.zeros(64, t1d_add_dim)
+#         new_t1d_weights = torch.cat( (weights['templ_emb.emb_t1d.weight'][:,:orig_t1d], t1d_zeros), dim=-1 )
+#         new_t1d_weights = torch.cat( (new_t1d_weights, weights['templ_emb.emb_t1d.weight'][:,orig_t1d:]), dim=-1 )
+#         weights['templ_emb.emb_t1d.weight'] = new_t1d_weights
+#         print(f'Shape of t1d emb: {new_t1d_weights.shape}')
+
+
+#         t1d_zeros       = torch.zeros(64, t1d_add_dim)
+#         new_t1d_weights = torch.cat( (weights['templ_emb.templ_stack.proj_t1d.weight'][:,:orig_t1d], t1d_zeros), dim=-1 )
+#         new_t1d_weights = torch.cat( (new_t1d_weights, weights['templ_emb.templ_stack.proj_t1d.weight'][:,orig_t1d:]), dim=-1 )
+#         weights['templ_emb.templ_stack.proj_t1d.weight'] = new_t1d_weights
+#         print(f'Shape of t1d proj: {new_t1d_weights.shape}')
+
+
+
+
+#     return weights
+
+
 def update_dims(weights,key):
 
-    # weights['templ_emb.emb.weight'] # Original shape: (64, 88)
-    # weights['templ_emb.emb_t1d.weight'] # Original shape: (64, 52)
-
-    # ipdb.set_trace()
-    # weights['bind_pred.downsample.weight']
     # Adding 2D embedding features
     # d_t1d*2+d_t2d
     if True:
@@ -59,12 +112,12 @@ def update_dims(weights,key):
             templ = torch.cat((t2d, left, right), -1) # (B, T, L, L, 109)
             templ = self.emb(templ) # Template templures (B, T, L, L, d_templ)
         '''
+        # set_trace()
+        new_emb_weights = torch.cat( (weights['model.templ_emb.emb.weight'][:,:orig_t2d], pt1_emb_zeros), dim=-1 )
+        new_emb_weights = torch.cat( (new_emb_weights, weights['model.templ_emb.emb.weight'][:,orig_t2d:orig_t2d+orig_t1d], pt2_emb_zeros), dim=-1 )
+        new_emb_weights = torch.cat( (new_emb_weights, weights['model.templ_emb.emb.weight'][:,orig_t2d+orig_t1d:], pt3_emb_zeros), dim=-1 )
 
-        new_emb_weights = torch.cat( (weights['templ_emb.emb.weight'][:,:orig_t2d], pt1_emb_zeros), dim=-1 )
-        new_emb_weights = torch.cat( (new_emb_weights, weights['templ_emb.emb.weight'][:,orig_t2d:orig_t2d+orig_t1d], pt2_emb_zeros), dim=-1 )
-        new_emb_weights = torch.cat( (new_emb_weights, weights['templ_emb.emb.weight'][:,orig_t2d+orig_t1d:], pt3_emb_zeros), dim=-1 )
-
-        weights['templ_emb.emb.weight']     = new_emb_weights
+        weights['model.templ_emb.emb.weight']     = new_emb_weights
 
         print(f'Shape of t2d: {new_emb_weights.shape}')
         
@@ -75,29 +128,17 @@ def update_dims(weights,key):
         t1d_add_dim     = t1d_weights_dim - orig_t1d - orig_dtor
         
         t1d_zeros       = torch.zeros(64, t1d_add_dim)
-        new_t1d_weights = torch.cat( (weights['templ_emb.emb_t1d.weight'][:,:orig_t1d], t1d_zeros), dim=-1 )
-        new_t1d_weights = torch.cat( (new_t1d_weights, weights['templ_emb.emb_t1d.weight'][:,orig_t1d:]), dim=-1 )
-        weights['templ_emb.emb_t1d.weight'] = new_t1d_weights
+        new_t1d_weights = torch.cat( (weights['model.templ_emb.emb_t1d.weight'][:,:orig_t1d], t1d_zeros), dim=-1 )
+        new_t1d_weights = torch.cat( (new_t1d_weights, weights['model.templ_emb.emb_t1d.weight'][:,orig_t1d:]), dim=-1 )
+        weights['model.templ_emb.emb_t1d.weight'] = new_t1d_weights
         print(f'Shape of t1d emb: {new_t1d_weights.shape}')
 
 
-        # t1d_zeros       = torch.zeros(64, t1d_add_dim)
-        # new_t1d_weights = torch.cat( (weights['templ_emb.emb_t1d.weight'][:,:orig_t1d], t1d_zeros), dim=-1 )
-        # new_t1d_weights = torch.cat( (new_t1d_weights, weights['templ_emb.emb_t1d.weight'][:,orig_t1d:]), dim=-1 )
-        # weights['templ_emb.emb_t1d.weight'] = new_t1d_weights
-        # print(f'Shape of t1d: {new_t1d_weights.shape}')
-
         t1d_zeros       = torch.zeros(64, t1d_add_dim)
-        new_t1d_weights = torch.cat( (weights['templ_emb.templ_stack.proj_t1d.weight'][:,:orig_t1d], t1d_zeros), dim=-1 )
-        new_t1d_weights = torch.cat( (new_t1d_weights, weights['templ_emb.templ_stack.proj_t1d.weight'][:,orig_t1d:]), dim=-1 )
-        weights['templ_emb.templ_stack.proj_t1d.weight'] = new_t1d_weights
+        new_t1d_weights = torch.cat( (weights['model.templ_emb.templ_stack.proj_t1d.weight'][:,:orig_t1d], t1d_zeros), dim=-1 )
+        new_t1d_weights = torch.cat( (new_t1d_weights, weights['model.templ_emb.templ_stack.proj_t1d.weight'][:,orig_t1d:]), dim=-1 )
+        weights['model.templ_emb.templ_stack.proj_t1d.weight'] = new_t1d_weights
         print(f'Shape of t1d proj: {new_t1d_weights.shape}')
-
-        # t1d_zeros       = torch.zeros(64, t1d_add_dim)
-        # new_t1d_weights = torch.cat( (weights['templ_emb.emb_t1d.weight'][:,:orig_t1d], t1d_zeros), dim=-1 )
-        # new_t1d_weights = torch.cat( (new_t1d_weights, weights['templ_emb.emb_t1d.weight'][:,orig_t1d:]), dim=-1 )
-        # weights['templ_emb.emb_t1d.weight'] = new_t1d_weights
-        # print(f'Shape of t1d: {new_t1d_weights.shape}')
 
 
 
@@ -128,13 +169,7 @@ orig_dtor = 30
 new_t1d   = orig_t1d + args.delta_t1d_dim
 new_t2d   = orig_t2d + args.delta_t2d_dim
 
-# ckpt      = torch.load('/home/afavor/git/RFD_AF/3template_na/rf_diffusion/train_session2023-11-10_1699643206.3058493/models/BFF_7.pt', map_location=torch.device('cpu'))
-# ckpt = torch.load('/home/afavor/git/RFD_AF/3template_na/rf_diffusion/train_session2023-11-10_1699643206.3058493/models/BFF_2.pt', map_location=torch.device('cpu'))
-# ckpt = torch.load('/home/afavor/git/RFD_AF/3template_na/checkpoints/from_rohith/rf2a_25c_414_t1d_81_t2d_69.pt')
-# ckpt = torch.load(args.input_ckpt, map_location=torch.device('cpu'))
 
-
-# ckpt = torch.load(args.input_ckpt)
 ckpt = torch.load(args.input_ckpt, map_location=torch.device('cpu'))
 
 for k in ['final_state_dict', 'model_state_dict']:
@@ -142,12 +177,5 @@ for k in ['final_state_dict', 'model_state_dict']:
     ckpt[k] = update_dims(weights_in, k)
 
 
-
-
-
-# ckpt['model_state_dict'] = weights
-
-# ipdb.set_trace()
-# torch.save(ckpt, './starting_point_expanded_t2d_d72.pt')
 torch.save(ckpt, args.output_ckpt)
 

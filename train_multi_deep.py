@@ -512,25 +512,12 @@ class Trainer():
         for i in range(4):
             # schedule factor for c6d 
             # syntax is if it's not in the scheduling dict, loss has full weight (i.e., 1x)
-
             loss = self.loss_fn(logit_s[i], label_s[...,i]) # (B, L, L)
             ss_loss = loss.clone()
 
             if i == 0: 
                 mask_2d_ = mask_2d
-                # For ss-specific:
                 ss_mask_2d_ = ss_mask_2d
-                # ic(ss_mask_2d_)
-                # ic(ss_mask_2d_.sum())
-
-                # png_filename = f'/home/afavor/git/RFD_AF/3template_na/pngs_training/rand_item_ss_mask_{np.random.randint(1000)}.png'
-                # fig, ax = plt.subplots(nrows=1,ncols=1,figsize=(15,15))
-                # ax.imshow(1*ss_mask_2d_.cpu().numpy(),vmin=0,vmax=2)
-                # ax.set_title('new SS matrix')
-                # # plt.colorbar()
-                # plt.savefig(png_filename)
-                # plt.close(fig)
-
             else:
                 # apply anglegram loss only when both residues have valid BB frames (i.e. not metal ions, and not examples with unresolved atoms in frames)
                 _, bb_frame_good = mask_unresolved_frames(frames_BB, frame_mask_BB, mask_crds) # (1, L, nframes)
@@ -538,7 +525,6 @@ class Trainer():
                 loss_mask_2d = bb_frame_good & bb_frame_good[...,None]
 
                 mask_2d_ = mask_2d & loss_mask_2d
-                # For ss-specific:
                 ss_mask_2d_ = ss_mask_2d & loss_mask_2d
 
 
@@ -676,7 +662,6 @@ class Trainer():
         # Structural loss
         # tot_str, str_loss = calc_str_loss(pred, true, mask_2d, same_chain, negative=negative, fape_scale_vec=None,
         #                                       A=10.0, d_clamp=None if unclamp else 10.0, gamma=1.0)
-        print('using fape scale vec')
         # print(fape_scale_vec)
         tot_str, str_loss = calc_str_loss(pred, true, mask_2d, same_chain, negative=negative, fape_scale_vec=fape_scale_vec,
                                               A=10.0, d_clamp=None if unclamp else 10.0, gamma=1.0)

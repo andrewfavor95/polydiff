@@ -164,7 +164,8 @@ def get_args(in_args=None):
         parsed = OrderedDict()
         for k,v in [e.split(':') for e in s.split(',')]:
             parsed[getattr(mask_generator, k)] = float(v)
-        assert sum(parsed.values()) == 1, f'mask function probabilities must sum to 1, got: {parsed}'
+        # assert sum(parsed.values()) == 1.0, f'mask function probabilities must sum to 1, got sum={sum(parsed.values())} from: {parsed}'
+        assert abs(sum(parsed.values()) - 1) < 1e-9, f'mask function probabilities must sum to 1, got sum={sum(parsed.values())} from: {parsed}'
         return parsed
     diff_group.add_argument('-diff_mask_probs', type=parse_mask_str, default={mask_generator.get_diffusion_mask_simple: 1.0},
         help='functions in mask generator to use for diffusion masking and their probabilities.  Example: get_double_contact:0.2,get_triple_contact:0.8')

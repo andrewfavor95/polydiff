@@ -2780,7 +2780,7 @@ def sstr_to_matrix(ss_string, only_basepairs=True):
 
 
 def get_index_map_dict(contigs):
-    alphabet = 'ABCDEFGHIJKLMNOP'
+    alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
 
     index_map_dict = {}
     

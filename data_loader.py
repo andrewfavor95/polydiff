@@ -2740,7 +2740,7 @@ class DistilledDataset(data.Dataset):
                                 )
 
                 seq_is_revealed = (np.random.rand() < P_t_supply_seq)
-                print(f'seq_is_revealed={seq_is_revealed}')
+                # print(f'seq_is_revealed={seq_is_revealed}')
 
                 if seq_is_revealed:
                     is_masked_seq[:] = False
@@ -2793,7 +2793,7 @@ class DistilledDataset(data.Dataset):
                         SCORE_FRAMES = False
                         # REVEAL_FRAMES = True
 
-                    ic(frame_is_revealed_A, frame_is_revealed_B, EYE_FRAMES)
+                    # ic(frame_is_revealed_A, frame_is_revealed_B, EYE_FRAMES)
 
             else:
                 EYE_FRAMES = False
