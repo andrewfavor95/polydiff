@@ -43,7 +43,7 @@ import random
 from apply_masks import mask_inputs
 # import util
 # import rf2util
-from util import mask_sequence_chunks, sstr_to_matrix, get_pair_ss_partners
+from util import mask_sequence_chunks, sstr_to_matrix, get_pair_ss_partners, get_random_mask_chunks
 import math
 from functools import partial
 import pandas as pd
@@ -2890,49 +2890,86 @@ class DistilledDataset(data.Dataset):
                 relevant_Ls = indep.seq.shape[0]
                 use_ss_condit = rand_choice_show_ss and (indep.xyz.shape[0]==relevant_Ls)
                 use_canonical_bp_filter_condit = (np.random.rand() <= self.params["P_CANONICAL_BP_FILTER"])
+                
+
+                ss_matrix = (2*torch.ones((indep.length(),indep.length()))).long() # Make a matrix 
+
+
+                # if use_ss_condit:
+                #     try:
+
+                #         ss_matrix = get_pair_ss_partners(indep.seq, 
+                #                      indep.xyz, 
+                #                      indep.maskstack[0,:,:23], 
+                #                      torch.arange(relevant_Ls), 
+                #                      relevant_Ls,
+                #                      canonical_partner_filter=use_canonical_bp_filter_condit,
+                #                      )
+                        
+                #         # rand_choice_partial_ss = (np.random.rand() < self.preprocess_param['prop_ss_mask'])
+                #         rand_choice_partial_ss = (np.random.rand() < np.sqrt(self.preprocess_param['prop_ss_mask']))
+                #         set_trace()
+
+
+                #         if rand_choice_partial_ss:
+                #             mask_low_prop  = max(0.0, self.preprocess_param['prop_ss_mask'] - self.preprocess_param['prop_ss_mask']**2)
+                #             mask_high_prop = min(1.0, self.preprocess_param['prop_ss_mask'] + self.preprocess_param['prop_ss_mask']**2)
+
+                #             (_, random_mask), _ = mask_generator.get_diffusion_mask_chunked(indep, 
+                #                                                                             atom_mask, 
+                #                                                                             0.1, 
+                #                                                                             0.4, 
+                #                                                                             0.3, 
+                #                                                                             max_motif_chunks=3)
+                #             ss_matrix[~random_mask,:] = 2
+                #             ss_matrix[:,~random_mask] = 2
+                            
 
                 if use_ss_condit:
-                    try:
 
-                        ss_matrix = get_pair_ss_partners(indep.seq, 
+                    try:
+                        is_na = torch.logical_and((22 <= indep.seq),(indep.seq <= 31))
+
+                        bp_partners_2d = get_pair_ss_partners(indep.seq, 
                                      indep.xyz, 
                                      indep.maskstack[0,:,:23], 
                                      torch.arange(relevant_Ls), 
                                      relevant_Ls,
                                      canonical_partner_filter=use_canonical_bp_filter_condit,
-                                     )
-                        
-                        rand_choice_partial_ss = (np.random.rand() < self.preprocess_param['prop_ss_mask'])
+                                     ).to(torch.bool)
+
+                        loop_regions = torch.logical_and(bp_partners_2d.sum(dim=0)==0, is_na) 
+
+                        # ss_matrix[bp_partners_2d == 1] = 1
+                        ss_matrix[bp_partners_2d] = 1
+                        ss_matrix[loop_regions,:] = 0
+                        ss_matrix[:,loop_regions] = 0
+
+                        # rand_choice_partial_ss = (np.random.rand() < self.preprocess_param['prop_ss_mask'])
+                        rand_choice_partial_ss = (np.random.rand() < np.sqrt(self.preprocess_param['prop_ss_mask']))
+
+                        # set_trace()
 
 
                         if rand_choice_partial_ss:
+                            mask_low_prop  = max(0.0, self.preprocess_param['prop_ss_mask'] - self.preprocess_param['prop_ss_mask']**2)
+                            mask_high_prop = min(1.0, self.preprocess_param['prop_ss_mask'] + self.preprocess_param['prop_ss_mask']**2)
 
-                            (_, random_mask), _ = mask_generator.get_diffusion_mask_chunked(indep, 
-                                                                                            atom_mask, 
-                                                                                            0.1, 
-                                                                                            0.4, 
-                                                                                            0.3, 
-                                                                                            max_motif_chunks=3)
-                            ss_matrix[~random_mask,:] = 2
-                            ss_matrix[:,~random_mask] = 2
+                            extra_ss_mask_chunks = get_random_mask_chunks(indep.length(), min_prop=mask_low_prop, max_prop=mask_high_prop)
+                            ss_matrix[extra_ss_mask_chunks,:] = 2
+                            ss_matrix[:,extra_ss_mask_chunks] = 2
                             
-
 
                             
                     except:
 
-                        print('ERROR!!!!')
+                        print('ERROR GENERATING NUCLEIC-SS FEATURES! FALLING BACK TO ALL MASKED.')
                         # set_trace()
-                        ss_matrix = (2*torch.ones(rfi_tp1_t[0].t2d.shape[2:4])).long()
+                        # ss_matrix = (2*torch.ones(rfi_tp1_t[0].t2d.shape[2:4])).long()
 
-
-
-
-
-
-                    # # """
-                    # # UNCOMMENT WHEN WE WANT PNG OF SS DURING TRAINING!
-                    # # """
+                    # # # """
+                    # # # UNCOMMENT WHEN WE WANT PNG OF SS DURING TRAINING!
+                    # # # """
                     # if chosen_dataset in ['eterna']:
 
                     #     pdb_ids = sel_item['PRED_ID']
@@ -2951,11 +2988,11 @@ class DistilledDataset(data.Dataset):
                     #     plt.savefig(png_filename)
                     #     plt.close(fig)
 
-                    #     print('SHOULD BE SAVING FIG')
-                    #     print('SHOULD BE SAVING FIG')
-                    #     print('SHOULD BE SAVING FIG')
-                    #     print('SHOULD BE SAVING FIG')
-                    #     print('SHOULD BE SAVING FIG')
+                    #     # print('SHOULD BE SAVING FIG')
+                    #     # print('SHOULD BE SAVING FIG')
+                    #     # print('SHOULD BE SAVING FIG')
+                    #     # print('SHOULD BE SAVING FIG')
+                    #     # print('SHOULD BE SAVING FIG')
 
 
                     #     # out_dir_indep_ss_inputs = '/home/afavor/projects/fit_ss_approx_params/indep_inputs/'
@@ -2985,10 +3022,6 @@ class DistilledDataset(data.Dataset):
                     #     # plt.colorbar()
                     #     plt.savefig(png_filename)
                     #     plt.close(fig)
-
-
-                else:
-                    ss_matrix = (2*torch.ones(rfi_tp1_t[0].t2d.shape[2:4])).long()
 
 
                 ss_templ_onehot = F.one_hot(ss_matrix, num_classes=3)

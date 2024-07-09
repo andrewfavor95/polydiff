@@ -38,7 +38,7 @@ inference:
   assume_canonical_pair_seq: False
   update_seq_t: False
   show_seq_under_t: -1
-  seq_logit_penalty: 1e2
+  seq_logit_penalty: 1e6
   # align_motif: False
 
 preprocess:
@@ -85,6 +85,8 @@ scaffoldguided:
   target_adj: null
   mask_loops: True
   target_ss_string: null
+  target_ss_matrix_loop_backdrop: False
+  target_ss_string_list: null
   target_ss_pairs: null
   target_ss_pair_ori: null
   force_loops_list: null

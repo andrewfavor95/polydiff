@@ -1500,98 +1500,127 @@ def get_pair_ss_partners(seq, xyz, mask, sel, len_s, vert_diff_cutoff=6.69730945
 
 
 
-def compute_pSSA(ss_string, xyz, seq, 
-                network_params_in=None,
-                representative_res_ind=29, # RG has most atoms to reference
-                frame_atom_0=" O4'", 
-                frame_atom_1=" C1'", 
-                frame_atom_2=" C2'",
-                only_basepairs=False,
-                eps=1e-8):
+
+
+
+# def compute_pSSA(ss_string, xyz, seq, 
+#                 network_params_in=None,
+#                 representative_res_ind=29, # RG has most atoms to reference
+#                 frame_atom_0=" O4'", 
+#                 frame_atom_1=" C1'", 
+#                 frame_atom_2=" C2'",
+#                 only_basepairs=False,
+#                 eps=1e-8):
 
 
 
 
-    def find_any_bracket_pairs(s, open_symbol, close_symbol):
-        stack = []
-        pairs = []
+#     def find_any_bracket_pairs(s, open_symbol, close_symbol):
+#         stack = []
+#         pairs = []
 
-        for i, char in enumerate(s):
-            if char == open_symbol:
-                stack.append(i)
-            elif char == close_symbol:
-                if stack:
-                    pairs.append((stack.pop(), i))
-                else:
-                    raise ValueError(f"No matching open parenthesis for closing parenthesis at index {i}")
+#         for i, char in enumerate(s):
+#             if char == open_symbol:
+#                 stack.append(i)
+#             elif char == close_symbol:
+#                 if stack:
+#                     pairs.append((stack.pop(), i))
+#                 else:
+#                     raise ValueError(f"No matching open parenthesis for closing parenthesis at index {i}")
 
-        if stack:
-            raise ValueError(f"No matching closing parenthesis for open parenthesis at index {stack[0]}")
+#         if stack:
+#             raise ValueError(f"No matching closing parenthesis for open parenthesis at index {stack[0]}")
 
-        return pairs
+#         return pairs
 
-    def find_loop_bases(s):
-        loop_bases = []
-        for i, char in enumerate(s):
-            if char == '.':
-                loop_bases.append(i)
+#     def find_loop_bases(s):
+#         loop_bases = []
+#         for i, char in enumerate(s):
+#             if char == '.':
+#                 loop_bases.append(i)
                 
-        return loop_bases
+#         return loop_bases
 
 
-    open_symbols  = ['(','[','{','<','5','i','f','b']
-    close_symbols = [')',']','}','>','3','j','t','e']
-    loop_symbols  = ['.','&',','] # For now we just treating breaks as loops, cuz dssr is fallible.
+#     open_symbols  = ['(','[','{','<','5','i','f','b']
+#     close_symbols = [')',']','}','>','3','j','t','e']
+#     loop_symbols  = ['.','&',','] # For now we just treating breaks as loops, cuz dssr is fallible.
 
 
-    all_pair_dict = {}
-    for pair_ind, (open_symbol, close_symbol) in enumerate(zip(open_symbols, close_symbols)):
+#     all_pair_dict = {}
+#     for pair_ind, (open_symbol, close_symbol) in enumerate(zip(open_symbols, close_symbols)):
 
-        num_opens = len([ _ for _ in ss_string if _ == open_symbol])
-        num_close = len([ _ for _ in ss_string if _ == close_symbol])
-        assert num_opens==num_close , "number of base pairs must be an even number... must be an error somewhere..."
+#         num_opens = len([ _ for _ in ss_string if _ == open_symbol])
+#         num_close = len([ _ for _ in ss_string if _ == close_symbol])
+#         assert num_opens==num_close , "number of base pairs must be an even number... must be an error somewhere..."
         
-        all_pair_dict[pair_ind] = find_any_bracket_pairs(ss_string, open_symbol, close_symbol)
+#         all_pair_dict[pair_ind] = find_any_bracket_pairs(ss_string, open_symbol, close_symbol)
         
 
-    ss_element_list = []
+#     ss_element_list = []
         
-    for pair_ind in all_pair_dict.keys():
-        paired_base_list = all_pair_dict[pair_ind]
-        for i,j in paired_base_list:
-            ss_element_list.append(('P',i,j))
+#     for pair_ind in all_pair_dict.keys():
+#         paired_base_list = all_pair_dict[pair_ind]
+#         for i,j in paired_base_list:
+#             ss_element_list.append(('P',i,j))
 
 
-    if not only_basepairs:
-        for i, char in enumerate(ss_string):
-            if char in loop_symbols: 
-                ss_element_list.append(('L',i,i))
+#     if not only_basepairs:
+#         for i, char in enumerate(ss_string):
+#             if char in loop_symbols: 
+#                 ss_element_list.append(('L',i,i))
 
-    L = len(seq)
-    P_mat = get_pair_ss_partners(seq, xyz[0], torch.ones((L,23)).bool(), torch.arange(L), L)
+#     L = len(seq)
+#     P_mat = get_pair_ss_partners(seq, xyz[0], torch.ones((L,23)).bool(), torch.arange(L), L)
     
-    pSSA_vec = torch.zeros(L)
-    num_positions_counted = 0
-    for i, ss_element_i in enumerate(ss_element_list):
+#     pSSA_vec = torch.zeros(L)
+#     num_positions_counted = 0
+#     for i, ss_element_i in enumerate(ss_element_list):
 
-        row_ind = ss_element_i[1]
-        col_ind = ss_element_i[2]
+#         row_ind = ss_element_i[1]
+#         col_ind = ss_element_i[2]
 
-        if ss_element_i[0]=='L':
-            P_not_i = torch.cat((P_mat[row_ind,:col_ind], P_mat[row_ind,col_ind+1:]),dim=-1)
-            assert row_ind==col_ind, "Loop positions must be self-paired by definition. Must be an error somewhere."
-            tot_prob_i = (1.0-torch.max(P_not_i)) + eps
-            pSSA_vec[row_ind] = tot_prob_i
+#         if ss_element_i[0]=='L':
+#             P_not_i = torch.cat((P_mat[row_ind,:col_ind], P_mat[row_ind,col_ind+1:]),dim=-1)
+#             assert row_ind==col_ind, "Loop positions must be self-paired by definition. Must be an error somewhere."
+#             tot_prob_i = (1.0-torch.max(P_not_i)) + eps
+#             pSSA_vec[row_ind] = tot_prob_i
 
-        elif ss_element_i[0]=='P':
-            tot_prob_i = (0.5*P_mat[row_ind,col_ind] + 0.5*P_mat[col_ind,row_ind]) + eps
-            pSSA_vec[row_ind] = tot_prob_i
-            pSSA_vec[col_ind] = tot_prob_i
-
-
+#         elif ss_element_i[0]=='P':
+#             tot_prob_i = (0.5*P_mat[row_ind,col_ind] + 0.5*P_mat[col_ind,row_ind]) + eps
+#             pSSA_vec[row_ind] = tot_prob_i
+#             pSSA_vec[col_ind] = tot_prob_i
 
 
-    return pSSA_vec
+
+
+#     return pSSA_vec
+    
+
+
+def compute_pSSA(ss_matrix, xyz, seq, eps=1e-8):
+    
+    L = len(seq)
+    output_bp_mat = get_pair_ss_partners(seq, xyz[0], torch.ones((L,23)).bool(), torch.arange(L), L).bool()
+    target_bp_mat = (ss_matrix==1)
+    target_loop_regions = ((ss_matrix>0).sum(dim=0)==0)
+    target_pair_regions = ((ss_matrix==1).sum(dim=0)>0)
+    target_eval_regions = torch.logical_or(target_loop_regions, target_pair_regions)
+
+    output_loops = output_bp_mat.sum(dim=0)==0
+
+    pSSA_vec = torch.ones(L)
+    for i, (eval_i, loop_i, pair_i) in enumerate(zip(target_eval_regions, target_loop_regions, target_pair_regions)):
+        if eval_i:
+            
+            if pair_i:
+                pSSA_vec[i] = (target_bp_mat[i,:]*(target_bp_mat[i,:]==output_bp_mat[i,:])).sum()/target_bp_mat[i,:].sum()
+            elif loop_i:
+                # Weird excess for code consistency. target_loop_regions[i] = loop_i = 1
+                # pSSA_vec[i] = (target_loop_regions[i]*(target_loop_regions[i]==output_loops[i])).sum()/target_loop_regions[i].sum()
+                pSSA_vec[i] = (loop_i==output_loops[i]).sum()
+                
+    return pSSA_vec, target_eval_regions
     
 
 
@@ -1648,6 +1677,54 @@ def get_chain_range_inds(same_chain):
 
     return chain_range_tuples
 
+
+
+def get_random_mask_chunks(L, 
+    min_prop=0.3, 
+    max_prop=0.7, 
+    min_num_chunks=1, 
+    max_num_chunks=4):
+    
+    try:
+        # Initialize the ss_mask_vec
+        ss_mask_vec = torch.zeros(L, dtype=torch.bool)
+
+        # Calculate the total number of elements to set to 1
+        min_elements = int(min_prop * L)
+        max_elements = int(max_prop * L)
+        num_elements = random.randint(min_elements, max_elements)
+        
+        # Determine the number of chunks
+        num_chunks = random.randint(min_num_chunks, max_num_chunks)
+        
+        # Generate the sizes of the chunks
+        chunk_sizes = []
+        remaining_elements = num_elements
+        for _ in range(num_chunks - 1):
+            chunk_size = random.randint(1, remaining_elements - (num_chunks - len(chunk_sizes) - 1))
+            chunk_sizes.append(chunk_size)
+            remaining_elements -= chunk_size
+        chunk_sizes.append(remaining_elements)
+        
+        # Shuffle the chunk sizes to randomize their placement
+        random.shuffle(chunk_sizes)
+        
+        # Place the chunks into the ss_mask_vec
+        available_positions = list(range(L))
+        for chunk_size in chunk_sizes:
+            # Choose a random starting position
+            start_pos = random.choice(available_positions[:L - chunk_size + 1])
+            
+            # Set the elements to 1
+            ss_mask_vec[start_pos:start_pos + chunk_size] = True
+            
+            # Update available positions
+            available_positions = [pos for pos in available_positions if pos < start_pos or pos >= start_pos + chunk_size]
+
+    except:
+        ss_mask_vec = torch.zeros(L, dtype=torch.bool)
+
+    return ss_mask_vec
 
 
 # # fit_params_pSSA = {

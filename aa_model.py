@@ -661,20 +661,33 @@ class Model:
         """
 
         # Process motifs by polymer type:
-        if polymer_type_masks:
-            is_na = torch.logical_or(indep.is_dna, indep.is_rna)
-            is_diffused_na = torch.logical_and(is_diffused, is_na)
-            is_diffused_protein = torch.logical_and(is_diffused, ~is_na)
-            is_diffused_dna = torch.logical_and(is_diffused, indep.is_dna)
-            is_diffused_rna = torch.logical_and(is_diffused, indep.is_rna)
+        # if polymer_type_masks:
+        #     is_na = torch.logical_or(indep.is_dna, indep.is_rna)
+        #     is_diffused_na = torch.logical_and(is_diffused, is_na)
+        #     is_diffused_protein = torch.logical_and(is_diffused, ~is_na)
+        #     is_diffused_dna = torch.logical_and(is_diffused, indep.is_dna)
+        #     is_diffused_rna = torch.logical_and(is_diffused, indep.is_rna)
 
-            is_protein_motif = is_motif * indep.is_protein
-            is_dna_motif = is_motif * indep.is_dna
-            is_rna_motif = is_motif * indep.is_rna
-            is_na_motif = torch.logical_or(is_dna_motif, is_rna_motif)
+        #     is_protein_motif = is_motif * indep.is_protein
+        #     is_dna_motif = is_motif * indep.is_dna
+        #     is_rna_motif = is_motif * indep.is_rna
+        #     is_na_motif = torch.logical_or(is_dna_motif, is_rna_motif)
 
-        else:
-            is_protein_motif = is_motif
+        # else:
+        #     is_protein_motif = is_motif
+
+        is_na = torch.logical_or(indep.is_dna, indep.is_rna)
+        is_diffused_na = torch.logical_and(is_diffused, is_na)
+        is_diffused_protein = torch.logical_and(is_diffused, ~is_na)
+        is_diffused_dna = torch.logical_and(is_diffused, indep.is_dna)
+        is_diffused_rna = torch.logical_and(is_diffused, indep.is_rna)
+
+        is_protein_motif = is_motif * indep.is_protein
+        is_dna_motif = is_motif * indep.is_dna
+        is_rna_motif = is_motif * indep.is_rna
+        is_na_motif = torch.logical_or(is_dna_motif, is_rna_motif)
+        
+
 
 
         refine=False

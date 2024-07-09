@@ -293,6 +293,7 @@ def sample_one(sampler, inf_conf, i_des, simple_logging=False):
             px0, x_t, seq_t, tors_t, plddt, rfo = sampler.sample_step(t, indep, rfo)
 
             # assert_that(indep.xyz.shape).is_equal_to(x_t.shape)
+
             rf2aa.tensor_util.assert_same_shape(indep.xyz, x_t)
             indep.xyz = x_t
 
@@ -417,17 +418,16 @@ def save_outputs(sampler, out_prefix, indep, denoised_xyz_stack, px0_xyz_stack, 
     # pX0 last step
     out = f'{out_prefix}.pdb'
 
-    if sampler.inf_conf.compute_pSSA and sampler._conf.scaffoldguided.target_ss_string:
+    # if sampler.inf_conf.compute_pSSA and sampler._conf.scaffoldguided.target_ss_string:
+    if sampler.inf_conf.compute_pSSA and (sampler.target_ss_matrix is not None):
+        # set_trace()
+        pSSA_vec, pSSA_mask = util.compute_pSSA(sampler.target_ss_matrix, denoised_xyz_stack[0:1], final_seq)
 
-        pSSA_vec = util.compute_pSSA(sampler._conf.scaffoldguided.target_ss_string, 
-                                    denoised_xyz_stack[0:1], 
-                                    final_seq
-                                    )
 
         print('pSSA vector:')
         print(pSSA_vec)
 
-        formatted_mean_pSSA = "{:.3f}".format(pSSA_vec.mean())
+        formatted_mean_pSSA = "{:.3f}".format(pSSA_vec[pSSA_mask].mean())
         out = out.replace('.pdb', f'__pSSA_{formatted_mean_pSSA}.pdb')
 
 

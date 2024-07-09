@@ -67,7 +67,8 @@ inference:
   mask_seq_by_polymer: False
   t2d_pic_filename: null # DELETE NOT USED
   save_motif_t2d_png: False
-  num_atoms_modeled: 14
+  # num_atoms_modeled: 14
+  num_atoms_modeled: 23
   num_atoms_saved: 23
   save_rna_oneletter: False
   set_diffused_prot_to: 'ALA'
@@ -80,6 +81,15 @@ inference:
   protein_rna_hotspot_res: null
   dna_rna_hotspot_res: null
   use_poly_hotspots_t1d: False
+  set_sequence: null
+  seq_logit_penalty: 1e6
+  update_seq_t: False
+  show_seq_under_t: -1
+  compute_pSSA: False
+  T_break_sym: null
+  cyclic_protein_indices: False 
+  pseudo_symmetry: null
+  pseudocycle_break: null
   # ema: True
 
 contigmap:
@@ -147,6 +157,8 @@ model:
   clash: 4.0
   lock_symmsubs_at: -1
   allow_particle_recenter: false 
+  # pseudo_cycle: False 
+  # T_break_sym: null
   # half_precision: False
 
 diffuser:

@@ -99,74 +99,144 @@ class Sampler:
 
         self.index_map_dict, self.length_init = iu.get_index_map_dict(self._conf.contigmap.contigs)
 
-
-
-
-
         # Set up ss-adj matrix
         # This will be used for t2d conditioning:
         if self.use_ss_guidance:
-
-            # By default fall back to masking everything:
-            # We initialize the ss_matrix as fully masked, then we modify it as we go
-            self.target_ss_matrix = (2*torch.ones((self.length_init,self.length_init))).long()
-
-            # first priority: check for basepair range specifications (best way to specify):
-            if self._conf.scaffoldguided.target_ss_pairs is not None:
-
-
-                # Here we add paired regions to the target ss matrix
-                self.target_ss_matrix = iu.ss_pairs_to_matrix(
-                                                    self._conf.scaffoldguided.target_ss_pairs, 
-                                                    self.index_map_dict, 
-                                                    self.target_ss_matrix,
-                                                    ss_pair_ori_list=self._conf.scaffoldguided.target_ss_pair_ori,
-                                                    ).long()
-
-
-                # To fill in assumed bp partners, both conditions must be met.
-                if self._conf.inference.assume_canonical_pair_seq :
-                    find_canonical_seq_partners = True
-
-            # second priority: check for ss-string specification (slightly less precise):
-            elif self._conf.scaffoldguided.target_ss_string is not None:
-                # Or just replace it with full ss string
-                self.target_ss_matrix = torch.from_numpy(iu.sstr_to_matrix(self._conf.scaffoldguided.target_ss_string, only_basepairs=True)).long()
-
-            # Now we can add force loops, or triple+ contacts
-            # Force loops:
-            if self._conf.scaffoldguided.force_loops_list is not None:
-                self.target_ss_matrix = iu.force_loops(self._conf.scaffoldguided.force_loops_list, self.index_map_dict, self.target_ss_matrix)
-
-            # Force the multi-contact:
-            if self._conf.scaffoldguided.force_multi_contacts is not None:
-                self.target_ss_matrix = iu.force_multi_contacts(self._conf.scaffoldguided.force_multi_contacts, self.index_map_dict, self.target_ss_matrix)
-
-
-            # # otherwise fall back to masking everything:
-            # else:
-            #     self.target_ss_matrix = (2*torch.ones(indep.same_chain.shape)).long()
-
-            # Save the matrix image if we want:
-            # if self._conf.scaffoldguided.save_ss_matrix_png and (t==self._conf.diffuser.T):
-            if self._conf.scaffoldguided.save_ss_matrix_png:
-                print('SAVING SS MATRIX PIC!')
-                output_pic_filapath = self._conf.inference.output_prefix+'.png'
-                output_dirpath = os.path.dirname(output_pic_filapath)
-
-                if not (os.path.exists(output_dirpath) and os.path.isdir(output_dirpath)):
-                    os.mkdir(output_dirpath)
-
-                fig, ax = plt.subplots(1,1,figsize=(5,5), dpi=300)
-                ax.imshow(np.array(self.target_ss_matrix))
-                plt.tight_layout()
-                plt.savefig(output_pic_filapath, bbox_inches='tight', dpi='figure')
-                plt.close()
-
+            self.target_ss_matrix = iu.get_target_ss_matrix(self)
         else:
             self.target_ss_matrix = None
 
 
+        # # Set up ss-adj matrix
+        # # This will be used for t2d conditioning:
+        # if self.use_ss_guidance:
+        #     # By default fall back to masking everything:
+        #     # We initialize the ss_matrix as fully masked, then we modify it as we go
+        #     self.target_ss_matrix = (2*torch.ones((self.length_init,self.length_init))).long()
+
+        #     # first modification: check for ss-string specification:
+        #     if (self._conf.scaffoldguided.target_ss_string_list is not None) or (self._conf.scaffoldguided.target_ss_string is not None):
+
+        #         # bp_partner_list = []
+        #         # loop_region_list = []
+        #         # ss_loc_list = []
+
+        #         pair_matrix_list = []
+        #         loop_region_list = []
+        #         ss_loc_list = []
+        #         # loop_loc_list = []
+
+        #         if self._conf.scaffoldguided.target_ss_string_list is not None:
+        #             for string_spec_i in self._conf.scaffoldguided.target_ss_string_list:
+        #                 ss_loc_i, ss_string_i = string_spec_i.split(':')
+
+        #                 bp_partners_2d = torch.from_numpy(iu.sstr_to_matrix(ss_string_i, only_basepairs=True)).bool()
+        #                 loop_regions = torch.tensor([s_i=='.' for s_i in ss_string_i])
+        #                 ss_target_loc = tuple(self.index_map_dict[ss_loc_i[0]][int(_)] for _ in ss_loc_i[1:].split('-') )
+        #                 # ss_target_loc_b = [self.index_map_dict[ss_loc_i[0]][int(_)] for _ in ss_loc_i[1:].split('-') ]
+
+        #                 # set_trace()
+        #                 # pair_matrix_list.append(torch.from_numpy(iu.sstr_to_matrix(ss_string_i, only_basepairs=True)).bool())
+        #                 # loop_region_list.append(torch.tensor([s_i=='.' for s_i in ss_string_i]))
+        #                 # ss_loc_range_i = (self.index_map_dict[ss_loc_i[0]][int(_)] for _ in ss_loc_i[1:].split('-'))
+
+        #                 pair_matrix_list.append(bp_partners_2d)
+        #                 loop_region_list.append(loop_regions)
+        #                 ss_loc_list.append(ss_target_loc)
+        #                 # loop_loc_list.append(ss_target_loc)
+
+        #                 # bp_partner_list.append(torch.from_numpy(iu.sstr_to_matrix(ss_string_i, only_basepairs=True)).bool())
+        #                 # loop_region_list.append(torch.tensor([s_i=='.' for s_i in ss_string_i]))
+        #                 # ss_loc_list.append((self.index_map_dict[ss_loc_i[0]][int(_)] for _ in ss_loc_i[1:].split('-')))
+
+        #                 # bp_partners_2d_i = torch.from_numpy(iu.sstr_to_matrix(ss_string_i, only_basepairs=True)).bool()
+        #                 # loop_regions_i = torch.tensor([s_i=='.' for s_i in self._conf.scaffoldguided.target_ss_string])
+        #                 # from_i, to_i = (self.index_map_dict[ss_loc_i[0]][int(_)] for _ in ss_loc_i[1:].split('-'))
+        #                 # ss_loc_list.append((from_i, to_i))
+
+                
+        #         elif self._conf.scaffoldguided.target_ss_string is not None:
+        #             # Or just replace it with full ss string
+        #             # bp_partners_2d = torch.from_numpy(iu.sstr_to_matrix(self._conf.scaffoldguided.target_ss_string, only_basepairs=True)).long()
+        #             bp_partners_2d = torch.from_numpy(iu.sstr_to_matrix(self._conf.scaffoldguided.target_ss_string, only_basepairs=True)).bool()
+        #             loop_regions = torch.tensor([s_i=='.' for s_i in self._conf.scaffoldguided.target_ss_string])
+        #             ss_target_loc = (0,self.length_init)
+                    
+        #             pair_matrix_list.append(bp_partners_2d)
+        #             loop_region_list.append(loop_regions)
+        #             ss_loc_list.append(ss_target_loc)
+        #             # loop_loc_list.append(ss_target_loc)
+
+        #         # set_trace()
+        #         for bp_partners_i, loop_regions_i, (from_i,to_i) in zip(pair_matrix_list, loop_region_list, ss_loc_list):
+                    
+        #             full_loop_regions_i = torch.zeros(self.length_init).bool()
+        #             # set_trace()
+        #             full_loop_regions_i[from_i:to_i+1] = loop_regions_i
+        #             # set_trace()
+        #             # self.target_ss_matrix[from_i:to_i,from_i:to_i][loop_regions_i,:] = 0
+        #             # self.target_ss_matrix[from_i:to_i,from_i:to_i][:,loop_regions_i] = 0
+
+        #             self.target_ss_matrix[full_loop_regions_i,:] = 0
+        #             self.target_ss_matrix[:,full_loop_regions_i] = 0
+        #             # self.target_ss_matrix[from_i:to_i,from_i:to_i] = 2 # SHOULD I DO THIS????
+        #             self.target_ss_matrix[from_i:to_i+1,from_i:to_i+1][bp_partners_i] = 1
+
+
+        #     # second: check for basepair range specifications (best way to specify):
+        #     if self._conf.scaffoldguided.target_ss_pairs is not None:
+
+
+        #         # Here we add paired regions to the target ss matrix
+        #         self.target_ss_matrix = iu.ss_pairs_to_matrix(
+        #                                             self._conf.scaffoldguided.target_ss_pairs,
+        #                                             self.index_map_dict,
+        #                                             self.target_ss_matrix,
+        #                                             ss_pair_ori_list=self._conf.scaffoldguided.target_ss_pair_ori,
+        #                                             ).long()
+
+
+        #         # To fill in assumed bp partners, both conditions must be met.
+        #         if self._conf.inference.assume_canonical_pair_seq:
+        #             find_canonical_seq_partners = True
+
+        #     # # second priority: check for ss-string specification (slightly less precise):
+        #     # elif self._conf.scaffoldguided.target_ss_string is not None:
+        #     #     # Or just replace it with full ss string
+        #     #     self.target_ss_matrix = torch.from_numpy(iu.sstr_to_matrix(self._conf.scaffoldguided.target_ss_string, only_basepairs=True)).long()
+
+        #     # Now we can add force loops, or triple+ contacts
+        #     # Force loops:
+        #     if self._conf.scaffoldguided.force_loops_list is not None:
+        #         self.target_ss_matrix = iu.force_loops(self._conf.scaffoldguided.force_loops_list, self.index_map_dict, self.target_ss_matrix)
+
+        #     # Force the multi-contact:
+        #     if self._conf.scaffoldguided.force_multi_contacts is not None:
+        #         self.target_ss_matrix = iu.force_multi_contacts(self._conf.scaffoldguided.force_multi_contacts, self.index_map_dict, self.target_ss_matrix)
+
+
+        #     # # otherwise fall back to masking everything:
+        #     # else:
+        #     #     self.target_ss_matrix = (2*torch.ones(indep.same_chain.shape)).long()
+
+        #     # Save the matrix image if we want:
+        #     # if self._conf.scaffoldguided.save_ss_matrix_png and (t==self._conf.diffuser.T):
+        #     if self._conf.scaffoldguided.save_ss_matrix_png:
+        #         print('SAVING SS MATRIX PIC!')
+        #         output_pic_filapath = self._conf.inference.output_prefix+'.png'
+        #         output_dirpath = os.path.dirname(output_pic_filapath)
+
+        #         if not (os.path.exists(output_dirpath) and os.path.isdir(output_dirpath)):
+        #             os.mkdir(output_dirpath)
+
+        #         fig, ax = plt.subplots(1,1,figsize=(5,5), dpi=300)
+        #         ax.imshow(np.array(self.target_ss_matrix))
+        #         plt.tight_layout()
+        #         plt.savefig(output_pic_filapath, bbox_inches='tight', dpi='figure')
+        #         plt.close()
+
+        # else:
+        #     self.target_ss_matrix = None
 
 
         # check if we want to set the sequence
@@ -179,9 +249,7 @@ class Sampler:
                                                     )
         else:
             self.seq_spec_list = None
-
-
-
+        
 
         # Generate polymer hotspots:
         tot_poly_hotspot_count = 0
@@ -309,9 +377,22 @@ class Sampler:
         else:
             sys.exit(f'Seq Diffuser of type: {self._conf.seq_diffuser.seqdiff} is not known')
 
-        if self.inf_conf.symmetry is not None:
+        # if self.inf_conf.symmetry is not None:
+        #     self.symmetry = symmetry.SymGen(
+        #         self.inf_conf.symmetry,
+        #         self.inf_conf.model_only_neighbors,
+        #         self.inf_conf.recenter,
+        #         self.inf_conf.radius, 
+        #     )
+        # else:
+        #     self.symmetry = None
+
+        if (self.inf_conf.symmetry is not None) or (self.inf_conf.pseudo_symmetry is not None):
+            assert not (self.inf_conf.symmetry and self.inf_conf.pseudo_symmetry), "Cannot use both symmetry and pseudo_symmetry"
+            S_in = self.inf_conf.pseudo_symmetry if self.inf_conf.pseudo_symmetry is not None else self.inf_conf.symmetry
+
             self.symmetry = symmetry.SymGen(
-                self.inf_conf.symmetry,
+                S_in,
                 self.inf_conf.model_only_neighbors,
                 self.inf_conf.recenter,
                 self.inf_conf.radius, 
@@ -611,7 +692,6 @@ class Sampler:
 
         indep, is_diffused = self.model_adaptor.insert_contig(indep, self.contig_map, partial_T=is_partial, seq_spec=self.seq_spec_list) 
 
-
         # create a residue mask based on polymer type:
         # I think we want this to be on the gpu
         self.seq_mask = torch.zeros(1, indep.seq.shape[0], NAATOKENS).to(self.device)
@@ -693,7 +773,7 @@ class Sampler:
             # indep.seq = torch.where(self.is_diffused, self.seq_mask_resi, indep.seq)
             print("AF: maybe temporary, I don't like this section of code...")
             indep.seq = torch.where(self.mask_seq, indep.seq, self.seq_mask_resi)
-
+            # print(f'2:   {indep.seq.shape}')
             # create tensor denoting which residues should have perfect confidence
             # even though they may technically be diffused (moving)
             has_imperfect_t1d = old_is_diffused.clone()
@@ -932,13 +1012,26 @@ class Sampler:
             Lasu     = self._conf.model.repeat_length 
             assert indep.xyz.shape[0] % Lasu == 0, 'Lasu must be a factor of the number of tokens but found %d and %d' % (Lasu, indep.xyz.shape[0])
 
-            # indep = symmetry.propogate_repeat_features(indep, Lasu, main_block=self._conf.model.main_block)
-            indep = symmetry.propogate_repeat_features2(indep, Lasu, self._conf.inference)
-            # self.denoiser.decode_scheduler.visible[indep.is_sm] = True # all sm are visible/not diffused
+            # # indep = symmetry.propogate_repeat_features(indep, Lasu, main_block=self._conf.model.main_block)
+            # indep = symmetry.propogate_repeat_features2(indep, Lasu, self._conf.inference)
+            # # self.denoiser.decode_scheduler.visible[indep.is_sm] = True # all sm are visible/not diffused
 
-            self.is_diffused = self.is_diffused.repeat(self._conf.inference.n_repeats)
-            self.is_diffused_orig = self.is_diffused_orig.repeat(self._conf.inference.n_repeats)
-        
+            # self.is_diffused = self.is_diffused.repeat(self._conf.inference.n_repeats)
+            # self.is_diffused_orig = self.is_diffused_orig.repeat(self._conf.inference.n_repeats)
+            if indep.xyz.shape[0] == Lasu:
+                # need to duplicate diffused crds + other features 
+                indep = symmetry.propogate_repeat_features2(indep, Lasu, self._conf.inference)
+
+                # duplicate is_diffused(_orig) to match length 
+                self.is_diffused = self.is_diffused.repeat(self._conf.inference.n_repeats)
+                self.is_diffused_orig = self.is_diffused_orig.repeat(self._conf.inference.n_repeats)
+
+            else: 
+                # indep/xyz/seq is already long enough from initialization
+                # assert repeat 
+                symmetry.symmetrize_repeat_features(indep, Lasu, main_block=0)
+
+
         if return_forward_trajectory:
             forward_traj = torch.cat([xyz_true[None], fa_stack[:,:,:]])
             if self.seq_diffuser is None:
@@ -1306,7 +1399,6 @@ class NRBStyleSelfCond(Sampler):
                 assert ij_visible is not None, '3 template + motif_only_2d requires description of motif pairwise visibility'
                 ij_visible = ij_visible.split('-') # e.g., [abc,de,df,...]
                 ij_visible_int = [tuple([abet2num[a] for a in s]) for s in ij_visible]
-
                 mask_t2d, _ = iu.get_repeat_t2d_mask(L, con_hal_idx0, self.contig_map, ij_visible_int, 1, supplied_full_contig=True)
 
             else:
@@ -1327,7 +1419,8 @@ class NRBStyleSelfCond(Sampler):
                 ### t2d_is_revealed ###
                 n_repeat = self._conf.inference.n_repeats
                 L = len(is_protein_motif)
-                mask_t2d = iu.parse_ij_get_repeat_mask(self._conf.inference.ij_visible, L, n_repeat, con_hal_idx0, supplied_full_contig, full_complex_idx0)
+                #             parse_ij_get_repeat_mask(ij_visible, L, n_repeat, con_hal_idx0, supplied_full_contig, full_complex_idx0, contig_map)
+                mask_t2d = iu.parse_ij_get_repeat_mask(self._conf.inference.ij_visible, L, n_repeat, con_hal_idx0, supplied_full_contig, full_complex_idx0, self.contig_map)
 
 
 
@@ -1341,7 +1434,8 @@ class NRBStyleSelfCond(Sampler):
             ### t2d_is_revealed ###
             n_repeat = self._conf.inference.n_repeats
             L = len(is_protein_motif)
-            mask_t2d = iu.parse_ij_get_repeat_mask(self._conf.inference.ij_visible, L, n_repeat, con_hal_idx0)
+            # mask_t2d = iu.parse_ij_get_repeat_mask(self._conf.inference.ij_visible, L, n_repeat, con_hal_idx0, self.contig_map)
+            mask_t2d = iu.parse_ij_get_repeat_mask(self._conf.inference.ij_visible, L, n_repeat, con_hal_idx0, supplied_full_contig, full_complex_idx0, self.contig_map)
 
         # return is_protein_motif, mask_t2d
         return is_motif, mask_t2d
@@ -1385,7 +1479,6 @@ class NRBStyleSelfCond(Sampler):
 
 
 
-
         # Set up polymer class template:
         # This will be used for t1d conditioning
         if self.show_poly_class:
@@ -1397,6 +1490,61 @@ class NRBStyleSelfCond(Sampler):
         else:
             self.poly_class_vec = None
 
+
+        # #### ADD HERE??? SYMM STUFF!!!#### ADD HERE??? SYMM STUFF!!!#### ADD HERE??? SYMM STUFF!!!#### ADD HERE??? SYMM STUFF!!!
+        # #### ADD HERE??? SYMM STUFF!!!#### ADD HERE??? SYMM STUFF!!!#### ADD HERE??? SYMM STUFF!!!#### ADD HERE??? SYMM STUFF!!!
+        # #### ADD HERE??? SYMM STUFF!!!#### ADD HERE??? SYMM STUFF!!!#### ADD HERE??? SYMM STUFF!!!#### ADD HERE??? SYMM STUFF!!!
+        # ### symmetrize before passing through model
+        # if self.symmetry is not None:
+        #     #x_t_1, seq_t_1 = self.symmetry.apply_symmetry(x_t_1, seq_t_1)
+        #     is_sm = indep.is_sm
+
+        #     #x_t_1, seq_t_1 = torch.clone(x_t_1), torch.clone(seq_t_1)
+        #     if self._conf.model.T_break_sym is not None:
+        #         if t > self._conf.model.T_break_sym: # If step T >= T_symm, do symmetrization, otherwise stop
+        #             xyz_to_sym = indep.xyz[~is_sm]
+        #             seq_to_sym = indep.seq[~is_sm]
+
+        #             xyz_sym_out, seq_sym_out = self.symmetry.apply_symmetry(xyz_to_sym, seq_to_sym)
+
+        #             # put back into indep
+        #             indep.xyz[~is_sm] = xyz_sym_out
+        #             indep.seq[~is_sm] = seq_sym_out
+
+        #     else:
+        #         is_sm = indep.is_sm
+        #         xyz_to_sym = indep.xyz[~is_sm]
+        #         seq_to_sym = indep.seq[~is_sm]
+
+        #         xyz_sym_out, seq_sym_out = self.symmetry.apply_symmetry(xyz_to_sym, seq_to_sym)
+
+        #         # put back into indep
+        #         indep.xyz[~is_sm] = xyz_sym_out
+        #         indep.seq[~is_sm] = seq_sym_out
+        # # msa_masked, msa_full, seq_in, xt_in, idx_pdb, t1d, t2d, xyz_t, alpha_t = self._preprocess(
+        # #         seq_t, x_t, t) ### init idx_pdb
+        # #idx_pdb = 0 # dummy value
+        # idx_pdb = torch.tensor(self.contig_map.rf)[None]
+        # print('LENGTH OF CONTIG_MAP.RF:', len(self.contig_map.rf))
+        # #print(len(self.contig_map.rf))
+
+        # if (self.symmetry is not None) and (not self.inf_conf.pseudo_symmetry):
+        #     idx_pdb = rfi.idx
+        #     idx_pdb, self.chain_idx = self.symmetry.res_idx_procesing(res_idx=idx_pdb)
+
+        # elif (self.symmetry is not None) and (self.inf_conf.pseudo_symmetry):
+        #     # no chainbreaks etc because pseudocycle 
+        #     if self.inf_conf.pseudocycle_break is not None:
+        #         bidx = self.inf_conf.pseudocycle_break # 1-indexed, res_no at chain break
+        #         idx_pdb, self.chain_idx = pseudo_chainbreak(idx_pdb, bidx)
+
+        #             # print('LENGTH OF IDX_PDB:', len(idx_pdb))
+        #         #print('idx_pdb, bidx:' , idx_pdb, bidx)
+        #         print('self.chain_idx:', self.chain_idx)
+
+        # #### ADD HERE??? SYMM STUFF!!!#### ADD HERE??? SYMM STUFF!!!#### ADD HERE??? SYMM STUFF!!!#### ADD HERE??? SYMM STUFF!!!
+        # #### ADD HERE??? SYMM STUFF!!!#### ADD HERE??? SYMM STUFF!!!#### ADD HERE??? SYMM STUFF!!!#### ADD HERE??? SYMM STUFF!!!
+        # #### ADD HERE??? SYMM STUFF!!!#### ADD HERE??? SYMM STUFF!!!#### ADD HERE??? SYMM STUFF!!!#### ADD HERE??? SYMM STUFF!!!
 
 
 
@@ -1447,7 +1595,6 @@ class NRBStyleSelfCond(Sampler):
         if self.use_poly_hotspots and (twotemplate and threetemplate):
             polymer_hotspot_templ = self.poly_hotspot_template.reshape(1, 1, *self.poly_hotspot_template.shape).repeat(1,3,1,1)
             rfi.t1d = torch.cat((rfi.t1d, polymer_hotspot_templ), dim=-1)
-
 
 
         rf2aa.tensor_util.to_device(rfi, self.device)
@@ -1568,9 +1715,21 @@ class NRBStyleSelfCond(Sampler):
                 rfi.t2d[mask_2d_final] = t2d_subsymm[:,None,...].expand_as(rfi.t2d)[mask_2d_final]
 
         
-        if self.symmetry is not None:
+        # if self.symmetry is not None:
+        #     idx_pdb = rfi.idx
+        #     idx_pdb, self.chain_idx = self.symmetry.res_idx_procesing(res_idx=idx_pdb)
+        if (self.symmetry is not None) and (not self.inf_conf.pseudo_symmetry):
             idx_pdb = rfi.idx
             idx_pdb, self.chain_idx = self.symmetry.res_idx_procesing(res_idx=idx_pdb)
+        elif (self.symmetry is not None) and (self.inf_conf.pseudo_symmetry):
+            # no chainbreaks etc because pseudocycle 
+            if self.inf_conf.pseudocycle_break is not None:
+                bidx = self.inf_conf.pseudocycle_break # 1-indexed, res_no at chain break
+                idx_pdb, self.chain_idx = pseudo_chainbreak(idx_pdb, bidx)
+        # print('LENGTH OF IDX_PDB:', len(idx_pdb))
+                #print('idx_pdb, bidx:' , idx_pdb, bidx)
+                print('self.chain_idx:', self.chain_idx)
+
 
         # Model Forward
         with torch.no_grad():
@@ -1606,6 +1765,13 @@ class NRBStyleSelfCond(Sampler):
                     kwargs.update({'poly_hotspot_conditioned':self.show_poly_hotspots})
 
 
+                # if self._conf.inference.cyclic_protein_indices: 
+                #     cyclic_reses = torch.ones(rfi.xyz.squeeze().shape[0]).bool().to(rfi.xyz.device)
+                #     cyclic_reses[indep.is_sm] = False
+                # else:
+                #     cyclic_reses = None 
+                # kwargs['cyclic_reses'] = cyclic_reses
+
                 # debugging 
                 # tmp_out = vars(rfi)
                 # for key in tmp_out.keys():
@@ -1619,7 +1785,7 @@ class NRBStyleSelfCond(Sampler):
                     N_cycle = self.inf_conf.refine_recycles
                 else: 
                     N_cycle = 1
-
+                    
                 with torch.cuda.amp.autocast(True):
                     rfo = self.model_adaptor.forward(rfi, N_cycle=N_cycle, return_infer=True, **kwargs)
 
@@ -1749,7 +1915,9 @@ class NRBStyleSelfCond(Sampler):
         # show_seq_condition = (self._conf.inference.update_seq_t and (t <= self._conf.inference.show_seq_under_t))
         # show_seq_condition = self._conf.inference.update_seq_t
         # print('TEMP THING HERE')
-        if self._conf.inference.update_seq_t and (t <= self._conf.inference.show_seq_under_t):
+        # if self._conf.inference.update_seq_t and (t <= self._conf.inference.show_seq_under_t):
+
+        if self._conf.inference.update_seq_t and (t <= self._conf.inference.show_seq_under_t+1):
             show_seq_condition = 'show_full_seq'
         elif self._conf.inference.update_seq_t and (self._conf.diffuser.aa_decode_steps > 0):
             show_seq_condition = 'decode_seq'

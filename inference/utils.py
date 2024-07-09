@@ -848,7 +848,6 @@ class Denoise():
 
             include_motif_sidechains (bool): Provide sidechains of the fixed motif to the model
         """
-
         if origin_before_update:
             COM_ALL = xt[:,1,:].mean(0)
             xt = xt - COM_ALL
@@ -979,7 +978,7 @@ class Denoise():
                     seq_t = torch.argmax(seq_t, dim=-1).cpu() # [L]
                     pseq0 = torch.argmax(pseq0, dim=-1).cpu() # [L]
                     seq_next = self.reveal_residues(seq_t, pseq0, px0, t)
-                    print(seq_next)
+                    # print(seq_next)
                     seq_next = torch.nn.functional.one_hot(
                             seq_next, num_classes=rf2aa.chemical.NAATOKENS).float()
 
@@ -2427,6 +2426,26 @@ def find_breaks(ix, thresh=1):
     breaks = np.where(np.diff(ix) > thresh)[0]
     return np.array(breaks)+1
 
+def pseudo_chainbreak(pdb_idx, break_idx): 
+    """
+    Breaks the chain at desired index 
+    """
+    out_idx = torch.clone(pdb_idx)
+    prev_break_idx = 0
+    Ls = []
+    for curr_break_idx in (str(break_idx).split("-")):
+        curr_break_idx = int(curr_break_idx)
+        #curr_break_idx = curr_break_idx - 1
+        out_idx[:,curr_break_idx:] += 200 # 1-indexed
+        Ls.append(curr_break_idx - prev_break_idx)
+        prev_break_idx = curr_break_idx
+    Ls.append(out_idx.shape[1] - prev_break_idx)
+
+    out_chids = []
+    for i, L in enumerate(Ls):
+        out_chids += [string.ascii_uppercase[i]]*L
+    return out_idx, out_chids
+
 
 def get_breaks(a, cut=1):
     # finds indices where jumps in a occur
@@ -2548,8 +2567,86 @@ def get_contig_chunks(contig_map):
     return contig_chunk_ranges
 
 
+def get_repeat_t2d_mask(L, con_hal_idx0, contig_map, ij_is_visible, nrepeat, supplied_full_contig=True):
+    # """
+    # Given contig map and motif chunks that can see each other, create t2d mask
+    # defining which motif chunks can see each other. 
 
-def get_repeat_t2d_mask(L, con_hal_idx0, contig_map, ij_is_visible, nrepeat, supplied_full_contig):
+    # Parameters:
+    # -----------
+    # L (int): total length of protein being modelled
+    
+    # con_ref_idx0 (torch.tensor): tensor containing zero-indexed indices of where motif chunks are 
+    #                              going to be placed in the output protein.
+
+    # ij_is_visible (list): List of tuples, each tuple defines a set of motif chunks that can see each other.
+
+    # nrepeat (int): Number of repeat units in repeat protein being modelled 
+    # """
+    # assert all([type(x) == tuple for x in ij_is_visible]), 'ij_is_visible must be list of tuples'
+    # assert L%nrepeat == 0
+    # Lasu = L // nrepeat
+
+    # # # (1) Define matrix where each row/col is a motif chunk, entries are 1 if motif chunks can see each other
+    # # #     and 0 otherwise.
+
+    # # # AF : break regions into the start stop indices based on both template breaks and chain breaks
+    # # # this just gets the breaks by mask regions between motifs
+    # # mask_breaks = get_breaks(con_hal_idx0)
+    # # templ_range_inds = find_template_ranges(con_hal_idx0, return_inds=False)
+
+    # # # add the breaks from the chain jumps
+    # # if full_complex_idx0 is not None:
+    # #     chain_breaks = get_breaks(full_complex_idx0)
+    # #     chain_range_inds = find_template_ranges(full_complex_idx0, return_inds=True)
+    # #     # merge these into a list of sub-chunk tuples for template region locations
+    # #     chunk_range_inds = merge_regions(templ_range_inds, chain_range_inds)
+    # # else:
+    # #     chunk_range_inds = templ_range_inds
+
+
+    # chunk_range_inds = get_contig_chunks(contig_map)
+    # # now we have the complete con_hal_idx0 including templates that are separated by chain breaks!
+    # true_con_hal_idx0 = torch.tensor([ind for start,end in chunk_range_inds for ind in range(start,end+1)])
+
+    # nchunk = len(chunk_range_inds)
+    # nchunk_total = nchunk * nrepeat
+
+    # # initially empty
+    # chunk_ij_visible = torch.eye(nchunk_total)
+    # # fill in user-defined visibility
+    # for S in ij_is_visible:
+    #     for i in S:
+    #         for j in S: 
+    #             if i == j:
+    #                 continue # already visible bc eye 
+    #             chunk_ij_visible[i,j] = 1
+    #             chunk_ij_visible[j,i] = 1
+
+    # # chunk_range_inds_hal, mask_1d_hal = iu.get_hal_contig_ranges(contig_map.contigs, contig_map.inpaint_hal)
+    # # (2) Fill in LxL matrix with coarse mask info
+    # con_hal_idx0_full = torch.cat([true_con_hal_idx0 + i*Lasu for i in range(nrepeat)])
+    # chunk_range_inds_full = [(R[0] + i*Lasu, R[1] + i*Lasu) for i in range(nrepeat) for R in chunk_range_inds]
+    
+
+    # mask2d = torch.zeros(L, L)
+    # set_trace()
+    # # make 1D array designating which chunks are motif
+    # is_motif = torch.zeros(L)
+    # is_motif[con_hal_idx0_full] = 1 
+    # # fill in 2d mask
+    # for i in range(len(chunk_range_inds_full)):
+    #     for j in range(len(chunk_range_inds_full)):
+
+    #         visible = chunk_ij_visible[i,j] 
+
+    #         if visible: 
+    #             start_i, end_i = chunk_range_inds_full[i]
+    #             start_j, end_j = chunk_range_inds_full[j]
+    #             mask2d[start_i:end_i+1, start_j:end_j+1] = 1
+    #             mask2d[start_j:end_j+1, start_i:end_i+1] = 1
+
+    # return mask2d, is_motif
     """
     Given contig map and motif chunks that can see each other, create t2d mask
     defining which motif chunks can see each other. 
@@ -2569,31 +2666,13 @@ def get_repeat_t2d_mask(L, con_hal_idx0, contig_map, ij_is_visible, nrepeat, sup
     assert L%nrepeat == 0
     Lasu = L // nrepeat
 
-    # # (1) Define matrix where each row/col is a motif chunk, entries are 1 if motif chunks can see each other
-    # #     and 0 otherwise.
-
-    # # AF : break regions into the start stop indices based on both template breaks and chain breaks
-    # # this just gets the breaks by mask regions between motifs
-    # mask_breaks = get_breaks(con_hal_idx0)
-    # templ_range_inds = find_template_ranges(con_hal_idx0, return_inds=False)
-
-    # # add the breaks from the chain jumps
-    # if full_complex_idx0 is not None:
-    #     chain_breaks = get_breaks(full_complex_idx0)
-    #     chain_range_inds = find_template_ranges(full_complex_idx0, return_inds=True)
-    #     # merge these into a list of sub-chunk tuples for template region locations
-    #     chunk_range_inds = merge_regions(templ_range_inds, chain_range_inds)
-    # else:
-    #     chunk_range_inds = templ_range_inds
-
-
-    chunk_range_inds = get_contig_chunks(contig_map)
-    # now we have the complete con_hal_idx0 including templates that are separated by chain breaks!
-    true_con_hal_idx0 = torch.tensor([ind for start,end in chunk_range_inds for ind in range(start,end+1)])
-
-    nchunk = len(chunk_range_inds)
+    # (1) Define matrix where each row/col is a motif chunk, entries are 1 if motif chunks can see each other
+    #     and 0 otherwise.
+    breaks = get_breaks(con_hal_idx0)
+    nchunk = len(breaks) + 1
     nchunk_total = nchunk * nrepeat
 
+    
     # initially empty
     chunk_ij_visible = torch.eye(nchunk_total)
     # fill in user-defined visibility
@@ -2605,32 +2684,39 @@ def get_repeat_t2d_mask(L, con_hal_idx0, contig_map, ij_is_visible, nrepeat, sup
                 chunk_ij_visible[i,j] = 1
                 chunk_ij_visible[j,i] = 1
 
-    # chunk_range_inds_hal, mask_1d_hal = iu.get_hal_contig_ranges(contig_map.contigs, contig_map.inpaint_hal)
+
     # (2) Fill in LxL matrix with coarse mask info
-    con_hal_idx0_full = torch.cat([true_con_hal_idx0 + i*Lasu for i in range(nrepeat)])
-    chunk_range_inds_full = [(R[0] + i*Lasu, R[1] + i*Lasu) for i in range(nrepeat) for R in chunk_range_inds]
-    
+    L_contigs = len(con_hal_idx0)
+    if not supplied_full_contig:
+        con_hal_idx0_full = torch.cat([con_hal_idx0 + i*Lasu for i in range(nrepeat)])
+    else: 
+        con_hal_idx0_full = con_hal_idx0
+
 
     mask2d = torch.zeros(L, L)
-    
+
     # make 1D array designating which chunks are motif
     is_motif = torch.zeros(L)
     is_motif[con_hal_idx0_full] = 1 
+    breaks2 = find_true_chunks_indices(is_motif)
+
     # fill in 2d mask
-    for i in range(len(chunk_range_inds_full)):
-        for j in range(len(chunk_range_inds_full)):
+    for i in range(len(breaks2)):
+        for j in range(len(breaks2)):
 
             visible = chunk_ij_visible[i,j] 
 
             if visible: 
-                start_i, end_i = chunk_range_inds_full[i]
-                start_j, end_j = chunk_range_inds_full[j]
+                start_i, end_i = breaks2[i]
+                start_j, end_j = breaks2[j]
                 mask2d[start_i:end_i+1, start_j:end_j+1] = 1
                 mask2d[start_j:end_j+1, start_i:end_i+1] = 1
 
+
     return mask2d, is_motif
 
-def parse_ij_get_repeat_mask(ij_visible, L, n_repeat, con_hal_idx0, supplied_full_contig, full_complex_idx0):
+
+def parse_ij_get_repeat_mask(ij_visible, L, n_repeat, con_hal_idx0, supplied_full_contig, full_complex_idx0, contig_map):
     """
     Helper function for getting repeat protein mask 2d info
     """
@@ -2658,7 +2744,9 @@ def parse_ij_get_repeat_mask(ij_visible, L, n_repeat, con_hal_idx0, supplied_ful
 
 
     # create a mask of which chunks are visible to each other compatible with contigs/con_hal_idx0
-    mask_t2d, _ = get_repeat_t2d_mask(L, con_hal_idx0, ij_visible_int, n_repeat, full_complex_idx0, supplied_full_contig)
+                  # get_repeat_t2d_mask(L, con_hal_idx0, contig_map, ij_is_visible, nrepeat, supplied_full_contig)
+    
+    mask_t2d, _ = get_repeat_t2d_mask(L, con_hal_idx0, contig_map, ij_visible_int, n_repeat, supplied_full_contig=supplied_full_contig)
 
     return mask_t2d
 
@@ -2829,14 +2917,55 @@ def ss_pairs_to_matrix(pair_input, index_map_dict, ss_adj_mat, ss_pair_ori_list=
         bounds_i = [index_map_dict[chn_i][int(_)] for _ in region_i[1:].split('-')]
         start_i, stop_i = min(bounds_i), max(bounds_i)
 
-
-
         chn_j = region_j[0]
         bounds_j = [index_map_dict[chn_j][int(_)] for _ in region_j[1:].split('-')]
         start_j, stop_j = min(bounds_j), max(bounds_j)
 
+        range_i = np.arange(start_i, stop_i+1) # Always orient first stretch in fwd direction
 
+        if not ss_pair_ori=='A': # If pair is not antiparallel, keep them both in fwd direction (parallel)
+            range_j = np.arange(start_j, stop_j+1)
+        else: # Otherwise default to antiparallel
+            range_j = np.arange(start_j, stop_j+1)[ : :-1]
         
+        # Ensure that the backgdrop of the paired region is ss-mask token:
+        ss_adj_mat[start_i:stop_i, start_j:stop_j] = 2
+        ss_adj_mat[start_j:stop_j, start_i:stop_i] = 2
+        # ^^^ IS THIS THE RIGHT THING TO DO???
+
+        # Set the pairs as the ss-pair token
+        for pair_ind_i, pair_ind_j in zip(range_i, range_j):
+            ss_adj_mat[pair_ind_i, pair_ind_j] = 1
+            ss_adj_mat[pair_ind_j, pair_ind_i] = 1
+
+
+    return ss_adj_mat
+
+
+
+
+def ss_pairs_to_matrix_v2(sampler):
+
+    pair_matrix = torch.zeros((sampler.length_init, sampler.length_init)).bool()
+
+    # User can specify the strand orientaton of the pairs:
+    if sampler._conf.scaffoldguided.target_ss_pair_ori is not None:
+        ss_pair_ori_list = sampler._conf.scaffoldguided.target_ss_pair_ori
+    else:# without user spec, assume antiparallel for each strand contact.
+        ss_pair_ori_list = ['A' for _ in range(len(sampler._conf.scaffoldguided.target_ss_pairs))]
+
+    for ss_pair_ori, ss_pair_string in zip(ss_pair_ori_list, sampler._conf.scaffoldguided.target_ss_pairs):
+
+        region_i, region_j = ss_pair_string.split(',')
+
+        chn_i = region_i[0]
+        bounds_i = [sampler.index_map_dict[chn_i][int(_)] for _ in region_i[1:].split('-')]
+        start_i, stop_i = min(bounds_i), max(bounds_i)
+
+        chn_j = region_j[0]
+        bounds_j = [sampler.index_map_dict[chn_j][int(_)] for _ in region_j[1:].split('-')]
+        start_j, stop_j = min(bounds_j), max(bounds_j)
+
         range_i = np.arange(start_i, stop_i+1) # Always orient first stretch in fwd direction
 
         if not ss_pair_ori=='A': # If pair is not antiparallel, keep them both in fwd direction (parallel)
@@ -2845,13 +2974,13 @@ def ss_pairs_to_matrix(pair_input, index_map_dict, ss_adj_mat, ss_pair_ori_list=
             range_j = np.arange(start_j, stop_j+1)[ : :-1]
         
 
-
+        # Set the pairs as the ss-pair token
         for pair_ind_i, pair_ind_j in zip(range_i, range_j):
-            ss_adj_mat[pair_ind_i, pair_ind_j] = 1
-            ss_adj_mat[pair_ind_j, pair_ind_i] = 1
+            pair_matrix[pair_ind_i, pair_ind_j] = True
+            pair_matrix[pair_ind_j, pair_ind_i] = True
 
 
-    return ss_adj_mat
+    return pair_matrix
 
 
 def force_loops(force_loops_list, index_map_dict, ss_adj_mat):
@@ -2870,6 +2999,24 @@ def force_loops(force_loops_list, index_map_dict, ss_adj_mat):
 
     return ss_adj_mat
 
+def force_loops_v2(sampler):
+    # force_loops_list, sampler._conf.scaffoldguided.force_loops_list
+    # index_map_dict,   sampler.index_map_dict
+    # ss_adj_mat,       sampler.target_ss_matrix
+
+    loop_vec = torch.zeros((sampler.length_init)).bool()
+    for loop_range_string in sampler._conf.scaffoldguided.force_loops_list:
+        # region_i, region_j = loop_range_string.split(',')
+        chn_i = loop_range_string[0]
+        bounds_i = [sampler.index_map_dict[chn_i][int(_)] for _ in loop_range_string[1:].split('-')]
+        start_i, stop_i = min(bounds_i), max(bounds_i)
+        range_i = np.arange(start_i, stop_i+1)
+
+        for resi in range_i:
+            loop_vec[resi] = True
+
+    return loop_vec
+
 def force_multi_contacts(force_multi_contact_list, index_map_dict, ss_adj_mat):
 
     for contact_set_string in force_multi_contact_list:
@@ -2884,6 +3031,29 @@ def force_multi_contacts(force_multi_contact_list, index_map_dict, ss_adj_mat):
 
 
     return ss_adj_mat
+
+def force_multi_contacts_v2(sampler):
+
+    # force_multi_contact_list,  sampler._conf.scaffoldguided.force_multi_contacts
+    # index_map_dict,            sampler.index_map_dict
+    # ss_adj_mat                 sampler.target_ss_matrix
+
+    pair_matrix = torch.zeros((sampler.length_init, sampler.length_init)).bool()
+
+    for contact_set_string in sampler._conf.scaffoldguided.force_multi_contacts:
+        contact_set = contact_set_string.split(',')
+        contact_pair_list = [combo for combo in combinations(contact_set,2)]
+        for resi_i, resi_j in contact_pair_list:
+            idx_i = sampler.index_map_dict[resi_i[0]][int(resi_i[1:])]
+            idx_j = sampler.index_map_dict[resi_j[0]][int(resi_j[1:])]
+
+            pair_matrix[idx_i,idx_j] = True
+            pair_matrix[idx_j,idx_i] = True
+            # sampler.target_ss_matrix[idx_i,idx_j] = 1
+            # sampler.target_ss_matrix[idx_j,idx_i] = 1
+
+
+    return pair_matrix
       
 def ss_matrix_to_t2d_feats(ss_matrix):
 
@@ -2893,6 +3063,166 @@ def ss_matrix_to_t2d_feats(ss_matrix):
 
     return ss_templ_onehot
     
+
+def get_target_ss_matrix(sampler):
+
+
+    pair_matrix = torch.zeros((sampler.length_init, sampler.length_init)).bool()
+    loop_vector = torch.zeros(sampler.length_init).bool()
+    mask_vector = torch.zeros(sampler.length_init).bool()
+
+    # first modification: check for ss-string specification:
+    if (sampler._conf.scaffoldguided.target_ss_string_list is not None) or (sampler._conf.scaffoldguided.target_ss_string is not None):
+
+        pair_matrix_list = []
+        loop_region_list = []
+        ss_loc_list = []
+
+        if sampler._conf.scaffoldguided.target_ss_string_list is not None:
+            for string_spec_i in sampler._conf.scaffoldguided.target_ss_string_list:
+                ss_loc_i, ss_string_i = string_spec_i.split(':')
+
+                bp_partners_2d = torch.from_numpy(sstr_to_matrix(ss_string_i, only_basepairs=True)).bool()
+                loop_regions = torch.tensor([s_i=='.' for s_i in ss_string_i])
+                ss_target_loc = tuple(sampler.index_map_dict[ss_loc_i[0]][int(_)] for _ in ss_loc_i[1:].split('-') )
+
+                pair_matrix_list.append(bp_partners_2d)
+                loop_region_list.append(loop_regions)
+                ss_loc_list.append(ss_target_loc)
+
+        
+        elif sampler._conf.scaffoldguided.target_ss_string is not None:
+            # Or just replace it with full ss string
+            bp_partners_2d = torch.from_numpy(sstr_to_matrix(sampler._conf.scaffoldguided.target_ss_string, only_basepairs=True)).bool()
+            loop_regions = torch.tensor([s_i=='.' for s_i in sampler._conf.scaffoldguided.target_ss_string])
+            ss_target_loc = (0,sampler.length_init)
+            
+            pair_matrix_list.append(bp_partners_2d)
+            loop_region_list.append(loop_regions)
+            ss_loc_list.append(ss_target_loc)
+
+        # Now loop through all the different sub-ss-specs we have made and add them to the pair_matrix and loop_vector
+        for bp_partners_i, loop_regions_i, (from_i,to_i) in zip(pair_matrix_list, loop_region_list, ss_loc_list):
+            
+            full_loop_regions_i = torch.zeros(sampler.length_init).bool()
+            full_loop_regions_i[from_i:to_i+1] = loop_regions_i
+            pair_matrix[from_i:to_i+1,from_i:to_i+1][bp_partners_i] = True
+            loop_vector[full_loop_regions_i] = True
+
+            # sampler.target_ss_matrix[full_loop_regions_i,:] = 0
+            # sampler.target_ss_matrix[:,full_loop_regions_i] = 0
+            # sampler.target_ss_matrix[from_i:to_i+1,from_i:to_i+1][bp_partners_i] = 1
+            
+    # second: check for basepair range specifications (best way to specify):
+    if sampler._conf.scaffoldguided.target_ss_pairs is not None:
+        # Here we add paired regions to the target ss matrix
+        # Get this pair spec:
+        target_ss_pair_mat = ss_pairs_to_matrix_v2(sampler)
+        pair_matrix[target_ss_pair_mat] = True
+
+    # Now we can add force loops, or triple+ contacts
+    # Force loops:
+    if sampler._conf.scaffoldguided.force_loops_list is not None:
+
+        force_loop_vec = force_loops_v2(sampler)
+        loop_vector[force_loop_vec] = True
+
+    # Force the multi-contact:
+    if sampler._conf.scaffoldguided.force_multi_contacts is not None:
+        multi_contact_mat = force_multi_contacts_v2(sampler)
+        pair_matrix[multi_contact_mat] = True
+
+    pair_vector = pair_matrix.any(dim=0)
+    loop_vector[pair_vector] = False # Set loops to False if there are *ANY* base pairs involving that position
+
+
+    # IMPORTANT!!!!!  IMPORTANT!!!!!  IMPORTANT!!!!!  IMPORTANT!!!!!  IMPORTANT!!!!!  IMPORTANT!!!!!
+    # IMPORTANT!!!!!  IMPORTANT!!!!!  IMPORTANT!!!!!  IMPORTANT!!!!!  IMPORTANT!!!!!  IMPORTANT!!!!!
+    #   During training, I apply striped masks across matrix as last step. 
+    #   Maybe that means I should apply stripe mask as last step here too?
+    #   IN THEORY IT SHOULD GIVE SAME EXACT MATRIX EITHER WAY, 
+    #   but it shouldnt be the "2" stripe from the pair vector, because that is not a fully masked region.
+    #   it actually needs to be the logical nor of the pair_vector and the loop_vector.
+    # IMPORTANT!!!!!  IMPORTANT!!!!!  IMPORTANT!!!!!  IMPORTANT!!!!!  IMPORTANT!!!!!  IMPORTANT!!!!!
+    # IMPORTANT!!!!!  IMPORTANT!!!!!  IMPORTANT!!!!!  IMPORTANT!!!!!  IMPORTANT!!!!!  IMPORTANT!!!!!
+
+
+
+    # By default fall back to masking everything:
+    # We initialize the ss_matrix as fully masked, then we modify it as we go
+    # Legacy way of setting up matrix because of how I used to train: 
+    # (1) initialize everything as "2" (mask)
+    # (2) set stripes of "0" at all loop and pair locations
+    # (3) pairs i,j elements are set to "1"
+
+    # target_ss_matrix = (2*torch.ones((sampler.length_init,sampler.length_init))).long() # (1)
+    # target_ss_matrix[loop_vector,:] = 0 # (2i)
+    # target_ss_matrix[:,loop_vector] = 0 # (2j)
+    # target_ss_matrix[pair_matrix] = 1   # (3)
+
+    # HOW I USED TO TRAIN: SET BACKDROP OF PAIRED REGIONS TO ZERO:
+    if sampler._conf.scaffoldguided.target_ss_matrix_loop_backdrop:
+        print('USING LOOP BACKDROP NA SS T2D')
+        target_ss_matrix = (2*torch.ones((sampler.length_init,sampler.length_init))).long() # (1)
+        target_ss_matrix[loop_vector,:] = 0 # (2i)
+        target_ss_matrix[:,loop_vector] = 0 # (2j)
+        target_ss_matrix[pair_vector,:] = 0 # (2i)
+        target_ss_matrix[:,pair_vector] = 0 # (2j)
+        target_ss_matrix[pair_matrix] = 1   # (3)
+    else:
+        print('USING MASK BACKDROP NA SS T2D')
+        # target_ss_matrix = (2*torch.ones((sampler.length_init,sampler.length_init))).long() # (1)
+        # target_ss_matrix[loop_vector,:] = 0 # (2i)
+        # target_ss_matrix[:,loop_vector] = 0 # (2j)
+        # target_ss_matrix[pair_matrix] = 1   # (3)
+        target_ss_matrix = (2*torch.ones((sampler.length_init,sampler.length_init))).long() # (1)
+        target_ss_matrix[pair_vector,:] = 2 # (2i)
+        target_ss_matrix[:,pair_vector] = 2 # (2j)
+        target_ss_matrix[loop_vector,:] = 0 # (3i)
+        target_ss_matrix[:,loop_vector] = 0 # (3j)
+        target_ss_matrix[pair_matrix] = 1   # (3)
+
+    
+
+    # Future way of setting up matrix based on how I should train in the future: 
+    # (1) initialize everything as "2" (mask)
+    # (2) set stripes of "2" at all pair locations
+    # (3) set stripes of "0" at all loop locations
+    # (4) pairs i,j elements are set to "1"
+
+    # target_ss_matrix = (2*torch.ones((sampler.length_init,sampler.length_init))).long() # (1)
+    # target_ss_matrix[pair_vector,:] = 2 # (2i)
+    # target_ss_matrix[:,pair_vector] = 2 # (2j)
+    # target_ss_matrix[loop_vector,:] = 0 # (3i)
+    # target_ss_matrix[:,loop_vector] = 0 # (3j)
+    # target_ss_matrix[pair_matrix] = 1   # (3)
+
+    # set_trace()
+
+
+    # Save the matrix image if we want:
+    # if sampler._conf.scaffoldguided.save_ss_matrix_png and (t==sampler._conf.diffuser.T):
+    if sampler._conf.scaffoldguided.save_ss_matrix_png:
+        print('SAVING SS MATRIX PIC!')
+        output_pic_filapath = sampler._conf.inference.output_prefix+'.png'
+        output_dirpath = os.path.dirname(output_pic_filapath)
+
+        if not (os.path.exists(output_dirpath) and os.path.isdir(output_dirpath)):
+            os.mkdir(output_dirpath)
+
+        fig, ax = plt.subplots(1,1,figsize=(5,5), dpi=300)
+        ax.imshow(np.array(target_ss_matrix))
+        plt.tight_layout()
+        plt.savefig(output_pic_filapath, bbox_inches='tight', dpi='figure')
+        plt.close()
+
+
+
+    return target_ss_matrix
+
+
+    
+
 
 get_bp_partner = {
                 'dna': {
