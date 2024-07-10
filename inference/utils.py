@@ -2568,85 +2568,6 @@ def get_contig_chunks(contig_map):
 
 
 def get_repeat_t2d_mask(L, con_hal_idx0, contig_map, ij_is_visible, nrepeat, supplied_full_contig=True):
-    # """
-    # Given contig map and motif chunks that can see each other, create t2d mask
-    # defining which motif chunks can see each other. 
-
-    # Parameters:
-    # -----------
-    # L (int): total length of protein being modelled
-    
-    # con_ref_idx0 (torch.tensor): tensor containing zero-indexed indices of where motif chunks are 
-    #                              going to be placed in the output protein.
-
-    # ij_is_visible (list): List of tuples, each tuple defines a set of motif chunks that can see each other.
-
-    # nrepeat (int): Number of repeat units in repeat protein being modelled 
-    # """
-    # assert all([type(x) == tuple for x in ij_is_visible]), 'ij_is_visible must be list of tuples'
-    # assert L%nrepeat == 0
-    # Lasu = L // nrepeat
-
-    # # # (1) Define matrix where each row/col is a motif chunk, entries are 1 if motif chunks can see each other
-    # # #     and 0 otherwise.
-
-    # # # AF : break regions into the start stop indices based on both template breaks and chain breaks
-    # # # this just gets the breaks by mask regions between motifs
-    # # mask_breaks = get_breaks(con_hal_idx0)
-    # # templ_range_inds = find_template_ranges(con_hal_idx0, return_inds=False)
-
-    # # # add the breaks from the chain jumps
-    # # if full_complex_idx0 is not None:
-    # #     chain_breaks = get_breaks(full_complex_idx0)
-    # #     chain_range_inds = find_template_ranges(full_complex_idx0, return_inds=True)
-    # #     # merge these into a list of sub-chunk tuples for template region locations
-    # #     chunk_range_inds = merge_regions(templ_range_inds, chain_range_inds)
-    # # else:
-    # #     chunk_range_inds = templ_range_inds
-
-
-    # chunk_range_inds = get_contig_chunks(contig_map)
-    # # now we have the complete con_hal_idx0 including templates that are separated by chain breaks!
-    # true_con_hal_idx0 = torch.tensor([ind for start,end in chunk_range_inds for ind in range(start,end+1)])
-
-    # nchunk = len(chunk_range_inds)
-    # nchunk_total = nchunk * nrepeat
-
-    # # initially empty
-    # chunk_ij_visible = torch.eye(nchunk_total)
-    # # fill in user-defined visibility
-    # for S in ij_is_visible:
-    #     for i in S:
-    #         for j in S: 
-    #             if i == j:
-    #                 continue # already visible bc eye 
-    #             chunk_ij_visible[i,j] = 1
-    #             chunk_ij_visible[j,i] = 1
-
-    # # chunk_range_inds_hal, mask_1d_hal = iu.get_hal_contig_ranges(contig_map.contigs, contig_map.inpaint_hal)
-    # # (2) Fill in LxL matrix with coarse mask info
-    # con_hal_idx0_full = torch.cat([true_con_hal_idx0 + i*Lasu for i in range(nrepeat)])
-    # chunk_range_inds_full = [(R[0] + i*Lasu, R[1] + i*Lasu) for i in range(nrepeat) for R in chunk_range_inds]
-    
-
-    # mask2d = torch.zeros(L, L)
-    # set_trace()
-    # # make 1D array designating which chunks are motif
-    # is_motif = torch.zeros(L)
-    # is_motif[con_hal_idx0_full] = 1 
-    # # fill in 2d mask
-    # for i in range(len(chunk_range_inds_full)):
-    #     for j in range(len(chunk_range_inds_full)):
-
-    #         visible = chunk_ij_visible[i,j] 
-
-    #         if visible: 
-    #             start_i, end_i = chunk_range_inds_full[i]
-    #             start_j, end_j = chunk_range_inds_full[j]
-    #             mask2d[start_i:end_i+1, start_j:end_j+1] = 1
-    #             mask2d[start_j:end_j+1, start_i:end_i+1] = 1
-
-    # return mask2d, is_motif
     """
     Given contig map and motif chunks that can see each other, create t2d mask
     defining which motif chunks can see each other. 
@@ -2666,13 +2587,31 @@ def get_repeat_t2d_mask(L, con_hal_idx0, contig_map, ij_is_visible, nrepeat, sup
     assert L%nrepeat == 0
     Lasu = L // nrepeat
 
-    # (1) Define matrix where each row/col is a motif chunk, entries are 1 if motif chunks can see each other
-    #     and 0 otherwise.
-    breaks = get_breaks(con_hal_idx0)
-    nchunk = len(breaks) + 1
+    # # (1) Define matrix where each row/col is a motif chunk, entries are 1 if motif chunks can see each other
+    # #     and 0 otherwise.
+
+    # # AF : break regions into the start stop indices based on both template breaks and chain breaks
+    # # this just gets the breaks by mask regions between motifs
+    # mask_breaks = get_breaks(con_hal_idx0)
+    # templ_range_inds = find_template_ranges(con_hal_idx0, return_inds=False)
+
+    # # add the breaks from the chain jumps
+    # if full_complex_idx0 is not None:
+    #     chain_breaks = get_breaks(full_complex_idx0)
+    #     chain_range_inds = find_template_ranges(full_complex_idx0, return_inds=True)
+    #     # merge these into a list of sub-chunk tuples for template region locations
+    #     chunk_range_inds = merge_regions(templ_range_inds, chain_range_inds)
+    # else:
+    #     chunk_range_inds = templ_range_inds
+
+
+    chunk_range_inds = get_contig_chunks(contig_map)
+    # now we have the complete con_hal_idx0 including templates that are separated by chain breaks!
+    true_con_hal_idx0 = torch.tensor([ind for start,end in chunk_range_inds for ind in range(start,end+1)])
+
+    nchunk = len(chunk_range_inds)
     nchunk_total = nchunk * nrepeat
 
-    
     # initially empty
     chunk_ij_visible = torch.eye(nchunk_total)
     # fill in user-defined visibility
@@ -2684,36 +2623,99 @@ def get_repeat_t2d_mask(L, con_hal_idx0, contig_map, ij_is_visible, nrepeat, sup
                 chunk_ij_visible[i,j] = 1
                 chunk_ij_visible[j,i] = 1
 
-
+    # chunk_range_inds_hal, mask_1d_hal = iu.get_hal_contig_ranges(contig_map.contigs, contig_map.inpaint_hal)
     # (2) Fill in LxL matrix with coarse mask info
-    L_contigs = len(con_hal_idx0)
-    if not supplied_full_contig:
-        con_hal_idx0_full = torch.cat([con_hal_idx0 + i*Lasu for i in range(nrepeat)])
-    else: 
-        con_hal_idx0_full = con_hal_idx0
-
+    con_hal_idx0_full = torch.cat([true_con_hal_idx0 + i*Lasu for i in range(nrepeat)])
+    chunk_range_inds_full = [(R[0] + i*Lasu, R[1] + i*Lasu) for i in range(nrepeat) for R in chunk_range_inds]
+    
 
     mask2d = torch.zeros(L, L)
-
+    # set_trace()
     # make 1D array designating which chunks are motif
     is_motif = torch.zeros(L)
     is_motif[con_hal_idx0_full] = 1 
-    breaks2 = find_true_chunks_indices(is_motif)
-
     # fill in 2d mask
-    for i in range(len(breaks2)):
-        for j in range(len(breaks2)):
+    for i in range(len(chunk_range_inds_full)):
+        for j in range(len(chunk_range_inds_full)):
 
             visible = chunk_ij_visible[i,j] 
 
             if visible: 
-                start_i, end_i = breaks2[i]
-                start_j, end_j = breaks2[j]
+                start_i, end_i = chunk_range_inds_full[i]
+                start_j, end_j = chunk_range_inds_full[j]
                 mask2d[start_i:end_i+1, start_j:end_j+1] = 1
                 mask2d[start_j:end_j+1, start_i:end_i+1] = 1
 
-
     return mask2d, is_motif
+
+# def get_repeat_t2d_mask(L, con_hal_idx0, contig_map, ij_is_visible, nrepeat, supplied_full_contig=True):
+#     """
+#     Given contig map and motif chunks that can see each other, create t2d mask
+#     defining which motif chunks can see each other. 
+
+#     Parameters:
+#     -----------
+#     L (int): total length of protein being modelled
+    
+#     con_ref_idx0 (torch.tensor): tensor containing zero-indexed indices of where motif chunks are 
+#                                  going to be placed in the output protein.
+
+#     ij_is_visible (list): List of tuples, each tuple defines a set of motif chunks that can see each other.
+
+#     nrepeat (int): Number of repeat units in repeat protein being modelled 
+#     """
+#     assert all([type(x) == tuple for x in ij_is_visible]), 'ij_is_visible must be list of tuples'
+#     assert L%nrepeat == 0
+#     Lasu = L // nrepeat
+
+#     # (1) Define matrix where each row/col is a motif chunk, entries are 1 if motif chunks can see each other
+#     #     and 0 otherwise.
+#     breaks = get_breaks(con_hal_idx0)
+#     nchunk = len(breaks) + 1
+#     nchunk_total = nchunk * nrepeat
+
+    
+#     # initially empty
+#     chunk_ij_visible = torch.eye(nchunk_total)
+#     # fill in user-defined visibility
+#     for S in ij_is_visible:
+#         for i in S:
+#             for j in S: 
+#                 if i == j:
+#                     continue # already visible bc eye 
+#                 chunk_ij_visible[i,j] = 1
+#                 chunk_ij_visible[j,i] = 1
+
+
+#     # (2) Fill in LxL matrix with coarse mask info
+#     L_contigs = len(con_hal_idx0)
+#     if not supplied_full_contig:
+#         con_hal_idx0_full = torch.cat([con_hal_idx0 + i*Lasu for i in range(nrepeat)])
+#     else: 
+#         con_hal_idx0_full = con_hal_idx0
+
+
+#     mask2d = torch.zeros(L, L)
+
+#     # make 1D array designating which chunks are motif
+#     is_motif = torch.zeros(L)
+#     is_motif[con_hal_idx0_full] = 1 
+#     breaks2 = find_true_chunks_indices(is_motif)
+
+#     # fill in 2d mask
+#     for i in range(len(breaks2)):
+#         for j in range(len(breaks2)):
+
+#             visible = chunk_ij_visible[i,j] 
+
+#             if visible: 
+#                 start_i, end_i = breaks2[i]
+#                 start_j, end_j = breaks2[j]
+#                 mask2d[start_i:end_i+1, start_j:end_j+1] = 1
+#                 mask2d[start_j:end_j+1, start_i:end_i+1] = 1
+
+
+#     return mask2d, is_motif
 
 
 def parse_ij_get_repeat_mask(ij_visible, L, n_repeat, con_hal_idx0, supplied_full_contig, full_complex_idx0, contig_map):
