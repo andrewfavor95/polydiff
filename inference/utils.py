@@ -2723,7 +2723,8 @@ def parse_ij_get_repeat_mask(ij_visible, L, n_repeat, con_hal_idx0, supplied_ful
     Helper function for getting repeat protein mask 2d info
     """
 
-    abet = 'abcdefghijklmnopqrstuvwxyz'
+    # abet = 'abcdefghijklmnopqrstuvwxyz'
+    abet = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ'
     abet = [a for a in abet]
     abet2num = {a:i for i,a in enumerate(abet)}
 

@@ -1270,7 +1270,7 @@ class NRBStyleSelfCond(Sampler):
         and potentially correct ij_visible param, in case we want unconditional.
 
         """
-        abet = 'abcdefghijklmnopqrstuvwxyz'
+        abet = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ'
         ### do we want to split chunks at chain breaks?
         if self.inf_conf['chainbreak_chunks']:
             full_complex_idx0 = torch.tensor(self.contig_map.rf, dtype=torch.int64)
@@ -1366,7 +1366,7 @@ class NRBStyleSelfCond(Sampler):
 
         ### is_protein_motif ###
         ########################
-        abet = 'abcdefghijklmnopqrstuvwxyz'
+        abet = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ'
         abet = [a for a in abet]
         abet2num = {a:i for i,a in enumerate(abet)} 
 
