@@ -4,7 +4,7 @@ import numpy as np
 from util import generate_Cbeta
 from icecream import ic
 import rf2aa
-
+from pdb import set_trace
 class Potential:
     '''
         Interface class that defines the functions a potential must implement
@@ -325,7 +325,7 @@ def make_contact_matrix(nchain, contact_string=None):
     
     contacts   = np.zeros((nchain,nchain))
     written    = np.zeros((nchain,nchain))
-    
+
     contact_list = contact_string.split(',') 
     for c in contact_list:
         if not len(c) == 3:
@@ -357,7 +357,7 @@ class olig_contacts(Potential):
                  contact_matrix, 
                  weight_intra=1, 
                  weight_inter=1,
-                 r_0=8, d_0=2):
+                 r_0=8, d_0=2, ind_spec=None, chain_ind_dict=None):
         """
         Parameters:
             chain_lengths (list, required): List of chain lengths, length is (Nchains)
@@ -369,6 +369,7 @@ class olig_contacts(Potential):
 
             weight (int/float, optional): Scaling/weighting factor
         """
+
         print('This is chain contact matrix you are using')
         ic(contact_matrix)
         self.contact_matrix = contact_matrix
@@ -376,6 +377,8 @@ class olig_contacts(Potential):
         self.weight_inter = weight_inter 
         self.r_0 = r_0
         self.d_0 = d_0
+        self.ind_spec = ind_spec
+        self.chain_ind_dict = chain_ind_dict
 
         # check contact matrix only contains valid entries 
         assert all([i in [-1,0,1] for i in contact_matrix.flatten()]), 'Contact matrix must contain only 0, 1, or -1 in entries'
@@ -418,29 +421,76 @@ class olig_contacts(Potential):
 
         all_contacts = 0
         start = 0
-        for i in range(self.nchain):
-            for j in range(self.nchain):
-                # only compute for upper triangle, disregard zeros in contact matrix 
-                if (i <= j) and (self.contact_matrix[i,j] != 0):
 
-                    # get the indices for these two chains 
-                    idx_i = self._get_idx(i,L)
-                    idx_j = self._get_idx(j,L)
+        if self.ind_spec is not None:
+            # print('IN olig_contacts')
+            
+            for chains_ij, ranges_ij, sign_ij in  self.ind_spec:
+                i,j = chains_ij
 
-                    Ca_i = xyz[idx_i,1]  # slice out crds for this chain 
-                    Ca_j = xyz[idx_j,1]  # slice out crds for that chain 
-                    dgram           = torch.cdist(Ca_i[None,...].contiguous(), Ca_j[None,...].contiguous(), p=2) # [1,Lb,Lb]
+                range_i, range_j = ranges_ij
 
-                    divide_by_r_0   = (dgram - self.d_0) / self.r_0
-                    numerator       = torch.pow(divide_by_r_0,6)
-                    denominator     = torch.pow(divide_by_r_0,12)
-                    ncontacts       = (1 - numerator) / (1 - denominator)
+                start_i, stop_i = range_i
+                start_j, stop_j = range_j
+                idx_i = torch.arange(start_i, stop_i+1)
+                idx_j = torch.arange(start_j, stop_j+1)
 
-                    # weight, don't double count intra 
-                    scalar = (i==j)*self.weight_intra/2 + (i!=j)*self.weight_inter
+                # print(sign_ij) 
+                # print(i,j)
+                # print( idx_i, idx_j)
 
-                    #                 contacts              attr/repuls          relative weights 
-                    all_contacts += ncontacts.sum() * self.contact_matrix[i,j] * scalar 
+                Ca_i = xyz[idx_i,1]  # slice out crds for this chain 
+                Ca_j = xyz[idx_j,1]  # slice out crds for that chain 
+                dgram           = torch.cdist(Ca_i[None,...].contiguous(), Ca_j[None,...].contiguous(), p=2) # [1,Lb,Lb]
+
+                divide_by_r_0   = (dgram - self.d_0) / self.r_0
+                numerator       = torch.pow(divide_by_r_0,6)
+                denominator     = torch.pow(divide_by_r_0,12)
+                ncontacts       = (1 - numerator) / (1 - denominator)
+                # weight, don't double count intra 
+                scalar = (i==j)*self.weight_intra/2 + (i!=j)*self.weight_inter
+
+                #                 contacts              attr/repuls          relative weights 
+                # all_contacts += ncontacts.sum() * self.contact_matrix[i,j] * scalar 
+                all_contacts += ncontacts.sum() * sign_ij * scalar 
+
+
+
+
+
+        else:
+            for i in range(self.nchain):
+                for j in range(self.nchain):
+                    # only compute for upper triangle, disregard zeros in contact matrix 
+                    if (i <= j) and (self.contact_matrix[i,j] != 0):
+
+                        # get the indices for these two chains 
+                        if self.chain_ind_dict is not None:
+                            idx_i = self.chain_ind_dict[i]
+                            idx_j = self.chain_ind_dict[j]
+
+                        else:
+                            idx_i = self._get_idx(i,L)
+                            idx_j = self._get_idx(j,L)
+                            
+                        Ca_i = xyz[idx_i,1]  # slice out crds for this chain 
+                        Ca_j = xyz[idx_j,1]  # slice out crds for that chain 
+                        dgram           = torch.cdist(Ca_i[None,...].contiguous(), Ca_j[None,...].contiguous(), p=2) # [1,Lb,Lb]
+
+                        divide_by_r_0   = (dgram - self.d_0) / self.r_0
+                        numerator       = torch.pow(divide_by_r_0,6)
+                        denominator     = torch.pow(divide_by_r_0,12)
+                        ncontacts       = (1 - numerator) / (1 - denominator)
+
+                        # weight, don't double count intra 
+                        scalar = (i==j)*self.weight_intra/2 + (i!=j)*self.weight_inter
+
+                        #                 contacts              attr/repuls          relative weights 
+                        all_contacts += ncontacts.sum() * self.contact_matrix[i,j] * scalar 
+
+
+
+            
 
         return all_contacts 
                     
@@ -452,7 +502,7 @@ class olig_intra_contacts(Potential):
     Author: DJ 
     """
 
-    def __init__(self, chain_lengths, weight=1):
+    def __init__(self, chain_lengths, weight=1, ind_spec=None):
         """
         Parameters:
 
@@ -462,18 +512,34 @@ class olig_intra_contacts(Potential):
         """
         self.chain_lengths = chain_lengths 
         self.weight = weight 
+        self.ind_spec = ind_spec
 
 
     def compute(self, seq, xyz):
         """
         Computes intra-chain num contacts potential
         """
+
         assert sum(self.chain_lengths) == len(seq.squeeze), 'given chain lengths do not match total sequence length'
 
         all_contacts = 0
         start = 0
-        for Lc in self.chain_lengths:
-            Ca = xyz[start:start+Lc]  # slice out crds for this chain 
+        # if self.ind_spec is not None:
+        #     print('olig_intra_contacts')
+        #     set_trace()
+        #     for range_i, range_j in  self.ind_spec:
+
+        # else:
+        # set_trace()
+
+        for i,Lc in enumerate(self.chain_lengths):
+
+
+
+            start_ind = start
+            stop_ind  = start+Lc
+            # Ca = xyz[start:start+Lc]  # slice out crds for this chain 
+            Ca = xyz[start_ind:stop_ind]  # slice out crds for this chain 
             dgram = torch.cdist(Ca[None,...].contiguous(), Ca[None,...].contiguous(), p=2) # [1,Lb,Lb]
             divide_by_r_0 = (dgram - self.d_0) / self.r_0
             numerator = torch.pow(divide_by_r_0,6)
@@ -485,6 +551,7 @@ class olig_intra_contacts(Potential):
 
             # increment the start to be at the next chain 
             start += Lc 
+
 
 
         return self.weight * all_contacts

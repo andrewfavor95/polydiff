@@ -71,7 +71,7 @@ inference:
   num_atoms_modeled: 23
   num_atoms_saved: 23
   save_rna_oneletter: False
-  set_diffused_prot_to: 'ALA'
+  set_diffused_prot_to: null
   set_diffused_dna_to: null
   set_diffused_rna_to: null
   protein_protein_hotspot_res: null
@@ -90,6 +90,9 @@ inference:
   cyclic_protein_indices: False 
   pseudo_symmetry: null
   pseudocycle_break: null
+  ncomps_asu: null
+  repeat_mode: False
+
   # ema: True
 
 contigmap:
@@ -203,6 +206,8 @@ potentials:
   olig_inter_all : null
   olig_intra_all : null
   olig_custom_contact : null
+  ind_spec_custom_contact : null
+  legacy_sym_mode: False
 
 contig_settings:
   ref_idx: null

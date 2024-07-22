@@ -445,13 +445,14 @@ class Sampler:
         # Set up ppi design stuffs
         if self.inf_conf.ppi_design and self.inf_conf.autogenerate_contigs:
             self.ppi_conf.binderlen = ''.join(chain_idx[0] for chain_idx in self.target_feats['pdb_idx']).index('B')
-
-
+        
         # Set up potentials stuffs
         self.potential_manager = PotentialManager(self.potential_conf, 
                                                   self.ppi_conf, 
                                                   self.diffuser_conf, 
-                                                  self.inf_conf)
+                                                  self.inf_conf,
+                                                  self.length_init,
+                                                  self.index_map_dict)
         
         # Get recycle schedule    
         recycle_schedule = str(self.inf_conf.recycle_schedule) if self.inf_conf.recycle_schedule is not None else None
@@ -1399,7 +1400,8 @@ class NRBStyleSelfCond(Sampler):
                 assert ij_visible is not None, '3 template + motif_only_2d requires description of motif pairwise visibility'
                 ij_visible = ij_visible.split('-') # e.g., [abc,de,df,...]
                 ij_visible_int = [tuple([abet2num[a] for a in s]) for s in ij_visible]
-                mask_t2d, _ = iu.get_repeat_t2d_mask(L, con_hal_idx0, self.contig_map, ij_visible_int, 1, supplied_full_contig=True)
+
+                mask_t2d, _ = iu.get_repeat_t2d_mask(L, con_hal_idx0, self.contig_map, ij_visible_int, 1, supplied_full_contig=True, repeat_mode=self._conf.inference.repeat_mode)
 
             else:
                 # repeat/symmetric case
@@ -1420,7 +1422,7 @@ class NRBStyleSelfCond(Sampler):
                 n_repeat = self._conf.inference.n_repeats
                 L = len(is_protein_motif)
                 #             parse_ij_get_repeat_mask(ij_visible, L, n_repeat, con_hal_idx0, supplied_full_contig, full_complex_idx0, contig_map)
-                mask_t2d = iu.parse_ij_get_repeat_mask(self._conf.inference.ij_visible, L, n_repeat, con_hal_idx0, supplied_full_contig, full_complex_idx0, self.contig_map)
+                mask_t2d = iu.parse_ij_get_repeat_mask(self._conf.inference.ij_visible, L, n_repeat, con_hal_idx0, supplied_full_contig, full_complex_idx0, self.contig_map, repeat_mode=self._conf.inference.repeat_mode)
 
 
 
@@ -1435,7 +1437,7 @@ class NRBStyleSelfCond(Sampler):
             n_repeat = self._conf.inference.n_repeats
             L = len(is_protein_motif)
             # mask_t2d = iu.parse_ij_get_repeat_mask(self._conf.inference.ij_visible, L, n_repeat, con_hal_idx0, self.contig_map)
-            mask_t2d = iu.parse_ij_get_repeat_mask(self._conf.inference.ij_visible, L, n_repeat, con_hal_idx0, supplied_full_contig, full_complex_idx0, self.contig_map)
+            mask_t2d = iu.parse_ij_get_repeat_mask(self._conf.inference.ij_visible, L, n_repeat, con_hal_idx0, supplied_full_contig, full_complex_idx0, self.contig_map, repeat_mode=self._conf.inference.repeat_mode)
 
         # return is_protein_motif, mask_t2d
         return is_motif, mask_t2d

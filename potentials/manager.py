@@ -2,9 +2,10 @@ import torch
 from icecream import ic
 import potentials.potentials as potentials
 import numpy as np 
+from pdb import set_trace
 
 
-def make_contact_matrix(nchain, intra_all=False, inter_all=False, contact_string=None):
+def make_contact_matrix(nchain, intra_all=False, inter_all=False, contact_string=None, ind_spec_custom_contact=None, chain_ind_dict=None):
     """
     Calculate a matrix of inter/intra chain contact indicators
     
@@ -34,8 +35,7 @@ def make_contact_matrix(nchain, intra_all=False, inter_all=False, contact_string
                     mask2d[i,j] = True
         
         contacts[mask2d.astype(bool)] = 1
-
-
+    
     # custom contacts/repulsions from user 
     if contact_string != None:
         contact_list = contact_string.split(',') 
@@ -55,6 +55,36 @@ def make_contact_matrix(nchain, intra_all=False, inter_all=False, contact_string
             
     return contacts 
 
+
+def make_ind_spec(nchain, intra_all=False, inter_all=False, contact_string=None, ind_spec_custom_contact=None, chain_ind_dict=None):
+
+    # range_spec = []
+    # same_chain = []
+    # set_trace()
+    if ind_spec_custom_contact is not None:
+        alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
+        ind_spec = []
+        for pair_spec in ind_spec_custom_contact.split('\\,'):
+            if '!' in pair_spec:
+                spec_i, spec_j = pair_spec.split('!')
+                sign = -1
+            elif '&' in pair_spec:
+                spec_i, spec_j = pair_spec.split('&')
+                sign = +1
+            else:
+                continue
+
+            
+            from_i, to_i = spec_i[1:].split('-')
+            from_j, to_j = spec_j[1:].split('-')
+            range_spec = ((int(from_i)-1, int(to_i)-1),(int(from_j)-1, int(to_j)-1))
+            chain_spec = (alphabet.index(spec_i[0]) , alphabet.index(spec_j[0]) )
+            ind_spec.append((chain_spec, range_spec, sign))
+    else:
+        ind_spec = None
+
+
+    return ind_spec
 
 def calc_nchains(symbol, components=1):
     """
@@ -86,7 +116,9 @@ class PotentialManager:
                  potentials_config, 
                  ppi_config, 
                  diffuser_config, 
-                 inference_config
+                 inference_config,
+                 L, # Need to know total length to calculate indices
+                 index_map_dict # Need to know index map to control selection for applying potential
                  ):
 
         self.potentials_config = potentials_config
@@ -95,6 +127,9 @@ class PotentialManager:
 
         self.guide_scale = potentials_config.guide_scale
         self.guide_decay = potentials_config.guide_decay
+
+        self.L = L
+        self.index_map_dict = index_map_dict
     
         if potentials_config.guiding_potentials is None: 
             setting_list = []
@@ -153,17 +188,81 @@ class PotentialManager:
 
             kwargs = {k: potential_dict[k] for k in potential_dict.keys() - {'type'}}
 
-            # symmetric oligomer contact potential args
-            if self.inference_config.symmetry:
+            # # symmetric oligomer contact potential args
+            # if self.inference_config.symmetry:
 
-                num_chains = calc_nchains(symbol=self.inference_config.symmetry, components=1) # hard code 1 for now 
-                print('WARNING: Hard coded in potentials, number of components = 1 per ASU. Multi-component ASU potentials may not work yet.')
-                contact_kwargs={'nchain':num_chains,
-                                'intra_all':self.potentials_config.olig_intra_all,
-                                'inter_all':self.potentials_config.olig_inter_all,
-                                'contact_string':self.potentials_config.olig_custom_contact }
-                contact_matrix = make_contact_matrix(**contact_kwargs)
-                kwargs.update({'contact_matrix':contact_matrix})
+
+            #     if self.inference_config.ncomps_asu is not None:
+            #         num_comps = self.inference_config.ncomps_asu
+            #     else:
+            #         num_comps = 1
+            #     if self.potentials_config.legacy_sym_mode:
+            #         num_chains = calc_nchains(symbol=self.inference_config.symmetry, components=num_comps, L=self.L, index_map_dict=self.index_map_dict) # hard code 1 for now 
+            #         print('WARNING: Hard coded in potentials, number of components = 1 per ASU.')
+            #         print('YOU ARE USING A LAZY, SHITTILY-CODED SETTING FROM YEARS AGO, WHICH SHOULD NEVER HAVE BEEN USED IN THE FIRST PLACE!.')
+            #         self.chain_ind_dict = None
+            #     else:
+                    
+            #         num_chains = len(self.index_map_dict.keys())
+            #         self.chain_ind_dict = {}
+            #         for i, chain_i in enumerate(self.index_map_dict.keys()):
+            #             self.chain_ind_dict[i] = torch.arange(self.index_map_dict[chain_i][min(self.index_map_dict[chain_i].keys())], self.index_map_dict[chain_i][max(self.index_map_dict[chain_i].keys())]+1)
+            #         # num_chains = calc_nchains(symbol=self.inference_config.symmetry, components=num_comps, L=self.L, index_map_dict=self.index_map_dict) # hard code 1 for now 
+
+            #     set_trace()
+                
+            #     contact_kwargs={'nchain':num_chains,
+            #                     'intra_all':self.potentials_config.olig_intra_all,
+            #                     'inter_all':self.potentials_config.olig_inter_all,
+            #                     'contact_string':self.potentials_config.olig_custom_contact ,
+            #                     'ind_spec_custom_contact':self.potentials_config.ind_spec_custom_contact,
+            #                     'chain_ind_dict':self.chain_ind_dict}
+            #                     # 'contact_string':self.potentials_config.olig_custom_contact }
+
+            #     contact_matrix = make_contact_matrix(**contact_kwargs)
+            #     kwargs.update({'contact_matrix':contact_matrix})
+
+            #     ind_spec = make_ind_spec(**contact_kwargs)
+            #     kwargs.update({'ind_spec':ind_spec})
+
+                        # symmetric oligomer contact potential args
+
+
+            if self.inference_config.symmetry and (self.inference_config.ncomps_asu is not None):
+                num_comps = self.inference_config.ncomps_asu
+            else:
+                num_comps = 1
+
+            if self.inference_config.symmetry and self.potentials_config.legacy_sym_mode:
+                num_chains = calc_nchains(symbol=self.inference_config.symmetry, components=num_comps, L=self.L, index_map_dict=self.index_map_dict) # hard code 1 for now 
+                print('WARNING: Hard coded in potentials, number of components = 1 per ASU.')
+                print('YOU ARE USING A LAZY, SHITTILY-CODED SETTING FROM YEARS AGO, WHICH SHOULD NEVER HAVE BEEN USED IN THE FIRST PLACE!.')
+                self.chain_ind_dict = None
+            else:
+                
+                num_chains = len(self.index_map_dict.keys())
+                self.chain_ind_dict = {}
+                for i, chain_i in enumerate(self.index_map_dict.keys()):
+                    self.chain_ind_dict[i] = torch.arange(self.index_map_dict[chain_i][min(self.index_map_dict[chain_i].keys())], self.index_map_dict[chain_i][max(self.index_map_dict[chain_i].keys())]+1)
+                # num_chains = calc_nchains(symbol=self.inference_config.symmetry, components=num_comps, L=self.L, index_map_dict=self.index_map_dict) # hard code 1 for now 
+            
+            
+            contact_kwargs={'nchain':num_chains,
+                            'intra_all':self.potentials_config.olig_intra_all,
+                            'inter_all':self.potentials_config.olig_inter_all,
+                            'contact_string':self.potentials_config.olig_custom_contact ,
+                            'ind_spec_custom_contact':self.potentials_config.ind_spec_custom_contact,
+                            'chain_ind_dict':self.chain_ind_dict}
+                            # 'contact_string':self.potentials_config.olig_custom_contact }
+
+            contact_matrix = make_contact_matrix(**contact_kwargs)
+            kwargs.update({'contact_matrix':contact_matrix})
+
+            ind_spec = make_ind_spec(**contact_kwargs)
+            kwargs.update({'ind_spec':ind_spec})
+
+
+            kwargs.update({'chain_ind_dict':self.chain_ind_dict})
 
 
             to_apply.append( potentials.implemented_potentials[potential_dict['type']](**kwargs) )

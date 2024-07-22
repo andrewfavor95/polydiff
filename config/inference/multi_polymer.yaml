@@ -6,7 +6,8 @@ inference:
   # ckpt_path: /projects/ml/afavor/RFD/models/all_na_ss_cond/train_session2023-12-15_1702680088_BFF_4.pt
   # ckpt_path: /projects/ml/afavor/RFD/models/all_na_ss_cond/train_session2024-01-24_1706161506_BFF_3.00.pt
   # ckpt_path: /projects/ml/afavor/RFD/models/all_na_ss_cond/train_session2024-03-04_1709582096_BFF_2.80.pt
-  ckpt_path: /projects/ml/afavor/RFD/models/all_na_ss_cond/train_session2024-03-19_1710887313_BFF_3.90.pt
+  # ckpt_path: /projects/ml/afavor/RFD/models/all_na_ss_cond/train_session2024-03-19_1710887313_BFF_3.90.pt
+  ckpt_path: /projects/ml/afavor/RFD/models/all_na_ss_cond/train_session2024-07-08_1720455712_BFF_3.00.pt
   str_self_cond: True
   model_runner: NRBStyleSelfCond
   two_template: True
@@ -39,6 +40,7 @@ inference:
   update_seq_t: False
   show_seq_under_t: -1
   seq_logit_penalty: 1e6
+  repeat_mode: False
   # align_motif: False
 
 preprocess:
