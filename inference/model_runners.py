@@ -690,7 +690,7 @@ class Sampler:
             indep.mask_t_2d_subsymm  = self.target_feats['mask_2d_subsymm'].to(self.device) if torch.is_tensor(self.target_feats['mask_2d_subsymm']) else None
 
         is_partial = self.diffuser_conf.partial_T is not None
-
+        # set_trace()
         indep, is_diffused = self.model_adaptor.insert_contig(indep, self.contig_map, partial_T=is_partial, seq_spec=self.seq_spec_list) 
 
         # create a residue mask based on polymer type:

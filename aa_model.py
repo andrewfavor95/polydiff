@@ -564,7 +564,21 @@ class Model:
         o.seq[o.is_protein] = MASKINDEX
         o.seq[o.is_dna] = DNAMASKINDEX
         o.seq[o.is_rna] = RNAMASKINDEX
-        o.seq[contig_map.hal_idx0] = indep.seq[contig_map.ref_idx0]
+
+        # Need to modify these based on inpaint_seq
+        hal_idx0_for_map = []
+        ref_idx0_for_map = []
+        for hal_idx0_i, ref_idx0_i in zip(contig_map.hal_idx0, contig_map.ref_idx0):
+            if contig_map.inpaint_seq[hal_idx0_i]:
+                hal_idx0_for_map.append(hal_idx0_i)
+                ref_idx0_for_map.append(ref_idx0_i)
+
+        hal_idx0_for_map = torch.tensor(hal_idx0_for_map)
+        ref_idx0_for_map = torch.tensor(ref_idx0_for_map)
+        
+        # Use the new seq mapping which excludes positions where we are inpainting the seq
+        o.seq[hal_idx0_for_map] = indep.seq[ref_idx0_for_map]
+        # o.seq[contig_map.hal_idx0] = indep.seq[contig_map.ref_idx0]
 
         # slice over the "is_sm" mask from the original indep
         o.is_sm = torch.full((L_mapped,), 0).bool()

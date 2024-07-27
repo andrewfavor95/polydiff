@@ -37,7 +37,6 @@ class ContigMap():
         self.inpaint_str_tensor=inpaint_str_tensor
         self.parsed_pdb = parsed_pdb
         self.topo=topo
-
         
 
         if ref_idx is None:
@@ -109,6 +108,9 @@ class ContigMap():
         else:
             assert len(polymer_chains)==len(contig_list) , "specified polymer chains need to match number of chains in design"
             self.polymer_chains = polymer_chains
+
+        # apply inpaint_seq to stuff:
+        # set_trace()
 
 
 
@@ -315,10 +317,11 @@ class ContigMap():
                 inpaint_s_list.extend([(i[0],p) for p in range(int(i.split("-")[0][1:]), int(i.split("-")[1])+1)])
             else:
                 inpaint_s_list.append((i[0],int(i[1:])))
+
         for res in inpaint_s_list:
             if res in self.ref:
                 s_mask[self.ref.index(res)] = False #mask this residue
-    
+        
         return np.array(s_mask) 
 
     def get_idx0(self, use_old_way=True):
