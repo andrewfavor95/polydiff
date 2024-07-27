@@ -375,6 +375,8 @@ def save_outputs(sampler, out_prefix, indep, denoised_xyz_stack, px0_xyz_stack, 
         print(f'setting diffused prot seq to {rf2aa.chemical.num2aa[default_prot_res_num]}!')
         pro_condition_02 = (~torch.tensor(sampler.contig_map.mask_1d)) & indep.is_protein
         final_seq = torch.where(pro_condition_02, default_prot_res_num, final_seq)
+    else:
+        final_seq = torch.where(((final_seq==21) & indep.is_protein), 0, final_seq)
 
 
     if (sampler.inf_conf.set_diffused_dna_to is not None) :
@@ -392,6 +394,8 @@ def save_outputs(sampler, out_prefix, indep, denoised_xyz_stack, px0_xyz_stack, 
         print(f'setting diffused DNA  seq to {rf2aa.chemical.num2aa[default_dna_res_num]}!')
         dna_condition_02 = (~torch.tensor(sampler.contig_map.mask_1d)) & indep.is_dna
         final_seq = torch.where(dna_condition_02, default_dna_res_num, final_seq)
+    else:
+        final_seq = torch.where(((final_seq==26) & indep.is_dna), 22, final_seq)
 
     if (sampler.inf_conf.set_diffused_rna_to is not None) :
         if len(sampler.inf_conf.set_diffused_rna_to)==2:
@@ -408,6 +412,8 @@ def save_outputs(sampler, out_prefix, indep, denoised_xyz_stack, px0_xyz_stack, 
         print(f'setting diffused RNA  seq to {rf2aa.chemical.num2aa[default_rna_res_num]}!')
         rna_condition_02 = (~torch.tensor(sampler.contig_map.mask_1d)) & indep.is_rna
         final_seq = torch.where(rna_condition_02, default_rna_res_num, final_seq)
+    else:
+        final_seq = torch.where(((final_seq==31) & indep.is_rna), 27, final_seq)
 
 
 
