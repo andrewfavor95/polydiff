@@ -573,8 +573,9 @@ class Model:
                 hal_idx0_for_map.append(hal_idx0_i)
                 ref_idx0_for_map.append(ref_idx0_i)
 
-        hal_idx0_for_map = torch.tensor(hal_idx0_for_map)
-        ref_idx0_for_map = torch.tensor(ref_idx0_for_map)
+
+        hal_idx0_for_map = np.array(hal_idx0_for_map)
+        ref_idx0_for_map = np.array(ref_idx0_for_map)
         
         # Use the new seq mapping which excludes positions where we are inpainting the seq
         o.seq[hal_idx0_for_map] = indep.seq[ref_idx0_for_map]
