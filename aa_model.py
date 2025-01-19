@@ -1115,8 +1115,8 @@ def assert_has_coords(xyz, indep):
         assert not sm_missing_ca.any(), f'sm_missing_ca {sm_missing_ca}'
     except Exception as e:
         print(e)
-        import ipdb
-        ipdb.set_trace()
+        # import ipdb
+        # ipdb.set_trace()
 
 
 def has_coords(xyz, indep):

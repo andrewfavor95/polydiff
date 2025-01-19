@@ -22,7 +22,7 @@ inference:
   num_atoms_modeled: 23
   num_atoms_saved: 23
   scaffold_guided: False
-  # save_rna_oneletter: True
+  # save_rna_oneletter: False
   # set_diffused_prot_to: 'ALA'
   set_diffused_prot_to: null
   set_diffused_dna_to: null

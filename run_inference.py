@@ -464,16 +464,28 @@ def save_outputs(sampler, out_prefix, indep, denoised_xyz_stack, px0_xyz_stack, 
             rf2aa.util.writepdb_file(f, xyz_particle.cpu(), seq_particle.long(), chain_Ls=chain_Ls_symm)
 
     # trajectory pdbs
-    traj_prefix = os.path.dirname(out_prefix)+'/traj/'+os.path.basename(out_prefix)
-    os.makedirs(os.path.dirname(traj_prefix), exist_ok=True)
+    if sampler.inf_conf.write_trajectory:
+        traj_prefix = os.path.dirname(out_prefix)+'/traj/'+os.path.basename(out_prefix)
+        os.makedirs(os.path.dirname(traj_prefix), exist_ok=True)
 
-    out = f'{traj_prefix}_Xt-1_traj.pdb'
-    aa_model.write_traj(out, denoised_xyz_stack, final_seq, indep.bond_feats, chain_Ls=chain_Ls)
-    xt_traj_path = os.path.abspath(out)
+        out = f'{traj_prefix}_Xt-1_traj.pdb'
+        aa_model.write_traj(out, denoised_xyz_stack, final_seq, indep.bond_feats, chain_Ls=chain_Ls)
+        xt_traj_path = os.path.abspath(out)
 
-    out=f'{traj_prefix}_pX0_traj.pdb'
-    aa_model.write_traj(out, px0_xyz_stack, final_seq, indep.bond_feats, chain_Ls=chain_Ls)
-    x0_traj_path = os.path.abspath(out)
+        out=f'{traj_prefix}_pX0_traj.pdb'
+        aa_model.write_traj(out, px0_xyz_stack, final_seq, indep.bond_feats, chain_Ls=chain_Ls)
+        x0_traj_path = os.path.abspath(out)
+
+    # traj_prefix = os.path.dirname(out_prefix)+'/traj/'+os.path.basename(out_prefix)
+    # os.makedirs(os.path.dirname(traj_prefix), exist_ok=True)
+
+    # out = f'{traj_prefix}_Xt-1_traj.pdb'
+    # aa_model.write_traj(out, denoised_xyz_stack, final_seq, indep.bond_feats, chain_Ls=chain_Ls)
+    # xt_traj_path = os.path.abspath(out)
+
+    # out=f'{traj_prefix}_pX0_traj.pdb'
+    # aa_model.write_traj(out, px0_xyz_stack, final_seq, indep.bond_feats, chain_Ls=chain_Ls)
+    # x0_traj_path = os.path.abspath(out)
 
     # run metadata
     sampler._conf.inference.input_pdb = os.path.abspath(sampler._conf.inference.input_pdb)
@@ -497,8 +509,10 @@ def save_outputs(sampler, out_prefix, indep, denoised_xyz_stack, px0_xyz_stack, 
         pickle.dump(trb, f_out)
 
     log.info(f'design : {des_path}')
-    log.info(f'Xt traj: {xt_traj_path}')
-    log.info(f'X0 traj: {x0_traj_path}')
+    
+    if sampler.inf_conf.write_trajectory:
+        log.info(f'Xt traj: {xt_traj_path}')
+        log.info(f'X0 traj: {x0_traj_path}')
 
 
 if __name__ == '__main__':

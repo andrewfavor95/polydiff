@@ -20,6 +20,7 @@ inference:
   recycle_schedule: null
   softmax_T: 1e-5
   output_prefix: samples/design
+  write_trajectory: False
   scaffold_guided: False
   model_runner: NRBStyleSelfCond
   cautious: False
