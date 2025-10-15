@@ -1,10 +1,13 @@
 # Multi polymer diffusion
 
-Wiki page:
-https://wiki.ipd.uw.edu/protocols/dry_lab/deep_learning/poly_diff#example_3rna_riboswitch_design_with_conditioning_from_eterna_puzzle_structure-string
-(tutorial to be added as a pdf file later)
+Clone this repository using git, then inference can be run when you have downloaded model weights and the necessary apptainer to run (see below).
 
 Link to download model weights:
-https://drive.google.com/drive/folders/1yr_vTIGy1NCJUznOh7GYqapYvJZqHSYj?usp=drive_link
+https://files.ipd.uw.edu/afavor/train_session2024-07-08_1720455712_BFF_3.00.pt
 
-Contact afavor@uw.edu to get access.
+This software runs using apptainers. You can download the associated apptainer `.sif` file here:
+https://files.ipd.uw.edu/afavor/SE3nv.sif
+
+Once you have these files, you can follow the [design tutorial](http://example.com) to see various design tasks and the associated documentation/syntax.
+
+Contact afavor@uw.edu if you have trouble accessing files or hit any bugs.
