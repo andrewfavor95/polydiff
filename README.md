@@ -36,8 +36,12 @@ git clone git@github.com:andrewfavor95/polydiff.git
 
 4. Download model weights and apptainer file:
 ```Bash
-... curl or someshit for weights
-... curl or someshit for apptainer sif.
+# Download model weights:
+curl -O https://files.ipd.uw.edu/pub/2025_RFDpoly/train_session2024-06-27_1719522052_BFF_7.00.pt
+curl -O https://files.ipd.uw.edu/pub/2025_RFDpoly/train_session2024-07-08_1720455712_BFF_3.00.pt
+
+# Download apptainer
+curl -O https://files.ipd.uw.edu/pub/2025_RFDpoly/SE3nv.sif
 ```
 
 5. Set paths for model weights and apptainer .sif file:
