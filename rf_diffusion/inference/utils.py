@@ -2,6 +2,7 @@ import numpy as np
 import os
 import sys
 from itertools import combinations
+from pathlib import Path
 from omegaconf import DictConfig
 from kinematics import xyz_to_t2d
 import torch
@@ -1584,9 +1585,29 @@ def process_target(pdb_path, parse_hetatom=False, center=True, inf_conf=None, d_
 
     Handles case where we want to template symmetric proteins into supersymms (e.g., c4 into O, C3 into I)
     """
+    requested_path = Path(pdb_path)
+    rf_diffusion_root = Path(__file__).resolve().parent.parent
+    candidate_paths = [requested_path]
+    if not requested_path.is_absolute():
+        candidate_paths.append(rf_diffusion_root / requested_path)
+
+    resolved_path = None
+    for candidate in candidate_paths:
+        if candidate.exists():
+            resolved_path = candidate
+            break
+
+    if resolved_path is None:
+        tried = ", ".join(str(p) for p in candidate_paths)
+        raise FileNotFoundError(
+            f"Target PDB not found. Checked: {tried}. "
+            "Verify the path or place the file relative to the rf_diffusion directory."
+        )
+    if resolved_path != requested_path:
+        LOGGER.info("Resolved target PDB %s to %s", requested_path, resolved_path)
 
     # Read target pdb and extract features.
-    target_struct = parse_pdb(pdb_path, parse_hetatom=parse_hetatom)
+    target_struct = parse_pdb(str(resolved_path), parse_hetatom=parse_hetatom)
 
     # Zero-center positions
     ca_center = target_struct['xyz'][:, :1, :].mean(axis=0, keepdims=True)
@@ -3122,5 +3143,3 @@ def get_sequence_spec(set_sequence_spec, ss_mat, index_map_dict, contig_map, fil
 
 
     return seq_spec_list
-
-

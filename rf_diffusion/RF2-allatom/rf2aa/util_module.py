@@ -615,9 +615,7 @@ class XYZConverter(nn.Module):
         bs = torch.arange(B, device=xyz_in.device)[:,None,None,None]
         xs = torch.arange(L, device=xyz_in.device)[None,:,None,None] - (ts<0)*1 # ts<-1 ==> prev res
         ys = torch.abs(ts)
-        try:
-            xyzs_bytor = xyz[bs,xs,ys,:]
-        except:
+        xyzs_bytor = xyz[bs,xs,ys,:]
 
         torsions = torch.zeros( (B,L,NTOTALDOFS,2), device=xyz_in.device )
 

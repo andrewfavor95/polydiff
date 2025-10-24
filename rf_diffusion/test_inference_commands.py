@@ -3,6 +3,8 @@ from pathlib import Path
 
 import pytest
 from hydra import compose, initialize_config_dir
+from .inference import utils as iu
+from . import aa_model
 
 
 CONFIG_DIR = Path(__file__).resolve().parent / "config" / "inference"
@@ -100,3 +102,19 @@ def test_multi_polymer_configs(name, overrides):
     assert cfg.diffuser.T == 50
     assert len(cfg.contigmap.contigs) >= 1
 
+
+def test_process_target_resolution():
+    pdb_rel_path = "test_data/DBP035.pdb"
+    result = iu.process_target(pdb_rel_path, center=False)
+    assert "xyz_27" in result
+    assert result["xyz_27"].shape[-1] == 3
+
+    with pytest.raises(FileNotFoundError):
+        iu.process_target("non_existent/example.pdb")
+
+
+def test_make_indep_path_resolution():
+    indep = aa_model.make_indep("test_data/DBP035.pdb")
+    assert indep.xyz.shape[-1] == 3
+    with pytest.raises(FileNotFoundError):
+        aa_model.make_indep("missing_dir/missing.pdb")

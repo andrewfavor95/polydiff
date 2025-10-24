@@ -6,6 +6,7 @@ import assertpy
 from collections import defaultdict
 import torch.nn.functional as F
 import dataclasses
+from pathlib import Path
 from assertpy import assert_that
 from rf2aa.chemical import NAATOKENS, MASKINDEX, NTOTAL, NHEAVYPROT, NHEAVY, NHEAVYNUC, UNKINDEX
 import rf2aa.util
@@ -246,6 +247,24 @@ def make_indep(pdb, ligand=None):
     #     parse_hetatm=False, n_cycle=10, random_noise=5.0)
     chirals = torch.Tensor()
     atom_frames = torch.zeros((0,3,2))
+
+    def _resolve_path(path_str):
+        if not path_str:
+            return path_str
+        candidate = Path(path_str)
+        if candidate.exists():
+            return str(candidate)
+        rf_root = Path(__file__).resolve().parent
+        alt_candidate = rf_root / candidate
+        if alt_candidate.exists():
+            LOGGER.info("Resolved path %s to %s", path_str, alt_candidate)
+            return str(alt_candidate)
+        raise FileNotFoundError(
+            f"Could not locate file '{path_str}'. Tried '{candidate}' and '{alt_candidate}'."
+        )
+
+    pdb = _resolve_path(pdb)
+    ligand = _resolve_path(ligand) if ligand else ligand
 
     # xyz_prot, mask_prot, idx_prot, seq_prot = parsers.parse_pdb(pdb, xyz27=True, seq=True)
     xyz_prot, mask_prot, idx_prot, seq_prot = parsers.parse_pdb(pdb, seq=True)
