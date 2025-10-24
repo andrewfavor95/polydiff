@@ -1,0 +1,9 @@
+==> /home/afavor/.condarc <==
+ssl_verify: False
+channel_priority: flexible
+channels:
+  - conda-forge
+  - bioconda
+  - defaults
+  - https://pose:foldtree@conda.rosettacommons.org/
+
