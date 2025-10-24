@@ -1,8 +1,8 @@
+import logging
+LOGGER = logging.getLogger(__name__)
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from icecream import ic
-
 class SeqDiffNetSimple(nn.Module):
     def __init__(self, K=None, L=None,T=None, d_hidden=64, n_hidden=16):
         super(SeqDiffNetSimple, self).__init__()
@@ -30,11 +30,11 @@ class SeqDiffNetSimple(nn.Module):
 
         '''
         t = torch.tensor([t.item()])
-        #ic(seq.dtype)
+        #LOGGER.debug(seq.dtype)
         seq_flat = seq.reshape(-1)
-        #ic(seq_flat.shape, t.shape)
+        #LOGGER.debug(seq_flat.shape, t.shape)
         seq_flat_t = torch.cat([seq_flat, t])
-        #ic(seq_flat_t.shape)
+        #LOGGER.debug(seq_flat_t.shape)
         seq      = self.emb(seq_flat_t) # [L * K + 1]
 
         for l in self.linears:
@@ -44,6 +44,5 @@ class SeqDiffNetSimple(nn.Module):
         pred_seq_reshaped = pred_seq.reshape((self.L, self.K))
 
         return pred_seq_reshaped[None] # [1, L, K]
-
 
 

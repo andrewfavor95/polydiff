@@ -25,7 +25,6 @@ from __future__ import annotations  # allows circular references in type hinting
 
 import torch
 import numpy as np
-from icecream import ic
 import rf2aa.chemical
 from typing import Tuple, List
 

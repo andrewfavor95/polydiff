@@ -10,7 +10,6 @@ from rf2aa.scoring import *
 
 import rf2aa.kinematics
 import rf2aa.util
-from pdb import set_trace
 import matplotlib.pyplot as plt
 
 def generate_Cbeta(N,Ca,C):
@@ -214,7 +213,6 @@ def get_tor_mask(seq, torsion_indices, mask_in=None):
     return tors_mask
 
 def get_torsions(xyz_in, seq, torsion_indices, torsion_can_flip, ref_angles, mask_in=None):
-    # set_trace()
     assert 0, "nothing wrong here, just trying to redirect all calls to the function versions in rf2aa.util.py"
     B,L = xyz_in.shape[:2]
     

@@ -2,7 +2,6 @@ import copy
 from collections import defaultdict
 
 import torch
-from icecream import ic
 import assertpy
 
 import aa_model

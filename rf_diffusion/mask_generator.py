@@ -1,3 +1,5 @@
+import logging
+LOGGER = logging.getLogger(__name__)
 import random
 import sys
 
@@ -5,13 +7,11 @@ import torch
 import scipy.stats
 import kinematics
 import numpy as np
-from icecream import ic
 import rf2aa.util
 import networkx as nx
 from functools import wraps
 import itertools
 import assertpy
-from pdb import set_trace
 import signal
 import matplotlib.pyplot as plt
 from util import get_pair_ss_partners, get_start_stop_inds, get_chain_range_inds
@@ -671,7 +671,7 @@ def get_sm_contacts(
     dist_conf = (picked[:, None] - sm_crds[ None]).pow(2).sum(dim=-1).sqrt()
     dist_conf = dist_conf.nan_to_num(9999)
     picked_distances = dist_conf.min(-1)[0].min(-1)[0]
-    #ic(is_motif, n_sample, picked_distances, dist_cutoff, indices)
+    #LOGGER.debug(is_motif, n_sample, picked_distances, dist_cutoff, indices)
 
     return is_motif, None
 
@@ -695,17 +695,17 @@ def get_closest_tip_atoms(indep, atom_mask,
     crds[~atom_mask] = torch.nan
     prot_crds = crds[~indep.is_sm]
     sm_crds = crds[indep.is_sm][:, 1]
-    # ic(prot_crds.shape)
-    # ic(sm_crds.shape)
+    # LOGGER.debug(prot_crds.shape)
+    # LOGGER.debug(sm_crds.shape)
     dist_res_sidechain_ligand = (prot_crds[:,:, None,...] - sm_crds[ None,None,...]).pow(2).sum(dim=-1).sqrt()
-    # ic(dist_res_sidechain_ligand.shape)
+    # LOGGER.debug(dist_res_sidechain_ligand.shape)
     dist_res_sidechain_ligand = dist_res_sidechain_ligand.nan_to_num(9999)
     dist_res_sidechain = dist_res_sidechain_ligand.min(dim=-1)[0]
     dist = dist_res_sidechain.min(dim=-1)[0]
     is_valid_for_atomization = indep.is_valid_for_atomization(atom_mask)[~indep.is_sm]
-    # ic(is_valid_for_atomization.sum())
+    # LOGGER.debug(is_valid_for_atomization.sum())
     if not is_valid_for_atomization.any():
-        ic('No valid residues for atomization, falling back to unconditional generation')
+        LOGGER.debug('No valid residues for atomization, falling back to unconditional generation')
         return torch.zeros(L).bool(), None
     dist[~is_valid_for_atomization] = 9999
 
@@ -718,7 +718,7 @@ def get_closest_tip_atoms(indep, atom_mask,
     n_contacts_before = is_sampled.sum()
     is_sampled[~is_valid_for_atomization] = False
     n_contacts_after = is_sampled.sum()
-    #ic(f'After removing residue contacts with unresolved heavy atoms: {n_contacts_before} --> {n_contacts_after}')
+    #LOGGER.debug(f'After removing residue contacts with unresolved heavy atoms: {n_contacts_before} --> {n_contacts_after}')
 
     is_sampled_het = torch.zeros(L).bool()
     is_sampled_het[~indep.is_sm] = is_sampled
@@ -734,7 +734,7 @@ def get_closest_tip_atoms(indep, atom_mask,
         dist_conf = (picked[:, None] - sm_crds[ None]).pow(2).sum(dim=-1).sqrt()
         dist_conf = dist_conf.nan_to_num(9999)
         picked_distances = dist_conf.min(-1)[0].min(-1)[0]
-        ic(picked_distances, dist_cutoff, indices)
+        LOGGER.debug(picked_distances, dist_cutoff, indices)
 
     is_atom_diffused = {}
     sm_prot_transition_types = (indep.is_sm[1:].int() - indep.is_sm[:-1].int()).unique().tolist()
@@ -761,7 +761,7 @@ def get_atom_names_within_n_bonds(res, source_node, n_bonds):
     paths = nx.single_source_shortest_path_length(bond_graph, source=source_node,cutoff=n_bonds)
     atoms_within_n_bonds = paths.keys()
     atom_names = [rf2aa.chemical.aa2long[res][i] for i in atoms_within_n_bonds]
-    ic(atom_names)
+    LOGGER.debug(atom_names)
     return atom_names
 
 def tip_crd(indep, i):
@@ -796,7 +796,7 @@ def get_tip_gaussian_mask(indep, atom_mask, *args, std_dev=8, **kwargs):
     assert not indep.is_sm.any()
     is_valid_for_atomization = indep.has_heavy_atoms_and_seq(atom_mask)
     if not is_valid_for_atomization.any():
-        ic('No valid residues for atomization, falling back to unconditional generation')
+        LOGGER.debug('No valid residues for atomization, falling back to unconditional generation')
         is_motif = torch.zeros(indep.length()).bool()
         is_motif[indep.is_sm] = True
         return is_motif, None
@@ -1327,7 +1327,7 @@ def get_diffusion_mask(
     if indep.is_sm.any(): 
         get_mask = get_sm_contact_mask
 
-    ic(get_mask)
+    LOGGER.debug(get_mask)
     
     return get_mask(indep, atom_mask, low_prop=low_prop, high_prop=high_prop, broken_prop=broken_prop)
 
@@ -1463,9 +1463,6 @@ def get_diffusion_mask_na(
 
                 if t2d_is_revealed[i,j]:
                     t2d_is_revealed_new[pair_dict[i],pair_dict[j]] = True
-
-
-        # # set_trace()
         # png_filename = f'/home/afavor/git/RFD_AF/3template_na/pngs_training/test_show_bp_partners_{np.random.randint(500)}.png'
         # fig, ax = plt.subplots(nrows=1,ncols=3,figsize=(15,45))
         # ax[0].imshow((1*t2d_is_revealed).cpu().numpy())
@@ -1482,8 +1479,6 @@ def get_diffusion_mask_na(
         # plt.close(fig)
 
         return (t2d_is_revealed_new, diffusion_mask_new), is_atom_motif
-
-        # set_trace()
 
     # (2) We can modify mask to always show relative ori of nucleic stuffs
 
@@ -1534,7 +1529,7 @@ def generate_sm_mask(prot_masks, is_sm):
             continue
         if k == 'loss_str_mask_2d':
             continue
-        #ic(k, v.shape, prot_masks[k].shape, is_sm.shape)
+        #LOGGER.debug(k, v.shape, prot_masks[k].shape, is_sm.shape)
         v[~is_sm] = prot_masks[k]
         mask_dict[k] = v
     mask_dict['input_seq_mask']
@@ -1959,11 +1954,11 @@ def generate_masks(indep, task, loader_params, chosen_dataset, full_chain=None, 
             assert (len(diffusion_mask) == 2) and (type(diffusion_mask) == tuple)
             (t2d_is_revealed, diffusion_mask) = diffusion_mask 
 
-        # ic(diffusion_mask)
-        # ic(is_atom_motif)
+        # LOGGER.debug(diffusion_mask)
+        # LOGGER.debug(is_atom_motif)
         # sys.exit('Exiting early for debugging')
 
-        # ic(is_atom_motif, torch.nonzero(diffusion_mask), diffusion_mask.sum())
+        # LOGGER.debug(is_atom_motif, torch.nonzero(diffusion_mask), diffusion_mask.sum())
         input_str_mask = diffusion_mask.clone()
         input_seq_mask = diffusion_mask.clone()
         # t1dconf scaling will be taken care of by diffuser, so just leave those at 1 here 
@@ -2009,12 +2004,12 @@ def generate_masks(indep, task, loader_params, chosen_dataset, full_chain=None, 
             assert (len(diffusion_mask) == 2) and (type(diffusion_mask) == tuple)
             (t2d_is_revealed, diffusion_mask) = diffusion_mask 
 
-        # ic(diffusion_mask)
-        # ic(is_atom_motif)
+        # LOGGER.debug(diffusion_mask)
+        # LOGGER.debug(is_atom_motif)
         # sys.exit('Exiting early for debugging')
 
 
-        # ic(is_atom_motif, torch.nonzero(diffusion_mask), diffusion_mask.sum())
+        # LOGGER.debug(is_atom_motif, torch.nonzero(diffusion_mask), diffusion_mask.sum())
         input_str_mask = diffusion_mask.clone()
 
         input_seq_mask = diffusion_mask.clone()
@@ -2304,7 +2299,6 @@ def get_polymer_type_masks(seq):
     is_rna = torch.logical_and((27 <= seq),(seq <= 31)).squeeze()
 
     return is_protein, is_dna, is_rna
-
 
 
 

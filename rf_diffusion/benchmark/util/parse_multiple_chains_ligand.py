@@ -10,8 +10,6 @@ import slurm_tools
 root_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
 sys.path.insert(0, root_dir)
 from benchmark import pdb_to_params
-from icecream import ic
-
 def get_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('--input_files',type=str,help='file with list of paths to pdbs to parse.')

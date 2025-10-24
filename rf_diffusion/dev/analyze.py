@@ -1,7 +1,8 @@
+import logging
+LOGGER = logging.getLogger(__name__)
 import sys
 import os
 sys.path.append(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'RF2-allatom'))
-import ipdb
 import glob
 import itertools
 from dataclasses import dataclass
@@ -294,7 +295,6 @@ def load_traj(row, name=None, traj='X0'):
     cmd.load(traj_path, name)
     return name
 
-from icecream import ic
 def show_traj(row, strat, traj_type='X0'):
     strat_name = strat.replace(' ', '_')
     trb = get_trb(row)
@@ -378,7 +378,7 @@ def load_motif(row, strat=None, show=True):
     native = strat_name+motif_suffix
     input_pdb = get_input_pdb(row)
     trb = get_trb(row)
-    # ic(trb)
+    # LOGGER.debug(trb)
     # ligand_name = trb['inference.ligand']
     ligand_name = row['inference.ligand']
     ref_idx = trb["con_ref_pdb_idx"]
@@ -390,12 +390,9 @@ def load_motif(row, strat=None, show=True):
     #cmd.remove(f'({native} and not ({to_selector(ref_idx)}))')
     # cmd.do(f'load {input_pdb}, {native}; remove ({native} and not {to_selector(ref_idx)})')
     # cmd.load(input_pdb, native)
-    #ic(f'remove ({native} and not ({to_selector(ref_idx)}))')
-    #ipdb.set_trace()
+    #LOGGER.debug(f'remove ({native} and not ({to_selector(ref_idx)}))')
     #cmd.do(f'remove ({native} and not ({to_selector(ref_idx)}))')
-    #ipdb.set_trace()
     cmd.show_as('licorice', native)
-    #ipdb.set_trace()
     #print(f'load {input_pdb}, {native}; remove ({native} and not ({to_selector(ref_idx)})')
     #for i, (chain, resi_i) in enumerate(ref_idx):
     #    cmd.alter(f'{native} and chain {chain} and resi {resi_i}', f'resi={i}')
@@ -426,7 +423,7 @@ def show_motif(row, strat, traj_types='X0', show_af2=True, show_true=False):
 #     input_pdb = get_input_pdb(row)
 #     motif_suffix = '_motif'
 #     native = strat_name+motif_suffix
-#     ic(input_pdb)
+#     LOGGER.debug(input_pdb)
 #     # cmd.load(input_pdb, native)
 #     ref_idx = trb["con_ref_pdb_idx"]
 #     # cmd.do(f'load {input_pdb}, {native}; remove not (chain {to_chain(ref_idx)} and {to_resi(ref_idx)})')
@@ -448,7 +445,7 @@ def show_motif(row, strat, traj_types='X0', show_af2=True, show_true=False):
         trajs.append(traj)
         traj_motif = f'{traj} and {to_resi(trb["con_hal_pdb_idx"])}'
         traj_motifs.append(traj_motif)
-        #ic(traj_motif, native)
+        #LOGGER.debug(traj_motif, native)
         # cmd.align(traj_motif, native, 'mobile_state=1')
         cmd.align(traj_motif, native.name)
         structures['trajs'].append(Structure(traj, trb['con_hal_pdb_idx']))
@@ -470,7 +467,7 @@ def show_motif(row, strat, traj_types='X0', show_af2=True, show_true=False):
         #cmd.align(af2, traj)
         af2 = Structure(af2, trb['con_hal_pdb_idx'])
         structures['af2'] = af2
-        #ic(af2.motif_sele(), native.motif_sele())
+        #LOGGER.debug(af2.motif_sele(), native.motif_sele())
         cmd.align(af2.motif_sele(), native.motif_sele())
         cmd.set('stick_transparency', 0.7, af2.name)
     #cmd.center(traj)
@@ -568,7 +565,7 @@ def get_contig_c_alpha_rmsd(row, all_idxs=False):
     i = torch.tensor([0,1])
     if all_idxs:
         #i = torch.arange(traj.shape[1])
-        ic(traj.shape)
+        LOGGER.debug(traj.shape)
         i = torch.arange(traj.shape[0])
     return el.c_alpha_rmsd_traj(traj[i][:,motif_idx])
 
@@ -603,7 +600,7 @@ def show_row(row, traj_name, traj_type='X0'):
     # break
 
 def calc_rmsd(xyz1, xyz2, eps=1e-6):
-    #ic(xyz1.shape, xyz2.shape)
+    #LOGGER.debug(xyz1.shape, xyz2.shape)
 
     # center to CA centroid
     xyz1 = xyz1 - xyz1.mean(0)
@@ -995,8 +992,6 @@ def show_paper_pocket_af2(row, b=None, des=True, ligand=False, traj_types=None, 
             cmd.align(f'{af2.motif_sele()} and name ca', f'{native.motif_sele()} and name ca')
         else:
             cmd.align(f'{des.name} and name ca', f'{af2.name} and name ca')
-            # import ipdb
-            # ipdb.set_trace()
         # else:
         #     cmd.align(f'{af2.motif_sele()} and name ca', f'{native.motif_sele()} and name ca')
 

@@ -1,6 +1,5 @@
 import torch
 import numpy as np
-from pdb import set_trace
 import matplotlib.pyplot as plt
 from util import find_contiguous_true_indices
 # import time
@@ -288,8 +287,6 @@ def make_hotspot_vector_inference(indep, conf):
 #         plt.savefig(png_filepath)
 #         plt.close(fig)
 
-#     # set_trace()
-
 
         
 
@@ -419,8 +416,6 @@ def make_hotspot_vector_inference(indep, conf):
 #     # cum_con_sum = cum_contact_matrix.sum(dim=1)
 #     # cum_con_sq_sum = (cum_con_sum[...,None] * cum_con_sum[None,...] ).sum(dim=1)
 
-#     # set_trace()
-
 
 #     cum_con_sum   = cum_contact_matrix.sum(dim=1)
 #     close_con_sum = close_contact_matrix.sum(dim=1)
@@ -462,8 +457,6 @@ def make_hotspot_vector_inference(indep, conf):
 #     in_high_close_con = (close_con_sum > close_con_sum.mean() + close_con_sum.std())
 
 #     ind_thing = find_contiguous_true_indices(in_high_cum_con)
-
-#     set_trace()
 #     # for aa in in_high_contact: print(int(1*aa))
 #     # for aa in in_high_cum_con: print(int(1*aa))
 #     # for aa in in_high_close_con: print(int(1*aa))
@@ -600,8 +593,6 @@ def make_hotspot_vector_inference(indep, conf):
 
 #         plt.savefig(png_filepath)
 #         plt.close(fig)
-
-#     # set_trace()
 
 
         

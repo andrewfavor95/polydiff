@@ -1,3 +1,5 @@
+import logging
+LOGGER = logging.getLogger(__name__)
 import os
 import sys
 import dataclasses
@@ -12,7 +14,6 @@ import ast
 import subprocess
 from pathlib import Path
 from unittest import mock
-from icecream import ic
 import run_inference
 from deepdiff import DeepDiff
 from rf2aa import tensor_util
@@ -114,13 +115,13 @@ class TestDistributed(unittest.TestCase):
         """
         os.environ['MASTER_ADDR'] = 'localhost'
         os.environ['MASTER_PORT'] = '12317'
-        ic('start 1')
+        LOGGER.debug('start 1')
         torch.distributed.init_process_group(backend="gloo", world_size=1, rank=0)
-        ic('end 1')
+        LOGGER.debug('end 1')
         torch.distributed.destroy_process_group()
-        ic('start 2')
+        LOGGER.debug('start 2')
         torch.distributed.init_process_group(backend="gloo", world_size=1, rank=0)
-        ic('end 2')
+        LOGGER.debug('end 2')
         torch.distributed.destroy_process_group()
 
 class ModelInputs(unittest.TestCase):
@@ -214,7 +215,7 @@ def run_regression(self, arg_string, golden_name, call_number=1, assert_loss=Fal
             def side_effect(*args, **kwargs):
                 side_effect.call_count += 1
                 if side_effect.call_count < call_number:
-                    ic(kwargs.keys())
+                    LOGGER.debug(kwargs.keys())
                     run_inference.make_deterministic()
                     if 'xyz' in kwargs:
                         xyz = kwargs['xyz']
@@ -265,7 +266,7 @@ def run_regression(self, arg_string, golden_name, call_number=1, assert_loss=Fal
             argument_map = tensor_util.cpu(argument_map)
             cmp = partial(tensor_util.cmp, atol=1e-3, rtol=0)
             # Uncomment to peek at what parts of sequence are masked
-            # ic(torch.argmax(argument_map['msa_latent'], dim=-1))
+            # LOGGER.debug(torch.argmax(argument_map['msa_latent'], dim=-1))
             test_utils.assert_matches_golden(self, golden_name, argument_map, rewrite=REWRITE, custom_comparator=cmp)
 
 class Loss(unittest.TestCase):
@@ -290,7 +291,7 @@ class Loss(unittest.TestCase):
             def side_effect(*args, **kwargs):
                 side_effect.call_count += 1
                 if side_effect.call_count < call_number:
-                    ic(kwargs.keys())
+                    LOGGER.debug(kwargs.keys())
                     if 'xyz' in kwargs:
                         xyz = kwargs['xyz']
                     else:
@@ -311,7 +312,7 @@ class Loss(unittest.TestCase):
                     alpha_s = torch.normal(0, 1, (40, 1, L, 20, 2))
                     xyz_allatom = torch.normal(0, 1, (1, L, 36, 3))
                     lddt = torch.normal(0, 1, (1, 50, L))
-                    ic(xyz_allatom.requires_grad)
+                    LOGGER.debug(xyz_allatom.requires_grad)
                     xyz_allatom.requires_grad = True
                     side_effect.rfo = aa_model.RFO(logits, logits_aa, logits_pae, logits_pde, p_bind, px0_xyz, alpha_s, xyz_allatom, lddt, None, None, None)
                     side_effect.rfo = tensor_util.to_ordered_dict(side_effect.rfo)
@@ -333,12 +334,12 @@ class Loss(unittest.TestCase):
                 print("CalledException", e)
             torch.distributed.destroy_process_group()
 
-            ic(scaler_mock.scale.call_args)
-            ic(len(scaler_mock.scale.call_args))
-            ic(type(scaler_mock.scale.call_args))
+            LOGGER.debug(scaler_mock.scale.call_args)
+            LOGGER.debug(len(scaler_mock.scale.call_args))
+            LOGGER.debug(type(scaler_mock.scale.call_args))
 
             (loss,), _ = scaler_mock.scale.call_args
-            ic(loss)
+            LOGGER.debug(loss)
             rfo = side_effect.rfo
             run_inference.seed_all()
             loss.backward()

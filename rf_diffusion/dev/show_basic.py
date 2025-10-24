@@ -1,7 +1,7 @@
+import logging
+LOGGER = logging.getLogger(__name__)
 import os
 import sys
-from icecream import ic
-
 import fire
 
 
@@ -36,23 +36,23 @@ def main(
     des = structures['trajs'][0]
     des, X0, Xt = structures['trajs']
     # cmd.show_as('cartoon', native.name)
-    # ic(structures)
+    # LOGGER.debug(structures)
     cmd.color('paper_melon', des.name)
     cmd.color('paper_lightblue', X0.name)
     cmd.color('paper_darkblue', Xt.name)
     cmd.hide('everything', des.name)
     cmd.center(des.name)
 
-    ic(native)
+    LOGGER.debug(native)
     if not native:
-        ic('not native')
+        LOGGER.debug('not native')
         native_pdb = analyze.get_input_pdb(srow)
         native = analyze.Structure(srow['name']+'_native', [])
         cmd.load(native_pdb, native.name)
         cmd.super(native.name, X0.name)
     if has_af2:
         af2 = structures['af2']
-        ic(af2)
+        LOGGER.debug(af2)
         cmd.super(af2.name, X0.name)
 
     for structure in [native, des]:
@@ -63,4 +63,3 @@ def main(
 
 if __name__ == '__main__':
     fire.Fire(main)
-

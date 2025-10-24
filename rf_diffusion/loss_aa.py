@@ -1,6 +1,4 @@
 import torch
-from icecream import ic
-
 import loss
 
 def frame_distance_loss(R_pred, R_true, is_sm):

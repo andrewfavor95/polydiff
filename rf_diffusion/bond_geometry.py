@@ -5,7 +5,6 @@ from itertools import combinations
 import networkx as nx
 
 import torch
-from icecream import ic
 import numpy as np
 import scipy
 import rf2aa.chemical

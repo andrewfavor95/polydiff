@@ -4,7 +4,6 @@ from assertpy import assert_that
 import numpy as np
 from omegaconf import DictConfig, OmegaConf
 import data_loader
-from icecream import ic
 import pickle 
 
 import rf2aa.chemical
@@ -33,6 +32,7 @@ from potentials.manager import PotentialManager
 from inference import symmetry
 # from inference import motif_manager
 import logging
+LOGGER = logging.getLogger(__name__)
 import torch.nn.functional as nn
 import util
 import hydra
@@ -40,7 +40,6 @@ from hydra.core.hydra_config import HydraConfig
 import os
 import matplotlib.pyplot as plt 
 from memory import mem_report
-from pdb import set_trace
 REPORT_MEM=False
 
 import sys
@@ -134,8 +133,6 @@ class Sampler:
         #                 loop_regions = torch.tensor([s_i=='.' for s_i in ss_string_i])
         #                 ss_target_loc = tuple(self.index_map_dict[ss_loc_i[0]][int(_)] for _ in ss_loc_i[1:].split('-') )
         #                 # ss_target_loc_b = [self.index_map_dict[ss_loc_i[0]][int(_)] for _ in ss_loc_i[1:].split('-') ]
-
-        #                 # set_trace()
         #                 # pair_matrix_list.append(torch.from_numpy(iu.sstr_to_matrix(ss_string_i, only_basepairs=True)).bool())
         #                 # loop_region_list.append(torch.tensor([s_i=='.' for s_i in ss_string_i]))
         #                 # ss_loc_range_i = (self.index_map_dict[ss_loc_i[0]][int(_)] for _ in ss_loc_i[1:].split('-'))
@@ -166,14 +163,10 @@ class Sampler:
         #             loop_region_list.append(loop_regions)
         #             ss_loc_list.append(ss_target_loc)
         #             # loop_loc_list.append(ss_target_loc)
-
-        #         # set_trace()
         #         for bp_partners_i, loop_regions_i, (from_i,to_i) in zip(pair_matrix_list, loop_region_list, ss_loc_list):
                     
         #             full_loop_regions_i = torch.zeros(self.length_init).bool()
-        #             # set_trace()
         #             full_loop_regions_i[from_i:to_i+1] = loop_regions_i
-        #             # set_trace()
         #             # self.target_ss_matrix[from_i:to_i,from_i:to_i][loop_regions_i,:] = 0
         #             # self.target_ss_matrix[from_i:to_i,from_i:to_i][:,loop_regions_i] = 0
 
@@ -354,14 +347,14 @@ class Sampler:
 
         # TODO: Add symmetrization RMSD check here
         if self._conf.seq_diffuser.seqdiff is None:
-            ic('Doing AR Sequence Decoding')
+            LOGGER.debug('Doing AR Sequence Decoding')
             self.seq_diffuser = None
 
             assert(self._conf.preprocess.seq_self_cond is False), 'AR decoding does not make sense with sequence self cond'
             self.seq_self_cond = self._conf.preprocess.seq_self_cond
 
         elif self._conf.seq_diffuser.seqdiff == 'continuous':
-            ic('Doing Continuous Bit Diffusion')
+            LOGGER.debug('Doing Continuous Bit Diffusion')
 
             kwargs = {
                      'T': self._conf.diffuser.T,
@@ -511,7 +504,7 @@ class Sampler:
             if self._conf.inference.overrides:
                 overrides.extend(self._conf.inference.overrides)
 
-            ic(overrides)
+            LOGGER.debug(overrides)
         if 'config_dict' in self.ckpt.keys():
             print("Assembling -model, -diffuser and -preprocess configs from checkpoint")
 
@@ -520,7 +513,7 @@ class Sampler:
                 #assert all([i in self._conf[cat].keys() for i in self.ckpt['config_dict'][cat].keys()]), f"There are keys in the checkpoint config_dict {cat} params not in the config file"
                 for key in self._conf[cat]:
                     if key == 'chi_type' and self.ckpt['config_dict'][cat][key] == 'circular':
-                        ic('---------------------------------------------SKIPPPING CIRCULAR CHI TYPE')
+                        LOGGER.debug('---------------------------------------------SKIPPPING CIRCULAR CHI TYPE')
                         continue
                     try:
                         print(f"USING MODEL CONFIG: self._conf[{cat}][{key}] = {self.ckpt['config_dict'][cat][key]}")
@@ -543,7 +536,7 @@ class Sampler:
             print('WARNING: Model, Diffuser and Preprocess parameters are not saved in this checkpoint. Check carefully that the values specified in the config are correct for this checkpoint')     
 
         print('self._conf:')
-        ic(self._conf)
+        LOGGER.debug(self._conf)
 
     def load_model(self):
         """Create RosettaFold model from preloaded checkpoint."""
@@ -690,7 +683,6 @@ class Sampler:
             indep.mask_t_2d_subsymm  = self.target_feats['mask_2d_subsymm'].to(self.device) if torch.is_tensor(self.target_feats['mask_2d_subsymm']) else None
 
         is_partial = self.diffuser_conf.partial_T is not None
-        # set_trace()
         indep, is_diffused = self.model_adaptor.insert_contig(indep, self.contig_map, partial_T=is_partial, seq_spec=self.seq_spec_list) 
 
         # create a residue mask based on polymer type:
@@ -1048,7 +1040,7 @@ class Sampler:
         self.pair_prev = None
         self.state_prev = None
         
-        # ic(indep.xyz.shape)
+        # LOGGER.debug(indep.xyz.shape)
         # assert False
         print('Total AA modeled: ', indep.xyz.shape[0])
 
@@ -1952,7 +1944,7 @@ class NRBStyleSelfCond(Sampler):
             px0[~self.is_diffused] = indep.xyz[~self.is_diffused]
             x_t_1 = torch.clone(px0)
             seq_t_1 = pseq_0
-            # ic(x_t_1[0,:,0], px0[0,:,0])
+            # LOGGER.debug(x_t_1[0,:,0], px0[0,:,0])
 
             # Dummy tors_t_1 prediction. Not used in final output.
             tors_t_1 = torch.ones((self.is_diffused.shape[-1], 10, 2))

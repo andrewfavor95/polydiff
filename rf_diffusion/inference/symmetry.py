@@ -5,13 +5,12 @@ import functools as fn
 import torch
 import string
 import logging
+LOGGER = logging.getLogger(__name__)
 import numpy as np
 import sys
 import copy 
 import pdb
-from icecream import ic
 import matplotlib.pyplot as plt 
-from pdb import set_trace
 format_rots = lambda r: torch.tensor(r).float()
 
 T3_ROTATIONS = [
@@ -459,14 +458,14 @@ def find_minimal_neighbors(indep, Rs, metasymm):
     """
 
     # copy other tensors to match the new xyz shape
-    # ic(o.xyz.shape)
-    # ic(o.atom_frames.shape)
-    # ic(o.bond_feats.shape)
-    # ic(o.chirals.shape)
-    # ic(o.idx.shape)
-    # ic(o.is_sm.shape)
-    # ic(o.same_chain.shape)
-    # ic(o.seq.shape)
+    # LOGGER.debug(o.xyz.shape)
+    # LOGGER.debug(o.atom_frames.shape)
+    # LOGGER.debug(o.bond_feats.shape)
+    # LOGGER.debug(o.chirals.shape)
+    # LOGGER.debug(o.idx.shape)
+    # LOGGER.debug(o.is_sm.shape)
+    # LOGGER.debug(o.same_chain.shape)
+    # LOGGER.debug(o.seq.shape)
     # print('*'*40)
 
     # 1D information 
@@ -1378,7 +1377,7 @@ def get_pointsym_meta(symmid):
 
 #     # b) rotate / translate symmaxes to ax_i
 #     tgt_axis, tgt_origin = symmaxes[0][1], symmaxes[0][2]
-#     ic(tgt_axis, tgt_origin)
+#     LOGGER.debug(tgt_axis, tgt_origin)
 #     # R_1: first rotate axes to be coincident
 #     # R_2: random rotation about symm axis
 #     #   inside/outside "flips" are handled in offset code
@@ -1538,7 +1537,6 @@ def propogate_repeat_features2(indep, Lasu, inf_conf):
 
     new_bond_feats = fill_square_diagonal(new_bond_feats, peptide_bond, k=1)
     new_bond_feats = fill_square_diagonal(new_bond_feats, peptide_bond, k=-1)
-    # set_trace()
     o.bond_feats = new_bond_feats
 
     # same chain all true because all in same chain
@@ -1640,4 +1638,3 @@ def symmetrize_repeat_features(indep, Lasu, main_block):
     o.same_chain = get_repeat_same_chain(o.is_sm)
 
     return o
-

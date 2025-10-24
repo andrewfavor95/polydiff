@@ -1,5 +1,4 @@
 import sys, os, time, datetime, subprocess, shutil
-from icecream import ic
 ic.configureOutput(includeContext=True)
 
 from contextlib import ExitStack, nullcontext
@@ -8,7 +7,6 @@ import numpy as np
 import pandas as pd
 from copy import deepcopy
 from collections import OrderedDict
-from icecream import ic
 import wandb
 import torch
 import torch.nn as nn

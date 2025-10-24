@@ -5,7 +5,6 @@ sys.path.insert(0, root_dir)
 sys.path.append('/home/ahern/tools/pdb-tools/')
 import shutil
 import glob
-from icecream import ic
 from tqdm import tqdm
 import fire
 from pdbtools import *

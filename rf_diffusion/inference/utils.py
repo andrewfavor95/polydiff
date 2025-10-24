@@ -9,7 +9,6 @@ import torch.nn.functional as nn
 # from util import get_torsions
 from diffusion import get_beta_schedule, get_aa_schedule, get_chi_betaT
 from diff_util import get_aa_schedule, th_interpolate_angles, th_min_angle
-from icecream import ic
 from scipy.spatial.transform import Rotation as scipy_R
 from scipy.spatial.transform import Slerp
 
@@ -30,6 +29,7 @@ from rf2aa.chemical import NAATOKENS, aa2num, aa2long, atomnum2atomtype, NTOTAL,
 import util
 import random
 import logging
+LOGGER = logging.getLogger(__name__)
 import string 
 import hydra
 import rf2aa.chemical
@@ -37,9 +37,7 @@ from rf2aa.kinematics import normQ, Qs2Rs
 import aa_model
 import parsers
 import matplotlib.pyplot as plt
-from pdb import set_trace
-from icecream import ic 
-ic(util.__file__)
+LOGGER.debug(util.__file__)
 
 from . import symmetry 
 ###########################################################
@@ -329,7 +327,6 @@ class DecodeSchedule():
             print('AFAV IN PROGRESS IMPLEMENTING!!!!')
             print('AFAV IN PROGRESS IMPLEMENTING!!!!')
             raise NotImplementedError(f'Andrew needs to finish using torch.multinomial to implement this option')
-            set_trace()
 
     
 
@@ -545,7 +542,6 @@ class Denoise():
 
         # there is no situation where we should have any NaN BB crds here  
         mask = torch.full((L, rf2aa.chemical.NTOTAL), False)
-        # set_trace()
         # mask[:,:14] = True 
         mask[:,:NHEAVY] = True 
 
@@ -745,7 +741,7 @@ class Denoise():
         px0_ = px0 @ R
         # xT_motif_out = xT_motif.reshape(-1,3)
         # xT_motif_out = (xT_motif_out @ R ) + px0_motif_mean
-        # ic(xT_motif_out.shape)
+        # LOGGER.debug(xT_motif_out.shape)
         # xT_motif_out = xT_motif_out.reshape((diffusion_mask.sum(),3,3))
 
 
@@ -945,7 +941,6 @@ class Denoise():
                 
                 # Set next sequence to random max prob at randomly selected positions:
                 if self.seq_decode_mode=='delta_prob_based': # for this we need to keep pseq0 as probabilities
-                    # set_trace()
                     seq_next = self.reveal_residues(seq_t, pseq0, px0, t) 
                     pseq0 = torch.argmax(pseq0, dim=-1).cpu() # [L] # convert to max prob after using prob to sample seq
                 else: # otherwise (default) just use max prob before finding next seq
@@ -1223,7 +1218,7 @@ def fit_rigid_motif_repeat(frames_next,
         
         motif_regions = get_grouped_regions(is_motif, repeat_length) # list of tuples (start_idx, end_idx)
         motif_masks = select_true_regions(is_motif, repeat_length) # list of masks (True/False)
-        ic(motif_regions)
+        LOGGER.debug(motif_regions)
 
 
         def closure():
@@ -1290,8 +1285,8 @@ def fit_rigid_motif_repeat(frames_next,
         raise NotImplementedError
     
     # Save pdb after fitting
-    # ic(frames_next.shape)
-    # ic(xyz_template_clone.shape)
+    # LOGGER.debug(frames_next.shape)
+    # LOGGER.debug(xyz_template_clone.shape)
     # util.writepdb(f'frames_after_fit.pdb', frames_next, torch.ones(len(is_motif)).long())
     # util.writepdb(f'template_after_fit.pdb', xyz_template_clone[:,:3], torch.ones(len(is_motif)).long())
     # sys.exit('Debugging')        
@@ -1312,7 +1307,6 @@ def preprocess(seq, xyz_t, t, T, ppi_design, binderlen, target_res, device):
         
         t1d (torch.tensor, required): (1,L,22) this is the t1d before tacking on the chi angles. Last plane is 1/t (conf hacked as timestep)
     """
-    # set_trace()
     L = seq.shape[-1]
     ### msa_masked ###
     ##################
@@ -1613,10 +1607,8 @@ def process_target(pdb_path, parse_hetatom=False, center=True, inf_conf=None, d_
 
     # Make 27 atom representation
     xyz_27 = torch.full((seq_len, 27, 3), np.nan).float()
-    # ipdb.set_trace()
     xyz_27[:, :NHEAVY, :] = xyz[:, :NHEAVY, :]
     # xyz_27[:, :14, :] = xyz[:, :14, :]
-    # ipdb.set_trace()
     mask_27 = torch.full((seq_len, 27), False)
     mask_27[:, :NHEAVY] = atom_mask[:, :NHEAVY]
     # mask_27[:, :14] = atom_mask
@@ -1718,9 +1710,9 @@ def process_target(pdb_path, parse_hetatom=False, center=True, inf_conf=None, d_
         # test reconstruction
         # outfolder = '/home/davidcj/projects/rf_diffusion_allatom/rf_diffusion/' 
         # outname = os.path.join(outfolder, 'test_symm_template_reconstruction.pdb')
-        # ic(out['template_symm_seq'].shape)
-        # ic(out['template_symm_xyz'].shape)
-        # ic(util.__file__)
+        # LOGGER.debug(out['template_symm_seq'].shape)
+        # LOGGER.debug(out['template_symm_xyz'].shape)
+        # LOGGER.debug(util.__file__)
         # util.writepdb(outname, 
         #               out['template_symm_xyz'].squeeze()[:,:3,:],
         #               out['template_symm_seq'].squeeze())
@@ -2276,7 +2268,6 @@ def get_repeat_t2d_mask(L, con_hal_idx0, contig_map, ij_is_visible, nrepeat, sup
 
         # make 1D array designating which chunks are motif
         is_motif = torch.zeros(L)
-        # set_trace()
         is_motif[con_hal_idx0_full] = 1 
         breaks2 = find_true_chunks_indices(is_motif)
 
@@ -2342,13 +2333,10 @@ def get_repeat_t2d_mask(L, con_hal_idx0, contig_map, ij_is_visible, nrepeat, sup
         # chunk_range_inds_hal, mask_1d_hal = iu.get_hal_contig_ranges(contig_map.contigs, contig_map.inpaint_hal)
         # (2) Fill in LxL matrix with coarse mask info
         con_hal_idx0_full = torch.cat([true_con_hal_idx0 + i*Lasu for i in range(nrepeat)])
-
-        # set_trace()
         chunk_range_inds_full = [(R[0] + i*Lasu, R[1] + i*Lasu) for i in range(nrepeat) for R in chunk_range_inds]
         
 
         mask2d = torch.zeros(L, L)
-        # set_trace()
         # make 1D array designating which chunks are motif
         is_motif = torch.zeros(L)
         is_motif[con_hal_idx0_full] = 1 
@@ -2431,7 +2419,6 @@ def get_repeat_t2d_mask(L, con_hal_idx0, contig_map, ij_is_visible, nrepeat, sup
     
 
 #     mask2d = torch.zeros(L, L)
-#     set_trace()
 #     # make 1D array designating which chunks are motif
 #     is_motif = torch.zeros(L)
 #     is_motif[con_hal_idx0_full] = 1 
@@ -2598,7 +2585,6 @@ def parse_ij_get_repeat_mask(ij_visible, L, n_repeat, con_hal_idx0, supplied_ful
                 
 #                 # print(start_key_ij)
 #                 # print(stop_key_ij)
-#                 # ipdb.set_trace()
 #                 start_stop_tuples.append((pdb_idx_spec.index(start_key_ij),pdb_idx_spec.index(stop_key_ij)))
 #                 running_length += len_diff_ij+1
 #             else: # then we at the hal range thingie
@@ -2790,8 +2776,6 @@ def ss_pairs_to_matrix_v2(sampler):
 
 
 def force_loops(force_loops_list, index_map_dict, ss_adj_mat):
-
-    # set_trace()
     for loop_range_string in force_loops_list:
         # region_i, region_j = loop_range_string.split(',')
         chn_i = loop_range_string[0]
@@ -3003,8 +2987,6 @@ def get_target_ss_matrix(sampler):
     # target_ss_matrix[:,loop_vector] = 0 # (3j)
     # target_ss_matrix[pair_matrix] = 1   # (3)
 
-    # set_trace()
-
 
     # Save the matrix image if we want:
     # if sampler._conf.scaffoldguided.save_ss_matrix_png and (t==sampler._conf.diffuser.T):
@@ -3140,6 +3122,5 @@ def get_sequence_spec(set_sequence_spec, ss_mat, index_map_dict, contig_map, fil
 
 
     return seq_spec_list
-
 
 

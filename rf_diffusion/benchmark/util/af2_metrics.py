@@ -21,8 +21,6 @@ import re
 import numpy as np
 import pandas as pd
 from collections import OrderedDict
-from icecream import ic
-
 script_dir = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))+'/'
 sys.path.insert(0,script_dir+'/../')
 sys.path.insert(0,script_dir+'/../RF2-allatom/')

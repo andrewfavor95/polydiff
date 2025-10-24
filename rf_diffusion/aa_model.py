@@ -1,10 +1,11 @@
+import logging
+LOGGER = logging.getLogger(__name__)
 import functools
 import torch
 import assertpy
 from collections import defaultdict
 import torch.nn.functional as F
 import dataclasses
-from icecream import ic
 from assertpy import assert_that
 from rf2aa.chemical import NAATOKENS, MASKINDEX, NTOTAL, NHEAVYPROT, NHEAVY, NHEAVYNUC, UNKINDEX
 import rf2aa.util
@@ -33,8 +34,6 @@ import atomize
 import sys 
 import mask_generator
 # from rf2aa.util_module import XYZConverter
-from pdb import set_trace
-
 NINDEL=1
 NTERMINUS=2
 NMSAFULL=NAATOKENS+NINDEL+NTERMINUS
@@ -143,11 +142,10 @@ class Indep:
         # return np.chararray([rf2aa.chemical.num2aa[s] for s in self.seq], unicode=False)
     
     def has_heavy_atoms_and_seq(self, atom_mask):
-        ipdb.set_trace()
         want_atom_mask = rf2aa.util.allatom_mask[self.seq]
         has_all_heavy_atoms = (want_atom_mask[:,:rf2aa.chemical.NHEAVYPROT] == atom_mask[:,:rf2aa.chemical.NHEAVYPROT]).all(dim=-1)
         has_sequence = self.seq < 20
-        print('aa_model.py, line 140, only selecting AA tokens...')
+        LOGGER.debug('Filtering to amino-acid tokens for atomization checks')
         return has_all_heavy_atoms * ~self.is_sm * has_sequence
     
     def is_valid_for_atomization(self, atom_mask):
@@ -388,7 +386,6 @@ class Model:
         self.make_indep = make_indep
 
     # def forward(self, rfi, **kwargs):
-    #     # ipdb.set_trace()
     #     rfi_dict = dataclasses.asdict(rfi)
     #     # assert set(rfi_dict.keys()) - set()
     #     return RFO(*self.model(**{**rfi_dict, **kwargs}))
@@ -400,7 +397,6 @@ class Model:
 
         if N_cycle == 1:
             rfi_dict = dataclasses.asdict(rfi)
-            # ipdb.set_trace()
             return RFO(*model(**{**rfi_dict, **kwargs}))
 
         else:
@@ -440,7 +436,6 @@ class Model:
 
                 input = {**rfi_dict, **kwargs}
                 input['return_raw'] = False
-                # ipdb.set_trace()
                 # with grad 
                 return RFO(*model(**input))
 
@@ -482,34 +477,12 @@ class Model:
             for ind in range(start_ind, stop_ind+1):
                 contig_map_hal.append((contig_map.chain_order[chain_num], contig_map.hal[ind][1]))
 
-        print('TO DO: add input bond features')
-        # # get ref inds:
-        # ref_ranges = []
-        # for contig in contig_map.contigs[0].split(' '):
-        #     for subcontig in contig.split(','):
-        #         if subcontig[0].isalpha():
-        #             start, stop = 
-
-        #     all_chunk_ranges = []
-        # is_motif_chunk = []
-        # last_idx = 0
-        # for contig_i in contig_map.sampled_mask:
-        #     for subcontig_ij in contig_i.split(','):
-        #         if subcontig_ij[0].isalpha(): # if it is a template region:
-        #             chain_ij = subcontig_ij[0]
-        #             start_resi_ij, stop_resi_ij = [int(idx) for idx in subcontig_ij[1:].split('-')]
-                    
-        #             len_ij = stop_resi_ij - start_resi_ij
-        #             new_idx = last_idx + len_ij
-
-        #             # contig_chunk_ranges.append((last_idx , new_idx))
-        #             is_motif_chunk.append(1)
-        #             all_chunk_ranges.append((last_idx , new_idx))
+        LOGGER.debug('TODO: add input bond features')
 
         contig_map.hal = contig_map_hal
 
-        print('WARNING: in insert_contig(),ASSUMING NO SMALL MOLECULE, BUT CHANGE LATER!')
-        print('Just modify o.Ls[-1] after computing sm stuff')
+        LOGGER.warning('insert_contig assumes no small molecule; verify chain lengths before deployment')
+        LOGGER.debug('Modify o.Ls[-1] after computing small-molecule features')
         o.Ls.append(0)
 
         # Insert small mol into contig_map
@@ -517,7 +490,6 @@ class Model:
 
         # Not yet implemented due to index shifting
         # assert_that(len(all_chains)).is_equal_to(1)
-        # print(f'WARNING: only 1 chain supported for now. Found {len(all_chains)} chains: {all_chains}')
 
         # string
         next_unused_chain = next(e for e in contig_map.chain_order if e not in all_chains)
@@ -535,7 +507,7 @@ class Model:
         max_hal_idx = max(i for _, i  in contig_map.hal)
 
         # NOTE - this makes all small molecules in the same chain
-        print(f'WARNING: all small molecules in the same chain. Chain: {next_unused_chain}')
+        LOGGER.warning('All small molecules assigned to chain %s', next_unused_chain)
         contig_map.hal.extend(zip([next_unused_chain]*n_sm, range(max_hal_idx+200,max_hal_idx+200+n_sm)))
 
         chain_id = np.array([c for c, _ in contig_map.hal])
@@ -632,7 +604,6 @@ class Model:
                 o.seq[i] = aa_i
 
         # To see the shapes of the indep struct with contig inserted
-        # print(rf2aa.tensor_util.info(rf2aa.tensor_util.to_ordered_dict(o)))
         if refine: 
             pass # want to keep original xyz2 because it contains perfect motif  
         else:
@@ -778,9 +749,6 @@ class Model:
         # num_backbone_atoms_nucleic = 3
         ### xyz_t ###
         #############
-        # set_trace()
-        # print('WHERE I LEFT OFF!!!')
-        # print('FIND OUT HOW TO SET NA SIDECHAIN COORDS to 0.00 instead of nan after backbone atom inds positions')
         if self.conf.preprocess.sidechain_input:
             raise Exception('not implemented')
             assert 0, "NEED TO CHANGE THIS TO ADD NA TOKENS!"
@@ -790,7 +758,6 @@ class Model:
 
         else:
 
-            # print('TEMP TEST AFAV SET ALL xyz_t to 3 atoms ')
             xyz_t[is_diffused,3:,:] = float('nan')
 
             # Different number of atoms if protein, DNA, RNA, etc
@@ -810,7 +777,7 @@ class Model:
         # AF - only do this when doing inference, not during training.
         # if ('inference' in self.conf) and (self.conf.preprocess.sequence_decode):
         if ('inference' in self.conf) and (self.conf.inference.start_from_input):
-            print(f'Warning: start_from_input is True, so chopping off atoms after {NHEAVY}')
+            LOGGER.warning('start_from_input is True; trimming atoms after %d', NHEAVY)
             # assert 0, 'FOR ANDREW (note to self): check this line to see if we actually need to change, or how to best handle with both prot and NA: xyz_t = xyz_t.squeeze()[:,:14,:]'
             
             # atom_trim_range = self.conf['preprocess']['num_atoms_input'] # AF: default to 14, but can control how many
@@ -820,7 +787,6 @@ class Model:
             # NHEAVYPROT
 
             xyz_t = xyz_t.squeeze()[:,:NHEAVY,:]
-            # ipdb.set_trace()
             # xyz_t = xyz_t.squeeze()[:,:NHEAVY,:]
             # if polymer_type_masks:
             #     # How many backbone atoms do we need per polymer type?
@@ -835,12 +801,10 @@ class Model:
 
 
         #     # atom_trim_range = self.conf['preprocess']['num_atoms_input'] # AF: default to 14, but can control how many
-        #     print('AF: Check if this is the best way to handle this... (line 787, aa_model.py)')
         #     atom_trim_range = xyz_t.shape[1]
 
         # AF: since we diffuse NA now, switch to NHEAVY
         # if not atom_trim_range==NHEAVYPROT:
-            # print(f'WARNING: preprocessed inputs are being trimmed to {atom_trim_range} instead of {NHEAVYPROT} (the NHEAVYPROT default). Hopefully this is for a good reason!')
 
         assert_that(xyz_t.shape).is_equal_to((L,NHEAVY,3))
         xyz_t=xyz_t[None, None]
@@ -937,7 +901,7 @@ class Model:
         if self.conf.preprocess.d_t1d == 24: # add hotpot residues
             raise Exception('not implemented')
             if self.ppi_conf.hotspot_res is None:
-                print("WARNING: you're using a model trained on complexes and hotspot residues, without specifying hotspots. If you're doing monomer diffusion this is fine")
+                LOGGER.warning('Model trained on complexes expects hotspot residues; specify hotspots when designing complexes')
                 hotspot_idx=[]
             else:
                 hotspots = [(i[0],int(i[1:])) for i in self.ppi_conf.hotspot_res]
@@ -1014,7 +978,6 @@ class Model:
         # xyz = torch.nan_to_num(xyz)
 
         # We probably want to include more atoms if diffusing a nucleic acid chain
-        # print('TEMP TEST AFAV SET ALL xyz_t to 3 atoms ')
         xyz[0, is_diffused*~indep.is_sm,3:] = torch.nan
 
         # if polymer_type_masks:
@@ -1031,7 +994,6 @@ class Model:
         # xyz[0, is_na_motif, NHEAVYNUC:] = 0
         xyz[0, is_dna_motif, NHEAVYNUC-1:] = 0 # subtract one atom for missing hydroxyl
         xyz[0, is_rna_motif, NHEAVYNUC:] = 0
-        # print('WARNING: EXPERIMENTAL TEST! ADDING ZEROS INSTEAD OF NAN TO NA NONMOTIF REGIONS!!!')
         # xyz[0, is_diffused_dna, NHEAVYNUC-1:] = 0 # subtract one atom for missing hydroxyl
         # xyz[0, is_diffused_rna, NHEAVYNUC:] = 0
 
@@ -1048,8 +1010,7 @@ class Model:
         #     msa_masked[...,-2:] = 0
         #     msa_full[...,-2:] = 0
         if ('inference' in self.conf) and (self.conf.inference.get('contig_as_guidepost', False)):
-            print('>'*80)
-            print('Erase N/C termini markers')
+            LOGGER.debug('Erasing N/C termini markers for guidepost inference')
             '''Manually inspecting the pickled features passed to RF during training, 
             I did not see markers for the N and C termini. This is to more accurately 
             replicate the features seen during training at inference.'''
@@ -1114,9 +1075,8 @@ def assert_has_coords(xyz, indep):
         assert not prot_missing_bb.any(), f'prot_missing_bb {prot_missing_bb}'
         assert not sm_missing_ca.any(), f'sm_missing_ca {sm_missing_ca}'
     except Exception as e:
-        print(e)
-        # import ipdb
-        # ipdb.set_trace()
+        LOGGER.exception('Failed atomization sanity check: %s', e)
+        raise
 
 
 def has_coords(xyz, indep):
@@ -1128,9 +1088,8 @@ def has_coords(xyz, indep):
         assert not prot_missing_bb.any(), f'prot_missing_bb {prot_missing_bb}'
         assert not sm_missing_ca.any(), f'sm_missing_ca {sm_missing_ca}'
     except Exception as e:
-        print(e)
-        import ipdb
-        ipdb.set_trace()
+        LOGGER.exception('Failed atomization sanity check: %s', e)
+        raise
 
 
 def pad_dim(x, dim, new_l, value=0):
@@ -1380,7 +1339,6 @@ def diffuse(conf, diffuser, indep, is_diffused, t):
 
 def forward(model, rfi, **kwargs):
     rfi_dict = dataclasses.asdict(rfi)
-    # ipdb.set_trace()
     return RFO(*model(**{**rfi_dict, **kwargs}))
 
 def mask_indep(indep, is_diffused, polymer_type_masks=None):
@@ -1637,7 +1595,6 @@ class AtomizeResidues:
         atom_idx_by_res = {}
         
         N_atoms = rf2aa.chemical.NHEAVYPROT
-        # ipdb.set_trace()
         if expect_H:
             N_atoms = rf2aa.chemical.NTOTAL
         atomized_mask = rf2aa.util.allatom_mask[torch.tensor(self.atomized_res, dtype=int)][:,:N_atoms]
@@ -1659,7 +1616,6 @@ class AtomizeResidues:
         atom_idx_by_res = {}
         
         N_atoms = rf2aa.chemical.NHEAVYPROT
-        ipdb.set_trace()
         if expect_H:
             N_atoms = rf2aa.chemical.NTOTAL
 

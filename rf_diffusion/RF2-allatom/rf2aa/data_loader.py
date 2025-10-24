@@ -1,8 +1,9 @@
+import logging
+LOGGER = logging.getLogger(__name__)
 import torch
 import warnings
 import time
 import deepdiff
-from icecream import ic
 from torch.utils import data
 import os, csv, random, pickle, gzip, itertools, time, ast, copy, sys
 from dateutil import parser
@@ -18,7 +19,6 @@ script_dir = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(script_dir)
 sys.path.append(script_dir+'/../')
 from symmetry import get_symmetry
-from pdb import set_trace
 import numpy as np
 import pandas as pd
 import torch
@@ -874,14 +874,14 @@ def get_train_valid_set(params, NEG_CLUSID_OFFSET=1000000, no_match_okay=False, 
     #             homo, gen_params
     #         ) = pickle.load(f)
     #         diff = deepdiff.DeepDiff(params, gen_params, ignore_order=True)
-    #         ic(diff)
+    #         LOGGER.debug(diff)
     #         if diff and 'values_changed' in diff:
     #             changed = set(diff['values_changed'])
-    #             ic(changed)
+    #             LOGGER.debug(changed)
     #             for ig in ignore:
     #                 changed.discard(f"root['{ig}']")
     #             if changed:
-    #                 ic(changed)
+    #                 LOGGER.debug(changed)
     #                 print(f'cache miss: dataset generation parameters passed to train multi differ from those in the dataset pkl:')
     #                 print(diff)
     #                 if not no_match_okay:
@@ -954,7 +954,7 @@ def get_train_valid_set(params, NEG_CLUSID_OFFSET=1000000, no_match_okay=False, 
     # pdb monomers
     pdb = _load_df(params['PDB_LIST'])
     pdb = _apply_date_res_cutoffs(pdb)
-    ic(params['MAXMONOMERLENGTH'])
+    LOGGER.debug(params['MAXMONOMERLENGTH'])
     if params['MAXMONOMERLENGTH'] is not None:
         pdb = pdb[pdb["LEN_EXIST"] < params['MAXMONOMERLENGTH']]
         pdb = pdb[pdb["LEN_EXIST"]>60]
@@ -2127,7 +2127,7 @@ def get_bond_distances(bond_feats):
 def featurize_single_chain(msa, ins, tplt, pdb, params, unclamp=False, pick_top=True, random_noise=5.0, fixbb=False, p_short_crop=0.0, p_dslf_crop=0.0):
     msa_featurization_kwargs = {}
     if fixbb:
-#        ic('setting msa feat kwargs')
+#        LOGGER.debug('setting msa feat kwargs')
         msa_featurization_kwargs['p_mask'] = 0.0
 
     # get ground-truth structures
@@ -2923,8 +2923,6 @@ def loader_na_complex(item, params, native_NA_frac=0.05, negative=False, pick_to
             mask[3,:NAstart,:14] = torch.cat( (pdbA[1]['mask'], pdbA[0]['mask']), dim=0)
             mask[2:,NAstart:,:23] = torch.cat( (pdbB[1]['mask'], pdbB[0]['mask']), dim=0)[None,...]
     xyz = torch.nan_to_num(xyz)
-
-    set_trace()
     xyz, mask = remap_NA_xyz_tensors(xyz,mask,msa[0])
 
     # other features
@@ -2974,7 +2972,7 @@ def loader_na_complex(item, params, native_NA_frac=0.05, negative=False, pick_to
 
 
 def loader_tf_complex(item, params, negative=False, pick_top=True, random_noise=5.0):
-#    ic(item, negative)
+#    LOGGER.debug(item, negative)
 
     gene_id = item["gene_id"]
     HASH = item['HASH']
@@ -3067,7 +3065,7 @@ def loader_tf_complex(item, params, negative=False, pick_top=True, random_noise=
     a3mC = {'msa': torch.from_numpy(msaC), 'ins': torch.from_numpy(insC), 'label': HASH}
 
     a3mB = merge_a3m_hetero(a3mB, a3mC, [Ls[-2], Ls[-1]])
-#    ic(a3mA['msa'].shape,a3mB['msa'].shape,Ls,gene_id)
+#    LOGGER.debug(a3mA['msa'].shape,a3mB['msa'].shape,Ls,gene_id)
     LA = a3mA['msa'].shape[1]
     LB = a3mB['msa'].shape[1]
     a3m  = merge_a3m_hetero(a3mA, a3mB, [LA,LB])
@@ -3379,7 +3377,7 @@ def choose_matching_seq(seqs, pos_seq):
 
 def loader_dna_rna(item, params, random_noise=5.0):
     # read PDBs
-    ic(item)
+    LOGGER.debug(item)
     pdb_ids = item['CHAINID'].split(':')
 
     filenameA = params['NA_DIR']+'/torch/'+pdb_ids[0][1:3]+'/'+pdb_ids[0]+'.pt'
@@ -3433,8 +3431,6 @@ def loader_dna_rna(item, params, random_noise=5.0):
     else:
         xyz[:,:,:23] = pdbA['xyz']
         mask[:,:,:23] = pdbA['mask']
-
-    set_trace()
     xyz, mask = remap_NA_xyz_tensors(xyz,mask,msa[0])
 
     # other features
@@ -5443,4 +5439,3 @@ class DistributedWeightedSampler(data.Sampler):
 
     def set_epoch(self, epoch):
         self.epoch = epoch
-

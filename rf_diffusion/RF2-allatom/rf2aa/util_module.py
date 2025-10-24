@@ -7,8 +7,6 @@ import copy
 import dgl
 import networkx as nx
 from rf2aa.util import *
-from pdb import set_trace
-
 def init_lecun_normal(module, scale=1.0):
     def truncated_normal(uniform, mu=0.0, sigma=1.0, a=-2, b=2):
         normal = torch.distributions.normal.Normal(0, 1)
@@ -620,7 +618,6 @@ class XYZConverter(nn.Module):
         try:
             xyzs_bytor = xyz[bs,xs,ys,:]
         except:
-             set_trace()
 
         torsions = torch.zeros( (B,L,NTOTALDOFS,2), device=xyz_in.device )
 

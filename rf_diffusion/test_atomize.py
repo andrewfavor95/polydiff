@@ -1,4 +1,6 @@
 
+import logging
+LOGGER = logging.getLogger(__name__)
 import copy
 import os
 import sys
@@ -6,8 +8,6 @@ import unittest
 import json
 
 import torch
-from icecream import ic
-
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'RF2-allatom'))
 from aa_model import Model, make_indep
 import inference.utils
@@ -70,7 +70,7 @@ def cmp_pretty(got, want, **kwargs):
         loaded = json.loads(jsoned)
         return json.dumps(loaded, indent=4)
     except Exception as e:
-        ic('failed to pretty print output', e)
+        LOGGER.debug('failed to pretty print output', e)
         return json.dumps(diff.pop('tensors unequal', ''), indent=4) + '\n' + str(diff) 
 
 if __name__ == '__main__':

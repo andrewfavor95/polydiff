@@ -1,10 +1,10 @@
+import logging
+LOGGER = logging.getLogger(__name__)
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from opt_einsum import contract as einsum
 import torch.utils.checkpoint as checkpoint
-from icecream import ic
-
 from contextlib import ExitStack, nullcontext
 
 from rf2aa.util_module import *
@@ -203,7 +203,7 @@ def max_block_activations(pair, symmsub):
                 stacks[int(sij)].append( pair[0, i*Leff:(i+1)*Leff, j*Leff:(j+1)*Leff] )
 
     # make tensors and find max activation in each tensor 
-    # ic(list(stacks.keys()))
+    # LOGGER.debug(list(stacks.keys()))
     for key,val in stacks.items():
         A = torch.stack(stacks[key]) # stacked block activations 
         B,max_idx = torch.max(A, dim=0)      # find the max 

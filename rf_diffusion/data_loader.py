@@ -37,7 +37,7 @@ import matplotlib.pyplot as plt
 
 # for diffusion training
 import mask_generator
-from icecream import ic
+import logging
 import pickle
 import random
 from apply_masks import mask_inputs
@@ -52,12 +52,12 @@ import run_inference
 import aa_model
 import atomize
 import error
-from pdb import set_trace
 # import matplotlib.pyplot as plt
 
 from hotspots import make_hotspot_id, make_hotspot_vector, default_hotspot_vector, make_hotspot_id_distil, make_poly_hotspots_vec
 
 USE_DEFAULT = '__USE_DEFAULT__'
+LOGGER = logging.getLogger(__name__)
 
 base_dir = "/projects/ml/TrRosetta/PDB-2021AUG02"
 compl_dir = "/projects/ml/RoseTTAComplex"
@@ -75,7 +75,7 @@ if not os.path.exists(base_dir):
     sm_compl_dir = "/data/databases/RF2_allatom"
     na_dir = "/gscratch2/nucleic"
 def set_data_loader_params(args):
-    ic(args)
+    LOGGER.debug("set_data_loader_params called with args: %s", args)
     PARAMS = {
         "COMPL_LIST" : "%s/list.hetero.csv"%compl_dir,
         "HOMO_LIST" : "%s/list.homo.csv"%compl_dir,
@@ -172,9 +172,7 @@ def set_data_loader_params(args):
                 continue
             PARAMS[param] = getattr(args, param.lower())
 
-    print('This is params from get train valid')
-    for key,val in PARAMS.items():
-        print(key, val)
+    LOGGER.debug("Resolved data loader parameters:\n%s", pprint.pformat(PARAMS))
     return PARAMS
 
 
@@ -213,9 +211,7 @@ def MSAFeaturize(msa, ins, params, eps=1e-6, nmer=1, L_s=[]):
         - insertion info (1)
         - N-term or C-term? (2)
     '''
-    print('IF THIS FUNCTION IS BEING CALLED ON POLYMER TRAINING')
-    print('NEED TO CHANGE')
-    print('THIS IS HARD-CODED FOR ONLY AMINO ACIDS!!!!')
+    LOGGER.warning('MSAFeaturize currently assumes amino-acid inputs only.')
     N, L = msa.shape
     
     term_info = torch.zeros((L,2), device=msa.device).float()
@@ -2288,8 +2284,8 @@ class WeightedDataset:
     weights: np.array
 
 def default_dataset_configs(loader_param, debug=False):
-    ic(loader_param['MOL_DIR'])
-    print('Getting train/valid set...')
+    LOGGER.debug("Loader MOL_DIR: %s", loader_param.get('MOL_DIR'))
+    LOGGER.info('Getting train/valid set...')
     #add in all-atom datasets
     # (
     #     pdb_items, fb_items, compl_items, neg_items, na_compl_items, na_neg_items, rna_items,
@@ -2297,7 +2293,7 @@ def default_dataset_configs(loader_param, debug=False):
     #     valid_na_neg, valid_rna, valid_sm_compl, valid_sm_compl_ligclus, valid_sm_compl_strict, 
     #     valid_sm, valid_pep, homo
     # ) = rf2aa.data_loader.get_train_valid_set({**rf2aa.data_loader.default_dataloader_params, **loader_param, **{'DATAPKL': loader_param['DATAPKL_AA']}}, no_match_okay=debug)
-    ic(loader_param)
+    LOGGER.debug("Loader parameters:\n%s", pprint.pformat(loader_param))
     dataloader_params = copy.deepcopy(rf2aa.data_loader.default_dataloader_params)
     overrides = [
         ['DATAPKL_AA', 'DATAPKL'],
@@ -2307,7 +2303,7 @@ def default_dataset_configs(loader_param, debug=False):
     ]
     for k_diff, k_rf2aa in overrides:
         v = loader_param.get(k_diff, None)
-        ic(k_diff, k_rf2aa, v)
+        LOGGER.debug("Override candidate %s -> %s: %s", k_diff, k_rf2aa, v)
         if v is not None:
             dataloader_params[k_rf2aa] = v
 
@@ -2618,7 +2614,7 @@ class DistilledDataset(data.Dataset):
                     )
 
                 except Exception as e:
-                    print(f'WARNING: hit exception {str(e)} on item {item_context}')
+                    LOGGER.warning('Hit exception "%s" on item %s; falling back.', str(e), item_context)
                     out = self.fallback_out()
 
             elif chosen_dataset == 'na_compl':
@@ -2652,7 +2648,6 @@ class DistilledDataset(data.Dataset):
 
             # Mask the independent inputs.
             # run_inference.seed_all(mask_gen_seed) # Reseed the RNGs for test stability.
-            # set_trace()
             # masks_1d = mask_generator.generate_masks(indep, task, self.params, chosen_dataset, full_chain=None, xyz=indep.xyz, atom_mask=atom_mask[:, :rf2aa.chemical.NHEAVYPROT], seq=indep.seq)
             masks_1d = mask_generator.generate_masks(indep, task, self.params, chosen_dataset, full_chain=None, xyz=indep.xyz, atom_mask=atom_mask[:, :rf2aa.chemical.NHEAVY], seq=indep.seq)
 
@@ -2908,7 +2903,6 @@ class DistilledDataset(data.Dataset):
                         
                 #         # rand_choice_partial_ss = (np.random.rand() < self.preprocess_param['prop_ss_mask'])
                 #         rand_choice_partial_ss = (np.random.rand() < np.sqrt(self.preprocess_param['prop_ss_mask']))
-                #         set_trace()
 
 
                 #         if rand_choice_partial_ss:
@@ -2948,8 +2942,6 @@ class DistilledDataset(data.Dataset):
                         # rand_choice_partial_ss = (np.random.rand() < self.preprocess_param['prop_ss_mask'])
                         rand_choice_partial_ss = (np.random.rand() < np.sqrt(self.preprocess_param['prop_ss_mask']))
 
-                        # set_trace()
-
 
                         if rand_choice_partial_ss:
                             mask_low_prop  = max(0.0, self.preprocess_param['prop_ss_mask'] - self.preprocess_param['prop_ss_mask']**2)
@@ -2961,10 +2953,8 @@ class DistilledDataset(data.Dataset):
                             
 
                             
-                    except:
-
-                        print('ERROR GENERATING NUCLEIC-SS FEATURES! FALLING BACK TO ALL MASKED.')
-                        # set_trace()
+                    except Exception:
+                        LOGGER.warning('Error generating nucleic-SS features; falling back to all masked.', exc_info=True)
                         # ss_matrix = (2*torch.ones(rfi_tp1_t[0].t2d.shape[2:4])).long()
 
                     # # # """
@@ -3162,7 +3152,7 @@ class DistributedWeightedSampler(data.Sampler):
 
         # Temporary until implemented
         if self.dataset_dict['complex'] > 0:
-            print("WARNING: In this branch, the hotspot reside feature has been removed, and you're training on complexes. Be warned")
+            LOGGER.warning("Hotspot residue feature removed while training on complexes; proceed with caution.")
 
         self.total_size = num_example_per_epoch
         self.num_samples = self.total_size // self.num_replicas
@@ -3172,7 +3162,7 @@ class DistributedWeightedSampler(data.Sampler):
 
     def __iter__(self):
         # deterministically shuffle based on epoch
-        print('Just entered DistributedWeightedSampler __iter__')
+        LOGGER.debug('DistributedWeightedSampler __iter__ start (epoch=%s, rank=%s)', self.epoch, self.rank)
         g = torch.Generator()
         g.manual_seed(self.epoch)
         # run_inference.seed_all(self.epoch * self.num_replicas + self.rank) # Reseed the RNGs for test stability.
@@ -3208,4 +3198,3 @@ class DistributedWeightedSampler(data.Sampler):
 
     def set_epoch(self, epoch):
         self.epoch = epoch
-

@@ -70,7 +70,6 @@ pip install e3nn \
    opt_einsum \
    sympy \
    omegaconf \
-   icecream \
    wandb \
    deepdiff \
    assertpy

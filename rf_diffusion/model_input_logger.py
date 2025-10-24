@@ -1,11 +1,11 @@
+import logging
+LOGGER = logging.getLogger(__name__)
 import traceback
 import os
 from inspect import signature
 import pickle
 import datetime
 import rf2aa.tensor_util
-
-from icecream import ic
 
 LOG_ONLY_KEY = 'log_only_key'
 
@@ -102,7 +102,7 @@ if __name__=='__main__':
 	output_dir, extra = pickle_function_call(dog, 'bark', 'debugging')
 
 	dog.bark('ruff', kwarg='wooof')
-	ic(extra.i, extra.last_pickle)
+	LOGGER.debug(extra.i, extra.last_pickle)
 
 	for p in glob.glob(os.path.join(output_dir, '*')):
 		print(p)

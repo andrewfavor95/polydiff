@@ -6,7 +6,6 @@
 import os, argparse, glob
 import numpy as np
 import pandas as pd
-from icecream import ic
 from tqdm import tqdm
 import assertpy
 

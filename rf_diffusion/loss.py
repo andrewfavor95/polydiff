@@ -9,11 +9,8 @@ from rf2aa.loss import mask_unresolved_frames
 from kinematics import get_dih, th_kabsch
 from rf2aa.chemical import NFRAMES, NTOTAL
 from scoring import HbHybType
-from icecream import ic
 from diff_util import th_min_angle 
 import time 
-from pdb import set_trace
-
 torch.autograd.set_detect_anomaly(True)
 
 # Loss functions for the training
@@ -458,8 +455,6 @@ def calc_dmat_loss(pred_ca, true_ca, mask_2d, same_chain, negative=False, d_clam
 #     pred_dist = torch.cdist(pred, pred) # (I, B, L, L)
 #     true_dist = torch.cdist(true_ca, true_ca).unsqueeze(0) # (1, B, L, L)
 
-#     set_trace()
-
 
 #     difference = torch.sqrt(torch.square(t_tilde_ij-t_ij).sum(dim=-1) + eps)
 #     clamp = torch.zeros_like(difference)
@@ -644,7 +639,6 @@ def compute_LFAD(true_xyz_fa, pred_xyz_fa, resi_mask_2d, mask_fa_in, eps = 1e-10
         """
 
         I,L,N,D = pred_xyz_fa.shape
-        set_trace()
         pred_xyz_flat_fa     = pred_xyz_fa.view(I, L*N, D)
         # true_xyz_flat_fa     = true_xyz_fa.view(I, L*N, D)
         true_xyz_flat_fa     = true_xyz_fa.view(1, L*N, D)
@@ -688,8 +682,6 @@ def compute_LFAD(true_xyz_fa, pred_xyz_fa, resi_mask_2d, mask_fa_in, eps = 1e-10
     loss_tot = 0.0
 
     for i in range(L_tot):
-
-        set_trace()
         local_resi_inds_i = torch.nonzero(resi_mask_2d[0,i, :]).flatten()
 
         if len(local_resi_inds_i) > 0:

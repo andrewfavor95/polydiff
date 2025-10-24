@@ -9,7 +9,7 @@ inference:
   #ckpt_path: /mnt/net/databases/diffusion/models/Diff_t1d_31_t2d_47_082222_epoch19.pt
   #ckpt_path: /net/databases/diffusion/models/Diff_t1d_32_t2d_47_disp_fixed_finetuned_082622_epoch10.pt
   #ckpt_path: /net/databases/diffusion/models/Diff_rollback_epoch8.pt
-  ckpt_path: /net/databases/diffusion/nate_tmp/new_SelfCond_crdscale0.25/models/BFF_4.pt
+  ckpt_path: ${oc.env:RFDPOLY_CKPT_PATH,"weights/train_session2024-07-08_1720455712_BFF_3.00.pt"}
   ppi_design: False
   autogenerate_contigs: False
   symmetry: null
