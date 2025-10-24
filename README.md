@@ -80,7 +80,7 @@ APPTAINER_PATH=$ENV_DIR/SE3nv.sif
 
 ```
 
-## Testing that everything workd:
+## Testing that everything works:
 Change directory to wherever you want to perform design, and run example inference script:
 ```Bash
 cd $DESIGN_DIR
