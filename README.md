@@ -1,5 +1,6 @@
 # Multi polymer diffusion
 
+## Basic use:
 Clone this repository using git, then inference can be run when you have downloaded model weights and the necessary apptainer to run (see below).
 
 To download model weights:
@@ -28,7 +29,7 @@ This repository contains the code for the [associated preprint](https://www.bior
 
 
 
-# Installation and setup
+## Installation and setup
 
 1. Set relevant paths for installation and navigate to directory for setup (change accordingly given your filesystem and choice of storage location):
 ```Bash
@@ -55,7 +56,7 @@ git clone git@github.com:andrewfavor95/polydiff.git
 
 ```
 
-4. Navigate to the directory where you want to save model weights, download them, and set path variable for weights of your choice:
+3. Navigate to the directory where you want to save model weights, download them, and set path variable for weights of your choice:
 ```Bash
 # Download model weights:
 cd $WEIGHTS_DIR
@@ -78,8 +79,8 @@ APPTAINER_PATH=$ENV_DIR/SE3nv.sif
 
 ```
 
-
-3. Change directory to wherever you want to perform design, and run example inference script:
+## Testing that everything workd:
+Change directory to wherever you want to perform design, and run example inference script:
 ```Bash
 cd $DESIGN_DIR
 
