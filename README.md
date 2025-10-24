@@ -1,20 +1,6 @@
 # Multi polymer diffusion
 
-## Basic use:
-Clone this repository using git, then inference can be run when you have downloaded model weights and the necessary apptainer to run (see below).
-
-To download model weights:
-  * [click here for the best RNA-design weights](https://files.ipd.uw.edu/pub/2025_RFDpoly/train_session2024-07-08_1720455712_BFF_3.00.pt)
-  * [click here for the best general multi-polymer weights](https://files.ipd.uw.edu/pub/2025_RFDpoly/train_session2024-06-27_1719522052_BFF_7.00.pt)
-
-This software runs using apptainers. To download the associated apptainer `.sif` file, [click here](https://files.ipd.uw.edu/pub/2025_RFDpoly/SE3nv.sif)
-
-
-
-Once you have these files, you can follow the [design tutorial](https://github.com/andrewfavor95/polydiff/blob/main/RFDpoly_tutorial.pdf) to see various design tasks and the associated documentation/syntax.
-
-Contact afavor@uw.edu if you have trouble accessing files or hit any bugs.
-
+## Basic info:
 This repository contains the code for the [associated preprint](https://www.biorxiv.org/content/10.1101/2025.10.01.679929v1), which can be cited
 ```bib
 @article{favor2025novo,
@@ -26,6 +12,21 @@ This repository contains the code for the [associated preprint](https://www.bior
   publisher={Cold Spring Harbor Laboratory}
 }
 ```
+
+You can clone this repository using git, then inference can be run when you have downloaded model weights and the necessary apptainer to run (see below).
+
+To download model weights:
+  * [click here for the best RNA-design weights](https://files.ipd.uw.edu/pub/2025_RFDpoly/train_session2024-07-08_1720455712_BFF_3.00.pt)
+  * [click here for the best general multi-polymer weights](https://files.ipd.uw.edu/pub/2025_RFDpoly/train_session2024-06-27_1719522052_BFF_7.00.pt)
+
+This software runs using apptainers. To download the associated apptainer `.sif` file, [click here](https://files.ipd.uw.edu/pub/2025_RFDpoly/SE3nv.sif)
+Equivalent setup instructions for conda are in progress.
+
+Once you have these files, you can follow the [design tutorial](https://github.com/andrewfavor95/polydiff/blob/main/RFDpoly_tutorial.pdf) to see various design tasks and the associated documentation/syntax.
+
+Contact afavor@uw.edu if you have trouble accessing files or hit any bugs.
+
+
 
 
 
