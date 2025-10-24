@@ -14,10 +14,21 @@ Once you have these files, you can follow the [design tutorial](https://github.c
 
 Contact afavor@uw.edu if you have trouble accessing files or hit any bugs.
 
+This repository contains the code for the [associated preprint](https://www.biorxiv.org/content/10.1101/2025.10.01.679929v1), which can be cited
+```bib
+@article{favor2025novo,
+  title={De novo design of RNA and nucleoprotein complexes},
+  author={Favor, Andrew H and Quijano, Riley and Chernova, Elizaveta and Kubaney, Andrew and Weidle, Connor and Esler, Morgan A and McHugh, Lilian and Carr, Ann and Hsia, Yang and Juergens, David and others},
+  journal={bioRxiv},
+  pages={2025--10},
+  year={2025},
+  publisher={Cold Spring Harbor Laboratory}
+}
+```
+
 
 
 # Installation and setup
-
 
 1. Set relevant paths for installation and navigate to directory for setup (change accordingly given your filesystem and choice of storage location):
 ```Bash
@@ -82,6 +93,7 @@ inference.output_prefix=$RFDPOLY_PATH/test_outputs/basic_uncond_test01
 
 ```
 The initial run will take a little while to precompute the IGSO3 cache, but subsequent runs will be more direct and quick.
-If the example command above works, proceed to exploration of the full [design tutorial](https://github.com/andrewfavor95/polydiff/blob/main/RFDpoly_tutorial.pdf).
 
+
+If the example command above works, proceed to exploration of the full [design tutorial](https://github.com/andrewfavor95/polydiff/blob/main/RFDpoly_tutorial.pdf).
 
