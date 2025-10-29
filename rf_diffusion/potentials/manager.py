@@ -1,10 +1,6 @@
 import torch
-from icecream import ic
 import potentials.potentials as potentials
 import numpy as np 
-from pdb import set_trace
-
-
 def make_contact_matrix(nchain, intra_all=False, inter_all=False, contact_string=None, ind_spec_custom_contact=None, chain_ind_dict=None):
     """
     Calculate a matrix of inter/intra chain contact indicators
@@ -60,7 +56,6 @@ def make_ind_spec(nchain, intra_all=False, inter_all=False, contact_string=None,
 
     # range_spec = []
     # same_chain = []
-    # set_trace()
     if ind_spec_custom_contact is not None:
         alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
         ind_spec = []
@@ -208,8 +203,6 @@ class PotentialManager:
             #         for i, chain_i in enumerate(self.index_map_dict.keys()):
             #             self.chain_ind_dict[i] = torch.arange(self.index_map_dict[chain_i][min(self.index_map_dict[chain_i].keys())], self.index_map_dict[chain_i][max(self.index_map_dict[chain_i].keys())]+1)
             #         # num_chains = calc_nchains(symbol=self.inference_config.symmetry, components=num_comps, L=self.L, index_map_dict=self.index_map_dict) # hard code 1 for now 
-
-            #     set_trace()
                 
             #     contact_kwargs={'nchain':num_chains,
             #                     'intra_all':self.potentials_config.olig_intra_all,

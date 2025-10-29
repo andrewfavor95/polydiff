@@ -1,3 +1,5 @@
+import logging
+LOGGER = logging.getLogger(__name__)
 import copy
 import os
 import sys
@@ -6,8 +8,6 @@ import json
 
 import assertpy
 import torch
-from icecream import ic
-
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'RF2-allatom'))
 from aa_model import Model, make_indep
 import inference.utils

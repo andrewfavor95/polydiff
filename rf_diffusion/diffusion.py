@@ -7,38 +7,37 @@ import logging
 from typing import List
 
 from scipy.spatial.transform import Rotation as scipy_R
-from scipy.spatial.transform import Slerp 
+from scipy.spatial.transform import Slerp
 import rotation_conversions
 
 # from util import rigid_from_3_points, get_torsions
-# from util import torsion_indices as TOR_INDICES 
+# from util import torsion_indices as TOR_INDICES
 # from util import torsion_can_flip as TOR_CAN_FLIP
 # from util import reference_angles as REF_ANGLES
 # from util import rigid_from_3_points, get_torsions
 
 
 
-from rf2aa.util import torsion_indices as TOR_INDICES 
+from rf2aa.util import torsion_indices as TOR_INDICES
 from rf2aa.util import torsion_can_flip as TOR_CAN_FLIP
 from rf2aa.util import reference_angles as REF_ANGLES
 from rf2aa.util import rigid_from_3_points
 from rf2aa.util_module import XYZConverter
 
-import sys 
+import sys
 # from util_module import ComputeAllAtomCoords
 
-from diff_util import th_min_angle, th_interpolate_angles, get_aa_schedule 
+from diff_util import th_min_angle, th_interpolate_angles, get_aa_schedule
 
-# from chemical import INIT_CRDS 
+# from chemical import INIT_CRDS
 
 import igso3
-import time 
-
-from icecream import ic  
+import time
 
 import rf2aa.chemical
 from rf2aa.chemical import INIT_CRDS
-from pdb import set_trace
+
+LOGGER = logging.getLogger(__name__)
 torch.set_printoptions(sci_mode=False)
 
 def cosine_interp(T, eta_max, eta_min):
@@ -66,7 +65,7 @@ def get_chi_betaT(max_timestep=100, beta_0=0.01, abar_T=1e-3, method='cosine'):
     name = os.path.join(schedule_cache_dir, f'T{max_timestep}_beta_0{beta_0}_abar_T{abar_T}_method_{method}.pkl')
 
     if not os.path.exists(name):
-        print('Calculating chi_beta_T dictionary...')
+        LOGGER.info('Calculating chi_beta_T dictionary...')
 
         if method not in ['cosine', 'linear']:
             raise NotImplementedError("Only cosine and linear interpolations are implemented for chi angle beta schedule")
@@ -90,15 +89,15 @@ def get_chi_betaT(max_timestep=100, beta_0=0.01, abar_T=1e-3, method='cosine'):
         with open(name, 'wb') as fp:
             pickle.dump(beta_Ts, fp)
 
-        print('Done calculating chi_beta_T dictionaries. They are now cached.')
+        LOGGER.info('Done calculating chi_beta_T dictionaries. They are now cached.')
 
     else:
-        print('Using cached chi_beta_T dictionary.')
+        LOGGER.info('Using cached chi_beta_T dictionary.')
         with open(name, 'rb') as fp:
             beta_Ts = pickle.load(fp)
 
 
-    print('Done calculating chi_beta_T, chi_alphas_T, and chi_abars_T dictionaries.')
+    LOGGER.info('Finished preparing chi_beta_T, chi_alphas_T, and chi_abars_T dictionaries.')
     return beta_Ts
 
 def get_beta_schedule(T, b0, bT, schedule_type, schedule_params={}, inference=False):
@@ -130,7 +129,8 @@ def get_beta_schedule(T, b0, bT, schedule_type, schedule_params={}, inference=Fa
     alphabar_t_schedule  = torch.cumprod(alpha_schedule, dim=0)
     
     if inference:
-        print(f"With this beta schedule ({schedule_type} schedule, beta_0 = {b0}, beta_T = {bT}), alpha_bar_T = {alphabar_t_schedule[-1]}")
+        LOGGER.info("Beta schedule %s with beta_0=%s beta_T=%s yields alpha_bar_T=%s",
+                    schedule_type, b0, bT, alphabar_t_schedule[-1])
 
     return schedule, alpha_schedule, alphabar_t_schedule 
 
@@ -275,7 +275,7 @@ def read_pkl(read_path: str, verbose=False):
             return pickle.load(handle)
         except Exception as e:
             if verbose:
-                print(f'Failed to read {read_path}')
+                LOGGER.warning('Failed to read igso3 cache at %s', read_path)
             raise(e)
 
 class IGSO3():
@@ -920,7 +920,7 @@ class Diffuser():
         # get chi angle diffuser 
         self.torsion_diffuser = INTERP(self.T)
 
-        print('Successful diffuser __init__')
+        LOGGER.debug('Successful diffuser __init__')
     
     def diffuse_pose(self, xyz, seq, atom_mask, is_sm, 
                     diffuse_sidechains=False, 
@@ -976,14 +976,14 @@ class Diffuser():
                 if center_crds:
                     xyz = xyz - self.motif_com
                 else:
-                    print('WARNING: NOT CENTERING STRUCTURE AT ORIGIN')
+                    LOGGER.warning('Not centering structure at origin (atom mask NaNs present).')
             
             elif (torch.sum(diffusion_mask) == 0):
                 if center_crds:
                     xyz = xyz - xyz[:,1,:].mean(dim=0) # Does this even matter? 
                                                        # crds aren't even diffused yet and should wind up at origin anyway
                 else:
-                    print('WARNING: NOT CENTERING STRUCTURE AT ORIGIN')
+                    LOGGER.warning('Not centering structure at origin (atom mask NaNs present).')
 
         else: # symmetric case
 
@@ -999,7 +999,7 @@ class Diffuser():
             if center_crds:
                 xyz = xyz - self.motif_com
             else:
-                print('WARNING: NOT CENTERING STRUCTURE AT ORIGIN')
+                LOGGER.warning('Not centering structure at origin (atom mask NaNs present).')
 
         # ic(o.xyz[0])
         #xyz = xyz - xyz[nan_mask][:,1,:].mean(dim=0) # DJ aug 23, 2022 - commenting out bc now better logic to assert no nans 
@@ -1112,6 +1112,4 @@ class Diffuser():
 
         return fa_stack, aa_masks, xyz_true
         #return diffused_T, deltas, diffused_frame_crds, diffused_frames, diffused_torsions, fa_stack, aa_masks
-
-
 

@@ -1,3 +1,5 @@
+import logging
+LOGGER = logging.getLogger(__name__)
 import sys
 import warnings
 import assertpy
@@ -15,15 +17,12 @@ from itertools import combinations
 from collections import OrderedDict
 from openbabel import openbabel
 from scipy.spatial.transform import Rotation
-from icecream import ic
 import math
 
 import rf2aa.chemical as chemical
 from rf2aa.chemical import *
 from rf2aa.kinematics import get_atomize_protein_chirals
 from rf2aa.scoring import *
-from pdb import set_trace
-
 DEFAULT_SILENT_HEADER='SEQUENCE: VRGGALVRAIAALTGKSKRRIYGAIGGRARRWGISRRTAAALILAYLLAHGSWFGKSPREIAAAYAAAVAgcagatctgcacatcatgtgcagatctgc\nSCORE:     score     fa_atr     fa_rep     fa_sol    fa_intra_rep    fa_intra_sol_xover4    lk_ball_wtd    fa_elec    pro_close    hbond_sr_bb    hbond_lr_bb    hbond_bb_sc    hbond_sc    dslf_fa13      omega     fa_dun    p_aa_pp    yhh_planarity        ref    rama_prepro       time                description\nREMARK BINARY SILENTFILE\n'
 
 
@@ -296,7 +295,7 @@ def xyz_t_to_frame_xyz_sm_mask(xyz_t, is_sm, atom_frames):
     Returns:
     xyz_t_frame (B, T, L, natoms, 3)
     """
-    # ic(xyz_t.shape, is_sm.shape, atom_frames.shape)
+    # LOGGER.debug(xyz_t.shape, is_sm.shape, atom_frames.shape)
     # xyz_t.shape: torch.Size([1, 1, 194, 36, 3]) 
     # is_sm.shape: torch.Size([194])
     # atom_frames.shape: torch.Size([1, 29, 3, 2])
@@ -491,10 +490,10 @@ def writepdb_file(f, atoms, seq, modelnum=None, chain="A", idx_pdb=None, bfacts=
              bond_feats=None, file_mode="w",atom_mask=None, atom_idx_offset=0, chain_Ls=None,
              remap_atomtype=True, lig_name='LG1', atom_names=None, chain_letters=None, rna_oneletter=False, natoms=23):
              # remap_atomtype=True, lig_name='LG1', atom_names=None, chain_letters=None, rna_oneletter=False,):
-    #ic(atoms.shape, seq.shape, bond_feats.shape)
-    #ic(chain_Ls)
+    #LOGGER.debug(atoms.shape, seq.shape, bond_feats.shape)
+    #LOGGER.debug(chain_Ls)
 
-    # ic(seq)
+    # LOGGER.debug(seq)
 
     def _get_atom_type(atom_name):
         atype = ''
@@ -579,8 +578,6 @@ def writepdb_file(f, atoms, seq, modelnum=None, chain="A", idx_pdb=None, bfacts=
 
         # natoms_list.append(min(natoms,natoms_i))
         natoms_list.append(natoms_i)
-
-    # set_trace()
 
     # Option to switch alphabet if requested by user
     if rna_oneletter: # Current option: RNA 3-letter alphabet to the standard 1-letter convention used by basically all non-RF software:

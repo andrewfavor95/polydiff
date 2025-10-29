@@ -4,13 +4,14 @@
 # scripts, optionally submits array job and outputs slurm job ID
 #
 
+import logging
+LOGGER = logging.getLogger(__name__)
 import sys, os, argparse, itertools, json, shutil, re
 import numpy as np
 import pandas as pd
 
 script_dir = os.path.dirname(os.path.realpath(__file__))+'/'
 sys.path.append(script_dir+'util/')
-from icecream import ic 
 import slurm_tools
 import assertpy
 
@@ -230,7 +231,7 @@ def pilot_jobs_list(jobs_path, single=False):
         if single:
             jobs = jobs[0:1]
         fh.writelines(jobs)
-    ic(f'running {len(jobs)} pilot jobs for PDBS: {list(job_by_input_pdb.keys())}')
+    LOGGER.debug(f'running {len(jobs)} pilot jobs for PDBS: {list(job_by_input_pdb.keys())}')
     return pilot_path
         
 def prune_jobs_list(jobs_path):

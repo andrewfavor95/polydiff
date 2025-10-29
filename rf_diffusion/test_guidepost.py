@@ -1,3 +1,5 @@
+import logging
+LOGGER = logging.getLogger(__name__)
 import copy
 import os
 import sys
@@ -5,8 +7,6 @@ import unittest
 import json
 
 import torch
-from icecream import ic
-
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'RF2-allatom'))
 from aa_model import Model, make_indep
 import inference.utils
@@ -41,7 +41,7 @@ class TestGuidepost(unittest.TestCase):
             indep = make_indep(test_pdb, ligand)
             adaptor = Model({})
             indep, _, _ = adaptor.insert_contig(indep, contig_map)
-            ic(indep.chirals.shape)
+            LOGGER.debug(indep.chirals.shape)
             indep.xyz = atomize.set_nonexistant_atoms_to_nan(indep.xyz, indep.seq)
             indep_init = copy.deepcopy(indep)
 
@@ -54,7 +54,7 @@ class TestGuidepost(unittest.TestCase):
             
             indep_ungp = copy.deepcopy(indep_gp)
             aa_model.pop_mask(indep_ungp, ~is_gp)
-            ic(indep_ungp.length())
+            LOGGER.debug(indep_ungp.length())
             
 
             diff = test_utils.cmp_pretty(indep_ungp, indep_init)

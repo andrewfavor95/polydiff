@@ -1,8 +1,9 @@
+import logging
+LOGGER = logging.getLogger(__name__)
 import torch
 import torch.nn as nn
 import assertpy
 from assertpy import assert_that
-from icecream import ic
 from rf2aa.Embeddings import MSA_emb, Extra_emb, Bond_emb, Templ_emb, Recycling
 from rf2aa.Track_module import IterativeSimulator
 from rf2aa.AuxiliaryPredictor import (
@@ -16,8 +17,6 @@ from rf2aa.chemical import INIT_CRDS, NAATOKENS, NBTYPES, NTOTAL
 from rf2aa.tensor_util import assert_shape, assert_equal
 import rf2aa.util
 from rf2aa.util_module import rbf
-from pdb import set_trace
-
 def get_shape(t):
     if hasattr(t, "shape"):
         return t.shape
@@ -229,28 +228,28 @@ class RoseTTAFoldModule(nn.Module):
         #     seq = seq.half()
         #     seq_unmasked = seq_unmasked.half()
 
-        # ic(get_shape(msa_latent))
-        # ic(get_shape(msa_full))
-        # ic(get_shape(seq))
-        # ic(get_shape(seq_unmasked))
-        # ic(get_shape(xyz))
-        # ic(get_shape(sctors))
-        # ic(get_shape(idx))
-        # ic(get_shape(bond_feats))
-        # ic(get_shape(chirals))
-        # ic(get_shape(atom_frames))
-        # ic(get_shape(t1d))
-        # ic(get_shape(t2d))
-        # ic(get_shape(xyz_t))
-        # ic(get_shape(alpha_t))
-        # ic(get_shape(mask_t))
-        # ic(get_shape(same_chain))
-        # ic(get_shape(msa_prev))
-        # ic(get_shape(pair_prev))
-        # ic(get_shape(state_prev))
-        # ic(get_shape(mask_recycle))
-        # ic()
-        # ic()
+        # LOGGER.debug(get_shape(msa_latent))
+        # LOGGER.debug(get_shape(msa_full))
+        # LOGGER.debug(get_shape(seq))
+        # LOGGER.debug(get_shape(seq_unmasked))
+        # LOGGER.debug(get_shape(xyz))
+        # LOGGER.debug(get_shape(sctors))
+        # LOGGER.debug(get_shape(idx))
+        # LOGGER.debug(get_shape(bond_feats))
+        # LOGGER.debug(get_shape(chirals))
+        # LOGGER.debug(get_shape(atom_frames))
+        # LOGGER.debug(get_shape(t1d))
+        # LOGGER.debug(get_shape(t2d))
+        # LOGGER.debug(get_shape(xyz_t))
+        # LOGGER.debug(get_shape(alpha_t))
+        # LOGGER.debug(get_shape(mask_t))
+        # LOGGER.debug(get_shape(same_chain))
+        # LOGGER.debug(get_shape(msa_prev))
+        # LOGGER.debug(get_shape(pair_prev))
+        # LOGGER.debug(get_shape(state_prev))
+        # LOGGER.debug(get_shape(mask_recycle))
+        # LOGGER.debug()
+        # LOGGER.debug()
         B, N, L = msa_latent.shape[:3]
         A = atom_frames.shape[1]
         dtype = msa_latent.dtype
@@ -330,7 +329,7 @@ class RoseTTAFoldModule(nn.Module):
             assert_that(same_chain.device).is_equal_to(device)
 
         if self.verbose_checks:
-            ic(is_motif.shape)
+            LOGGER.debug(is_motif.shape)
             is_sm = rf2aa.util.is_atom(seq[0])  # (L)
             is_protein_motif = is_motif & ~is_sm
             if is_motif.any():
@@ -373,7 +372,7 @@ class RoseTTAFoldModule(nn.Module):
                 i_name.insert(0, (motif_protein_i, "motif_protein"))
 
             for i, name in i_name:
-                ic(f"------------------{name}:{i}----------------")
+                LOGGER.debug(f"------------------{name}:{i}----------------")
                 msa_full_seq = msa_full[0, 0, i, np.r_[0:NAATOKENS]]
                 msa_full_indel = msa_full[
                     0, 0, i, np.r_[NAATOKENS : NAATOKENS + NINDEL]
@@ -402,10 +401,10 @@ class RoseTTAFoldModule(nn.Module):
                 assert_equal(msa_full_term, msa_latent_term)
                 # if 'motif' in name:
                 msa_cat = torch.where(msa_full_seq)[0]
-                ic(msa_cat, seq[0, i])
+                LOGGER.debug(msa_cat, seq[0, i])
                 assert_equal(seq[0, i : i + 1], msa_cat)
                 assert_equal(seq[0, i], seq_unmasked[0, i])
-                ic(
+                LOGGER.debug(
                     name,
                     # torch.where(msa_latent[0,0,i,:80]),
                     # torch.where(msa_full[0,0,i]),
@@ -480,12 +479,12 @@ class RoseTTAFoldModule(nn.Module):
 
         if self.verbose_checks:
             pseq_0 = logits_aa.permute(0, 2, 1)
-            ic(pseq_0.shape)
+            LOGGER.debug(pseq_0.shape)
             pseq_0 = pseq_0[0]
-            ic(
+            LOGGER.debug(
                 f"motif    sequence: { rf2aa.chemical.seq2chars(torch.argmax(pseq_0[is_motif], dim=-1).tolist())}"
             )
-            ic(
+            LOGGER.debug(
                 f"diffused sequence: { rf2aa.chemical.seq2chars(torch.argmax(pseq_0[~is_motif], dim=-1).tolist())}"
             )
 
@@ -520,4 +519,3 @@ class RoseTTAFoldModule(nn.Module):
             logits, logits_aa, logits_pae, logits_pde, p_bind, 
             xyz, alpha_s, xyz_allatom, lddt, msa[:,0], pair, state, symmsub
         )
-

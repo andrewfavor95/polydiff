@@ -9,11 +9,11 @@ ligand in the diffusion design model and all atoms from the input ligand,
 including hydrogens, are copied into the output.  
 """
 
+import logging
+LOGGER = logging.getLogger(__name__)
 import sys, os, argparse, glob, tqdm, pickle
 import numpy as np
 import torch
-from icecream import ic
-
 script_dir = os.path.dirname(os.path.realpath(__file__))+'/'
 sys.path.insert(0,script_dir+'/../')
 sys.path.insert(0,script_dir+'/../RF2-allatom/')
@@ -121,7 +121,7 @@ def main():
             lines = f.readlines()
             n_designs = int(len(lines)/2-1)
             if n_designs == -1:
-                ic(seqdir+name+'.fa')
+                LOGGER.debug(seqdir+name+'.fa')
             for i in range(n_designs):
                 print('writing file', outdir+name+f"_{i}.pdb")
                 seq = lines[2*i + 3].strip() # 2nd seq is 1st design

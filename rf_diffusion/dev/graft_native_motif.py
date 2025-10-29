@@ -1,3 +1,5 @@
+import logging
+LOGGER = logging.getLogger(__name__)
 import sys
 import os
 root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -6,7 +8,6 @@ sys.path.append('/home/ahern/tools/pdb-tools/')
 from dev import analyze
 import shutil
 import glob
-from icecream import ic
 from tqdm import tqdm
 import fire
 from pdbtools import *
@@ -20,7 +21,7 @@ def get_input_aligned_pdb(row, out_path=None):
     trb = analyze.get_trb(row)
     other_ch = trb['con_ref_pdb_idx'][0][0]
     self_ch = 'A'
-    # ic(self_ch, other_ch, other_ch, other_idx)
+    # LOGGER.debug(self_ch, other_ch, other_ch, other_idx)
     des_p = des_p.aligned_to_chain_idxs(input_p, self_ch, self_idx, other_ch, other_idx)
     des_p.chains[self_ch].xyz[self_idx, 3:] = input_p[other_ch].xyz[other_idx, 3:]
     aligned_path = des_p.write_pdb(out_path)

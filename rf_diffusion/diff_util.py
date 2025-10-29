@@ -3,9 +3,6 @@ import numpy as np
 import random 
 
 from chemical import INIT_CRDS
-from icecream import ic 
-
-
 def th_min_angle(start, end, radians=False):
     """
     Finds the angle you would add to <start> in order to get to <end>

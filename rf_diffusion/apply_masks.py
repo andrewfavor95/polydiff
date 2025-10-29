@@ -1,6 +1,7 @@
+import logging
+LOGGER = logging.getLogger(__name__)
 import torch
 import math
-from icecream import ic
 import random
 from blosum62 import p_j_given_i as P_JGI
 import numpy as np
@@ -10,7 +11,6 @@ import rf2aa.tensor_util
 import rf2aa.chemical
 from rf2aa.chemical import NAATOKENS, MASKINDEX
 from rf2aa.tensor_util import assert_equal
-from pdb import set_trace
 def sample_blosum_mutations(seq, *args, **kwargs):
     assert len(seq.shape) == 1
     L = len(seq)
@@ -171,7 +171,6 @@ def mask_inputs(seq,
                   'diffuse_sidechains'      :preprocess_param['sidechain_input'],
                   'include_motif_sidechains':preprocess_param['motif_sidechain_input'],
                   'is_sm': is_sm}
-        set_trace()
         diffused_fullatoms, aa_masks, true_crds = diffuser.diffuse_pose(**kwargs)
 
         ############################################
@@ -489,18 +488,18 @@ def mask_inputs(seq,
         # TODO: adapt this for small molecules using t1d shift
         # Mask the diffused sequence
 
-        # # ic(blosum_replacement.shape)
-        # ic(blosum_replacement)
+        # # LOGGER.debug(blosum_replacement.shape)
+        # LOGGER.debug(blosum_replacement)
         # blosum_replacement = torch.cat(blosum_replacement)
-        # ic(blosum_replacement.shape)
+        # LOGGER.debug(blosum_replacement.shape)
         # seq_cat_shifted = blosum_replacement.argmax(dim=-1)
-        # ic(seq_cat_shifted)
+        # LOGGER.debug(seq_cat_shifted)
         # seq_cat_shifted[seq_cat_shifted>=MASKINDEX] -= 1
         # # t1d_motif = torch.nn.functional.one_hot(seq_cat_shifted, num_classes=NAATOKENS-1)
-        # # ic(t1d)
+        # # LOGGER.debug(t1d)
         # # t1d = t1d[None, None] # [L, NAATOKENS-1] --> [1,1,L, NAATOKENS-1]
 
-        # ic(t1d.shape, t1d.argmax(dim=-1))
+        # LOGGER.debug(t1d.shape, t1d.argmax(dim=-1))
 
         t1d[0,:,~seq_mask[0],:20] = 0 
         t1d[1,:,~seq_mask[1],:20] = 0 

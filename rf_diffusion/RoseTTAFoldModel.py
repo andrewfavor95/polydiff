@@ -23,9 +23,6 @@ from rf2aa.util_module import rbf
 
 # from util import INIT_CRDS
 from opt_einsum import contract as einsum
-from icecream import ic 
-
-
 def get_shape(t):
     if hasattr(t, "shape"):
         return t.shape

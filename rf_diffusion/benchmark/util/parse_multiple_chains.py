@@ -7,8 +7,6 @@
 import sys, os, argparse, itertools, json, glob
 import numpy as np
 import slurm_tools
-from icecream import ic
-
 def get_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('--input_files',type=str,help='file with list of paths to pdbs to parse.')

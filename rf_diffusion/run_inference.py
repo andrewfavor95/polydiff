@@ -31,7 +31,6 @@ import logging
 import copy 
 from util import writepdb_multi, writepdb
 from inference import utils as iu
-from icecream import ic
 from hydra.core.hydra_config import HydraConfig
 import numpy as np
 import random
@@ -42,9 +41,8 @@ import rf2aa.util
 from rf2aa.RoseTTAFoldModel import reset_model_attrs
 import aa_model
 import util
-from icecream import ic 
 import json 
-from pdb import set_trace
+LOGGER = logging.getLogger(__name__)
 # ic.configureOutput(includeContext=True)
 
 def make_deterministic(seed=0):
@@ -92,7 +90,7 @@ def main(conf: HydraConfig) -> None:
 
     # unpack potential json args into conf 
     if conf.inference.json_args: 
-        print('Detected json args, unpacking...')
+        LOGGER.info("Detected json args at %s, unpacking overrides.", conf.inference.json_args)
         # change conf into dict 
         dict_conf = OmegaConf.to_container(conf, resolve=True)
         
@@ -179,7 +177,7 @@ def sample(sampler):
         if sampler.inf_conf.cautious and os.path.exists(out_prefix+'.pdb'):
             log.info(f'(cautious mode) Skipping this design because {out_prefix}.pdb already exists.')
             continue
-        ic(f'making design {i_des} of {des_i_start}:{des_i_end}')
+        log.debug('Making design index %s of %s:%s', i_des, des_i_start, des_i_end)
 
         sampler_out = sample_one(sampler,sampler._conf, i_des)
 
@@ -284,10 +282,7 @@ def sample_one(sampler, inf_conf, i_des, simple_logging=False):
         # success = False
         for t in range(int(sampler.t_step_input), sampler.inf_conf.final_step-1, -1):
             if simple_logging:
-                e = '.'
-                if t%10 == 0:
-                    e = t
-                print(f'{e}', end='')
+                LOGGER.info("Reverse diffusion timestep %s", t)
 
 
             px0, x_t, seq_t, tors_t, plddt, rfo = sampler.sample_step(t, indep, rfo)
@@ -324,8 +319,7 @@ def sample_one(sampler, inf_conf, i_des, simple_logging=False):
             # put first asu in 
             xyz_particle[:Lasu,:14]   = px0[:Lasu]
 
-            ic(seq_particle.shape)
-            ic(seq_t.shape)
+            LOGGER.debug("Seq particle shape: %s; seq tensor shape: %s", seq_particle.shape, seq_t.shape)
             seq_particle[:Lasu] = torch.argmax( seq_t[:Lasu] )
 
             for i in range(1,O):
@@ -372,7 +366,7 @@ def save_outputs(sampler, out_prefix, indep, denoised_xyz_stack, px0_xyz_stack, 
         # replace mask and unknown tokens in the final seq: 
         pro_condition_01 = ((final_seq == 20) | (first_seq == 20) | (final_seq==21)) & indep.is_protein
         final_seq = torch.where(pro_condition_01, default_prot_res_num, final_seq)
-        print(f'setting diffused prot seq to {rf2aa.chemical.num2aa[default_prot_res_num]}!')
+        LOGGER.info('Setting diffused protein sequence to %s', rf2aa.chemical.num2aa[default_prot_res_num])
         pro_condition_02 = (~torch.tensor(sampler.contig_map.mask_1d)) & indep.is_protein
         final_seq = torch.where(pro_condition_02, default_prot_res_num, final_seq)
     else:
@@ -391,7 +385,7 @@ def save_outputs(sampler, out_prefix, indep, denoised_xyz_stack, px0_xyz_stack, 
         # for DNA chains, replace with deoxyribo-adenine
         dna_condition_01 = ((final_seq == 26) | (first_seq == 26) | (final_seq==21)) & indep.is_dna
         final_seq = torch.where(dna_condition_01, default_dna_res_num, final_seq)
-        print(f'setting diffused DNA  seq to {rf2aa.chemical.num2aa[default_dna_res_num]}!')
+        LOGGER.info('Setting diffused DNA sequence to %s', rf2aa.chemical.num2aa[default_dna_res_num])
         dna_condition_02 = (~torch.tensor(sampler.contig_map.mask_1d)) & indep.is_dna
         final_seq = torch.where(dna_condition_02, default_dna_res_num, final_seq)
     else:
@@ -409,7 +403,7 @@ def save_outputs(sampler, out_prefix, indep, denoised_xyz_stack, px0_xyz_stack, 
         # for RNA chains, replace with ribo-adenine
         rna_condition_01 = ((final_seq == 31) | (first_seq == 31) | (final_seq==21)) & indep.is_rna
         final_seq = torch.where(rna_condition_01, default_rna_res_num, final_seq)
-        print(f'setting diffused RNA  seq to {rf2aa.chemical.num2aa[default_rna_res_num]}!')
+        LOGGER.info('Setting diffused RNA sequence to %s', rf2aa.chemical.num2aa[default_rna_res_num])
         rna_condition_02 = (~torch.tensor(sampler.contig_map.mask_1d)) & indep.is_rna
         final_seq = torch.where(rna_condition_02, default_rna_res_num, final_seq)
     else:
@@ -427,12 +421,10 @@ def save_outputs(sampler, out_prefix, indep, denoised_xyz_stack, px0_xyz_stack, 
 
     # if sampler.inf_conf.compute_pSSA and sampler._conf.scaffoldguided.target_ss_string:
     if sampler.inf_conf.compute_pSSA and (sampler.target_ss_matrix is not None):
-        # set_trace()
         pSSA_vec, pSSA_mask = util.compute_pSSA(sampler.target_ss_matrix, denoised_xyz_stack[0:1], final_seq)
 
 
-        print('pSSA vector:')
-        print(pSSA_vec)
+        LOGGER.debug('pSSA vector: %s', pSSA_vec.tolist())
 
         formatted_mean_pSSA = "{:.3f}".format(pSSA_vec[pSSA_mask].mean())
         out = out.replace('.pdb', f'__pSSA_{formatted_mean_pSSA}.pdb')
@@ -454,11 +446,11 @@ def save_outputs(sampler, out_prefix, indep, denoised_xyz_stack, px0_xyz_stack, 
         out = f'{out_prefix}_symm.pdb'
 
         if len(chain_Ls_symm) > 26:
-            print('Truncating full particle for PDB writing')
+            LOGGER.info('Truncating full particle for PDB writing due to chain count %s', len(chain_Ls_symm))
             xyz_particle = xyz_particle[:Lasu*26]
             seq_particle = seq_particle[:Lasu*26]
             chain_Ls_symm = chain_Ls_symm[:26]
-            print(len(chain_Ls_symm))
+            LOGGER.debug('Chain count after truncation: %s', len(chain_Ls_symm))
 
         with open(out, 'w') as f:
             rf2aa.util.writepdb_file(f, xyz_particle.cpu(), seq_particle.long(), chain_Ls=chain_Ls_symm)

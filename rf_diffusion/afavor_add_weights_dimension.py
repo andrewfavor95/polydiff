@@ -21,7 +21,6 @@ from contextlib import ExitStack
 import time 
 import torch
 import torch.nn as nn
-from pdb import set_trace
 from torch.utils import data
 import math 
 import argparse
@@ -54,7 +53,6 @@ sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'RF2-al
 #             templ = torch.cat((t2d, left, right), -1) # (B, T, L, L, 109)
 #             templ = self.emb(templ) # Template templures (B, T, L, L, d_templ)
 #         '''
-#         set_trace()
 #         new_emb_weights = torch.cat( (weights['templ_emb.emb.weight'][:,:orig_t2d], pt1_emb_zeros), dim=-1 )
 #         new_emb_weights = torch.cat( (new_emb_weights, weights['templ_emb.emb.weight'][:,orig_t2d:orig_t2d+orig_t1d], pt2_emb_zeros), dim=-1 )
 #         new_emb_weights = torch.cat( (new_emb_weights, weights['templ_emb.emb.weight'][:,orig_t2d+orig_t1d:], pt3_emb_zeros), dim=-1 )
@@ -112,7 +110,6 @@ def update_dims(weights,key):
             templ = torch.cat((t2d, left, right), -1) # (B, T, L, L, 109)
             templ = self.emb(templ) # Template templures (B, T, L, L, d_templ)
         '''
-        # set_trace()
         new_emb_weights = torch.cat( (weights['model.templ_emb.emb.weight'][:,:orig_t2d], pt1_emb_zeros), dim=-1 )
         new_emb_weights = torch.cat( (new_emb_weights, weights['model.templ_emb.emb.weight'][:,orig_t2d:orig_t2d+orig_t1d], pt2_emb_zeros), dim=-1 )
         new_emb_weights = torch.cat( (new_emb_weights, weights['model.templ_emb.emb.weight'][:,orig_t2d+orig_t1d:], pt3_emb_zeros), dim=-1 )

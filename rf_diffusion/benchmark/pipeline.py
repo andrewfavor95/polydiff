@@ -4,7 +4,6 @@
 #
 
 import sys, os, re, subprocess, time, argparse
-from icecream import ic
 script_dir = os.path.dirname(os.path.realpath(__file__))+'/'
 IN_PROC = False
     

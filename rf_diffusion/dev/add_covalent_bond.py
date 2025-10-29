@@ -1,3 +1,5 @@
+import logging
+LOGGER = logging.getLogger(__name__)
 import sys
 import os
 root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -6,7 +8,6 @@ sys.path.append('/home/ahern/tools/pdb-tools/')
 from dev import analyze
 import shutil
 import glob
-from icecream import ic
 from tqdm import tqdm
 import fire
 import numpy as np
@@ -21,7 +22,7 @@ def get_input_aligned_pdb(row, out_path=None):
     trb = analyze.get_trb(row)
     other_ch = trb['con_ref_pdb_idx'][0][0]
     self_ch = 'A'
-    # ic(self_ch, other_ch, other_ch, other_idx)
+    # LOGGER.debug(self_ch, other_ch, other_ch, other_idx)
     des_p = des_p.aligned_to_chain_idxs(input_p, self_ch, self_idx, other_ch, other_idx)
     des_p.chains[self_ch].xyz[self_idx, 3:] = input_p[other_ch].xyz[other_idx, 3:]
     aligned_path = des_p.write_pdb(out_path)
@@ -82,7 +83,7 @@ def main(input_dir, ref_ch, ref_res, ref_prot_atom, ref_het_atom, output_dir=Non
     pdbs_to_graft.sort()
     for pdb in tqdm(pdbs_to_graft):
         out_pdb = os.path.join(output_dir, prefix + os.path.split(pdb)[1])
-        ic(cautious)
+        LOGGER.debug(cautious)
         if cautious and os.path.exists(out_pdb):
             continue
 
@@ -96,24 +97,24 @@ def main(input_dir, ref_ch, ref_res, ref_prot_atom, ref_het_atom, output_dir=Non
         # print(trb)
         # assert os.path.exists(trb)
         # trb = np.load(trb, allow_pickle=True)
-        # ic(trb)
+        # LOGGER.debug(trb)
         orig_name = os.path.join(os.path.dirname(root_dir), name)
         row = analyze.make_row_from_traj(orig_name)
         # self_idx, other_idx = analyze.get_idx_motif(row, mpnn=False)
         trb = analyze.get_trb(row)
         pdb_des_from_ref = {ref: des for ref, des in zip(trb['con_ref_pdb_idx'], trb['con_hal_pdb_idx'])}
         ref_res = int(ref_res)
-        ic(pdb_des_from_ref)
+        LOGGER.debug(pdb_des_from_ref)
         _, des_res_pdb_idx = pdb_des_from_ref[(ref_ch, ref_res)]
-        ic(pdb, des_res_pdb_idx, ref_prot_atom)
+        LOGGER.debug(pdb, des_res_pdb_idx, ref_prot_atom)
         prot_atm_idx = get_res_atm_idx(pdb, des_res_pdb_idx, ref_prot_atom)
         het_atm_idx = get_hetatm(pdb, 'B', ref_het_atom)
-        ic(prot_atm_idx, het_atm_idx)
+        LOGGER.debug(prot_atm_idx, het_atm_idx)
         shutil.copy(pdb, out_pdb)
         with open(out_pdb, 'a') as fh:
             a_i = str(prot_atm_idx)
             a_j = str(het_atm_idx)
-            ic('writing')
+            LOGGER.debug('writing')
             fh.write(f"CONECT{a_i:>5}{a_j:>5}\n")
     
     print(f'grafted PDBs from {input_dir} to {output_dir}')

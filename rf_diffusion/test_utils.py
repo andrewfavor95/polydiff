@@ -1,6 +1,7 @@
+import logging
+LOGGER = logging.getLogger(__name__)
 import re
 import json
-from icecream import ic
 import os
 import subprocess
 from pathlib import Path
@@ -53,7 +54,7 @@ def assert_matches_golden(t, name, got, rewrite=False, processor_specific=False,
             loaded = json.loads(jsoned)
             fail_msg = json.dumps(loaded, indent=4)
         except Exception as e:
-            ic('failed to pretty print output', e)
+            LOGGER.debug('failed to pretty print output', e)
             fail_msg = json.dumps(diff.pop('tensors unequal', ''), indent=4) + '\n' + str(diff) 
         t.fail(fail_msg)
     else:
@@ -68,7 +69,7 @@ def assertEqual(t, custom_comparator, got, want):
         loaded = json.loads(jsoned)
         fail_msg = json.dumps(loaded, indent=4)
     except Exception as e:
-        ic('failed to pretty print output', e)
+        LOGGER.debug('failed to pretty print output', e)
         fail_msg = json.dumps(diff.pop('tensors unequal', ''), indent=4) + '\n' + str(diff) 
     t.fail(fail_msg)
 
@@ -202,5 +203,5 @@ def cmp_pretty(got, want, **kwargs):
         loaded = json.loads(jsoned)
         return json.dumps(loaded, indent=4)
     except Exception as e:
-        ic('failed to pretty print output', e)
+        LOGGER.debug('failed to pretty print output', e)
         return json.dumps(diff.pop('tensors unequal', ''), indent=4) + '\n' + str(diff)

@@ -1,10 +1,9 @@
+import logging
+LOGGER = logging.getLogger(__name__)
 import torch
-from icecream import ic 
 import numpy as np 
 from util import generate_Cbeta
-from icecream import ic
 import rf2aa
-from pdb import set_trace
 class Potential:
     '''
         Interface class that defines the functions a potential must implement
@@ -371,7 +370,7 @@ class olig_contacts(Potential):
         """
 
         print('This is chain contact matrix you are using')
-        ic(contact_matrix)
+        LOGGER.debug(contact_matrix)
         self.contact_matrix = contact_matrix
         self.weight_intra = weight_intra 
         self.weight_inter = weight_inter 
@@ -526,11 +525,9 @@ class olig_intra_contacts(Potential):
         start = 0
         # if self.ind_spec is not None:
         #     print('olig_intra_contacts')
-        #     set_trace()
         #     for range_i, range_j in  self.ind_spec:
 
         # else:
-        # set_trace()
 
         for i,Lc in enumerate(self.chain_lengths):
 
@@ -591,8 +588,8 @@ def contact_energy(dgram, d_0, r_0):
 def poly_repulse(dgram, r, slope, p=1):
     a = slope / (p * r**(p-1))
 
-    #ic(a)
-    #ic(torch.abs(r - dgram)**p * slope)
+    #LOGGER.debug(a)
+    #LOGGER.debug(torch.abs(r - dgram)**p * slope)
     return (dgram < r) * a * torch.abs(r - dgram)**p * slope
 
 #def only_top_n(dgram
@@ -609,7 +606,7 @@ class substrate_contacts(Potential):
         self.weight    = weight
         self.d_0       = d_0
         self.eps       = eps
-        ic(rep_r_0, rep_s)
+        LOGGER.debug(rep_r_0, rep_s)
         
         # motif frame coordinates
         # NOTE: these probably need to be set after sample_init() call, because the motif sequence position in design must be known
@@ -653,7 +650,7 @@ class substrate_contacts(Potential):
         all_energies = []
         for i, energy_fn in enumerate(self.energies):
             energy = energy_fn(dgram)
-            ic(i, energy.sum(), energy.min(), energy.max())
+            LOGGER.debug(i, energy.sum(), energy.min(), energy.max())
             all_energies.append(energy.sum())
         return - self.weight * sum(all_energies)
 
@@ -848,4 +845,3 @@ require_binderlen      = { 'binder_ROG',
 
 require_hotspot_res    = { 'binder_distance_ReLU',
                            'binder_any_ReLU' }
-

@@ -1,4 +1,6 @@
 # script for sequence diffusion protocols 
+import logging
+LOGGER = logging.getLogger(__name__)
 import torch 
 import numpy as np
 import os
@@ -12,9 +14,6 @@ from chemical import INIT_CRDS
 import igso3
 import time 
 from rf2aa.chemical import NAATOKENS, NNAPROTAAS, MASKINDEX, UNKINDEX, DNAMASKINDEX, RNAMASKINDEX
-from pdb import set_trace
-from icecream import ic  
-
 torch.set_printoptions(sci_mode=False)
 
 class DiscreteSeqDiffuser():
@@ -727,7 +726,7 @@ class ContinuousSeqDiffuser():
                 seq_pred (torch.tensor, [L,K]): The predicted sequence in analog bit form
 
         '''
-        ic('Doing Sigmoid Seq loss')
+        LOGGER.debug('Doing Sigmoid Seq loss')
 
         loss = torch.log( torch.sigmoid(seq_true * seq_pred) ) # [L,K]
 

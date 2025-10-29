@@ -1,6 +1,7 @@
+import logging
+LOGGER = logging.getLogger(__name__)
 import torch
 from tqdm.notebook import trange, tqdm
-from icecream import ic
 import matplotlib.pyplot as plt
 from tqdm.notebook import trange, tqdm
 import numpy as np
@@ -17,15 +18,15 @@ def calc_loss(true, pred, curr, t, seq_diffuser):
     mask = torch.full_like(true, True).bool().to(pred.device)
     mask = None
 
-    #ic(true)
-    #ic(pred)
-    #ic(curr)
+    #LOGGER.debug(true)
+    #LOGGER.debug(pred)
+    #LOGGER.debug(curr)
 
-    #ic(true.shape)
-    #ic(pred.shape)
-    #ic(curr.shape)
+    #LOGGER.debug(true.shape)
+    #LOGGER.debug(pred.shape)
+    #LOGGER.debug(curr.shape)
 
-    #ic('Discrete Loss')
+    #LOGGER.debug('Discrete Loss')
     '''
         Expects:
         x_t [B,L]
@@ -36,16 +37,16 @@ def calc_loss(true, pred, curr, t, seq_diffuser):
     x_t         = torch.argmax(curr, dim=-1)[None].long().to(pred.device)
     x_0         = true[None].long().to(pred.device)
     p_logit_x_0 = pred[:, :,:20]
-    #ic(x_0, x_t, p_logit_x_0.argmax(-1))
-    #ic(p_logit_x_0.shape)
+    #LOGGER.debug(x_0, x_t, p_logit_x_0.argmax(-1))
+    #LOGGER.debug(p_logit_x_0.shape)
 
-    #ic(x_t.shape)
-    #ic(x_0.shape)
-    #ic(p_logit_x_0.shape)
+    #LOGGER.debug(x_t.shape)
+    #LOGGER.debug(x_0.shape)
+    #LOGGER.debug(p_logit_x_0.shape)
 
     return seq_diffuser.loss(x_t=x_t, x_0=x_0, p_logit_x_0=p_logit_x_0, t=int(t), diffusion_mask=mask)
 
-    #ic(loss)
+    #LOGGER.debug(loss)
 
     #return loss
 
@@ -73,18 +74,18 @@ def calc_seq_similarity(true, pred):
     # For bit sequence
     # int_pred = torch.argmax(pred, dim=-1)
 
-    #ic(pred.shape)
+    #LOGGER.debug(pred.shape)
     pred = pred[0,:,:20]
     probs = torch.nn.Softmax(dim=1)(pred)
-    #ic(probs)
+    #LOGGER.debug(probs)
     int_pred = torch.multinomial(probs, num_samples=1).squeeze(-1)
 
     sim = int(torch.sum(int_pred==true)) / int(L)
 
-    #ic(probs)
-    #ic(probs[0])
-    #ic(int_pred)
-    #ic(true)
+    #LOGGER.debug(probs)
+    #LOGGER.debug(probs[0])
+    #LOGGER.debug(int_pred)
+    #LOGGER.debug(true)
 
     return sim
 
@@ -177,5 +178,4 @@ def plot_run(losses, losses_aux, losses_vb, similarity, pseq0s, dataset, show_lo
 
         print(f'first pred: {preds[0]}')
         print(f'final pred: {preds[-1]}')
-
 

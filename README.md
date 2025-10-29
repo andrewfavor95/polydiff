@@ -69,6 +69,7 @@ curl -O https://files.ipd.uw.edu/pub/2025_RFDpoly/train_session2024-07-08_172045
 
 # Set weights path (replace with your choice of weights):
 MODEL_WEIGHTS_PATH=$WEIGHTS_DIR/train_session2024-07-08_1720455712_BFF_3.00.pt
+export RFDPOLY_CKPT_PATH="$MODEL_WEIGHTS_PATH"
 
 ```
 
@@ -86,7 +87,6 @@ Change directory to wherever you want to perform design, and run example inferen
 cd $DESIGN_DIR
 
 $APPTAINER_PATH $RFDPOLY_PATH/polydiff/rf_diffusion/run_inference.py --config-name=multi_polymer \
-inference.ckpt_path=$MODEL_WEIGHTS_PATH \
 diffuser.T=50 \
 inference.num_designs=3 \
 contigmap.contigs=[\'33\ 33\ 75\'] \
@@ -98,4 +98,3 @@ The initial run will take a little while to precompute the IGSO3 cache, but subs
 
 
 If the example command above works, proceed to exploration of the full [design tutorial](https://github.com/andrewfavor95/polydiff/blob/main/RFDpoly_tutorial.pdf).
-

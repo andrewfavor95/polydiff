@@ -1,3 +1,5 @@
+import logging
+LOGGER = logging.getLogger(__name__)
 import argparse
 import pprint
 from typing import OrderedDict
@@ -5,11 +7,6 @@ import mask_generator
 import data_loader
 import os
 import metrics
-from icecream import ic
-
-
-
-
 TRUNK_PARAMS = [
     'n_extra_block', 'n_main_block', 'n_ref_block', 'n_finetune_block',
     'd_msa', 'd_msa_full', 'd_pair', 'd_templ', 'n_head_msa', 'n_head_pair',
@@ -471,7 +468,7 @@ def get_args(in_args=None):
 
     # parse arguments
     args = parser.parse_args(in_args)
-    ic(args.sequence_decode)
+    LOGGER.debug(args.sequence_decode)
     # parse boolean arguments
     args.sidechain_input = args.sidechain_input == 'True'
     args.motif_sidechain_input = args.motif_sidechain_input == 'True'
@@ -486,7 +483,7 @@ def get_args(in_args=None):
     args.use_exp_prob_supply_frames = args.use_exp_prob_supply_frames == 'True'
     args.use_exp_prob_supply_seq = args.use_exp_prob_supply_seq == 'True'
 
-    ic(args.sequence_decode)
+    LOGGER.debug(args.sequence_decode)
     # parse the task lists
     task_names = args.task_names.split(',')
     task_p = args.task_p.split(',')

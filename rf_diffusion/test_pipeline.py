@@ -1,8 +1,9 @@
+import logging
+LOGGER = logging.getLogger(__name__)
 import assertpy
 import subprocess
 import unittest
 
-from icecream import ic
 from deepdiff import DeepDiff
 
 import error
@@ -81,7 +82,7 @@ class TestBenchmark(unittest.TestCase):
         ]:
             with error.context(f'{arg_str=} {want=}'):
                 got = benchmark.sweep_hyperparam.get_arg_combos(arg_str)
-                ic(got, want)
+                LOGGER.debug(got, want)
                 self.assertEqual(got, want)
 
     def test_subprocess_retcode_tee(self):

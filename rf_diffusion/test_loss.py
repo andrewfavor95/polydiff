@@ -4,7 +4,6 @@ import os
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'RF2-allatom'))
 
 import unittest
-from icecream import ic
 import torch
 import numpy as np
 

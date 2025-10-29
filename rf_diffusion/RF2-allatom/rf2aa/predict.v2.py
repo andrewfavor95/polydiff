@@ -1,3 +1,5 @@
+import logging
+LOGGER = logging.getLogger(__name__)
 import sys, os, json, pickle, glob, io
 import time
 from collections import OrderedDict
@@ -5,7 +7,6 @@ import numpy as np
 import torch
 import torch.nn as nn
 from torch.utils import data
-from icecream import ic
 import copy
 
 script_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -27,8 +28,6 @@ from rf2aa.memory import mem_report
 # from rf2aa.symmetry import symm_subunit_matrix, find_symm_subs, update_symm_subs, get_symm_map, get_symmetry
 from rf2aa.symmetry import symm_subunit_matrix, find_symm_subs, get_symm_map, get_symmetry
 from scipy.interpolate import Akima1DInterpolator
-from pdb import set_trace
-
 def get_args():
     import argparse
     DB = "/projects/ml/TrRosetta/pdb100_2022Apr19/pdb100_2022Apr19"
@@ -232,8 +231,8 @@ class Molecule():
         symm: string encoding the symmetry group for this molecule
         """
 #        print(f"processing molecule of name {name}")
-#        ic(name, msa,  Ls, xyz, mask, seq, symm, mols)
-#        ic(name, Ls, seq, symm, mols)
+#        LOGGER.debug(name, msa,  Ls, xyz, mask, seq, symm, mols)
+#        LOGGER.debug(name, Ls, seq, symm, mols)
 
         self.name = name
 
@@ -849,7 +848,7 @@ def molecule_from_a3m_and_pdb(files, args, name=name):
     seq, Ls, xyz, mask = parsers.read_pdb_for_molecule(pdbfile)
 
     if len(seq) != len(msa[0]):
-#        ic(seq, msa[0], len(seq), msa.shape)
+#        LOGGER.debug(seq, msa[0], len(seq), msa.shape)
         msa, ins, seq, Ls, xyz, mask = align_msa_and_pdb(msa, ins, seq, Ls, xyz, mask)
     else:
         assert (seq == msa[0]).all(), \
@@ -984,7 +983,7 @@ class Predictor():
 
             for i_cycle in range(args.n_cycle):
 # input debugging
-#                ic(
+#                LOGGER.debug(
 #                    msa_masked[:,i_cycle].shape,
 #                    msa_full[:,i_cycle].shape,
 #                    seq[:,i_cycle].shape,
@@ -1004,7 +1003,7 @@ class Predictor():
 #                    same_chain.shape,
 #                )
 #                if i_cycle > 0:
-#                    ic(
+#                    LOGGER.debug(
 #                        msa_prev.shape,
 #                        pair_prev.shape,
 #                        state_prev.shape
@@ -1397,7 +1396,7 @@ def process_inputs(args):
         for i in range(NINPUTS):
             input_dict = OrderedDict()
             fields = lines[i].split()
-#            ic(fields)
+#            LOGGER.debug(fields)
             for ftype in ftypes:
                 input_dict[ftype] = []
             for field in fields:
@@ -1446,7 +1445,7 @@ def process_inputs(args):
             for i in range(NINPUTS):
                 input_dicts[i][ftype] += input_opts[ftype]
 
-#    ic(input_dicts)
+#    LOGGER.debug(input_dicts)
     return input_dicts
 
 def silent_init():
@@ -1512,4 +1511,3 @@ def main():
     
 if __name__ == "__main__":
     main()
-

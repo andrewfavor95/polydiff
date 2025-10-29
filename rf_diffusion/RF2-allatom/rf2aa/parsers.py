@@ -1,3 +1,5 @@
+import logging
+LOGGER = logging.getLogger(__name__)
 import numpy as np
 import scipy
 import scipy.spatial
@@ -11,10 +13,6 @@ from rf2aa.ffindex import *
 import torch
 from rf2aa.chemical import NAATOKENS, aa2num, aa2long, atomnum2atomtype, NTOTAL, CHAIN_GAP, to1letter, INIT_CRDS, INIT_NA_CRDS, NNAPROTAAS
 from openbabel import openbabel
-from icecream import ic
-from pdb import set_trace
-
-
 def get_dislf(seq, xyz, mask):
     L = seq.shape[0]
     resolved_cys_mask = ((seq==aa2num['CYS']) * mask[:,5]).nonzero().squeeze(-1)  # cys[5]=='sg'
@@ -143,7 +141,7 @@ def read_multichain_pdb(pdb_fn, tmpl_chain=None, tmpl_conf=0.1):
                     break
             seq[0, idx] = aa_idx
 
-#    ic(xyz)
+#    LOGGER.debug(xyz)
 
     if (mask_t.any()):
         xyz_t[0] = rf2aa.util.center_and_realign_missing(xyz[0], mask[0])

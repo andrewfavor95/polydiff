@@ -30,8 +30,6 @@ from diff_util import th_min_angle, th_interpolate_angles, get_aa_schedule
 import igso3
 import time 
 
-from icecream import ic  
-
 import rf2aa.chemical
 from rf2aa.chemical import INIT_CRDS
 

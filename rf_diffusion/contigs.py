@@ -1,9 +1,7 @@
 import sys
 import numpy as np 
 import random
-from icecream import ic
 from collections import OrderedDict
-from pdb import set_trace
 class ContigMap():
     '''
     New class for doing mapping.
@@ -101,7 +99,6 @@ class ContigMap():
             print('WARNING: CURRENTLY ASSUMES EVERYTHING IS PROTEIN')
             print('TO DO: GO IN AND ASSIGN POLYMER TYPES BASED ON TEMPLATE/INPUT-PDB POLYMER TYPES')
             self.polymer_chains = ['protein' for chain_i in range(len(contig_list))]
-            # set_trace()
 
 
         # else check that the input spec polymer_chains is same length as number of chains in design.
@@ -110,7 +107,6 @@ class ContigMap():
             self.polymer_chains = polymer_chains
 
         # apply inpaint_seq to stuff:
-        # set_trace()
 
 
 
@@ -229,8 +225,6 @@ class ContigMap():
             inpaint_rf[ch_break[0]:] += ch_break[1]
         for ch_break in receptor_chain_break[:-1]:
             receptor_rf[ch_break[0]:] += ch_break[1]
-
-        # set_trace()
 
         return receptor, receptor_hal, receptor_rf.tolist(), inpaint, inpaint_hal, inpaint_rf.tolist(), atomize_resnum2atomnames
 
@@ -473,7 +467,6 @@ def DNA_Duplex_Protein_Monomer(indep, contig_conf, idx_pdb):
     
     last_start = 0
     chain_lengths = []
-    # ipdb.set_trace()
     
     for chainid in chainid_list:
         if chainid in dna_chains:
@@ -549,8 +542,6 @@ def DNA_Duplex_Protein_Monomer(indep, contig_conf, idx_pdb):
     xyz = torch.cat(xyz)
     idx = torch.cat(idx)
     is_diffused = torch.Tensor(is_diffused).bool()
-
-    # ipdb.set_trace()
     return Indep(seq,
                  xyz,
                  idx,
@@ -562,8 +553,6 @@ def DNA_Duplex_Protein_Monomer(indep, contig_conf, idx_pdb):
                  terminus_type), is_diffused
     
 # def DNA_Duplex_Protein_Monomer(indep, contig_conf, idx_pdb):
-
-#     ipdb.set_trace()
 #     contig_conf.protein_chains = ['A']
 #     contig_conf.dna_chains = ['B','C','D','E']
 
@@ -664,8 +653,6 @@ def DNA_Duplex_Protein_Monomer(indep, contig_conf, idx_pdb):
 #     xyz = torch.cat(xyz)
 #     idx = torch.cat(idx)
 #     is_diffused = torch.Tensor(is_diffused).bool()
-
-#     ipdb.set_trace()
 #     return Indep(seq,
 #                  xyz,
 #                  idx,

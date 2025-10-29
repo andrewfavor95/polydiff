@@ -1,3 +1,5 @@
+import logging
+LOGGER = logging.getLogger(__name__)
 import sys
 import os
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'RF2-allatom'))
@@ -13,7 +15,6 @@ import assertpy
 import hydra
 from hydra import compose, initialize
 from hydra.core.hydra_config import HydraConfig
-from icecream import ic
 import torch
 import numpy as np
 import pickle
@@ -79,7 +80,7 @@ class TestRegression(unittest.TestCase):
         fake_forward = mock.patch.object(RoseTTAFoldModule, "forward", autospec=True)
 
         def side_effect(self, *args, **kwargs):
-            ic("mock forward", type(self), side_effect.call_count)
+            LOGGER.debug("mock forward", type(self), side_effect.call_count)
             side_effect.call_count += 1
             return fake_forward.temp_original(self, *args, **kwargs)
         side_effect.call_count = 0
@@ -157,7 +158,7 @@ class TestInference(unittest.TestCase):
         fake_forward = mock.patch.object(RoseTTAFoldModule, "forward", autospec=True)
 
         def side_effect(self, *args, **kwargs):
-            ic("mock forward", type(self), side_effect.call_count)
+            LOGGER.debug("mock forward", type(self), side_effect.call_count)
             side_effect.call_count += 1
             return fake_forward.temp_original(self, *args, **kwargs)
         side_effect.call_count = 0

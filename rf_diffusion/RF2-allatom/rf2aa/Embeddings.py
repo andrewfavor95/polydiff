@@ -8,7 +8,6 @@ from rf2aa.util_module import Dropout, get_clones, create_custom_forward, rbf, i
 from rf2aa.Attention_module import Attention, TriangleMultiplication, TriangleAttention, FeedForwardLayer
 from rf2aa.Track_module import PairStr2Pair, PositionalEncoding2D
 from rf2aa.chemical import NAATOKENS,NTOTALDOFS, NBTYPES
-from pdb import set_trace
 # Module contains classes and functions to generate initial embeddings
 
 class MSA_emb(nn.Module):

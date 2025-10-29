@@ -1,5 +1,7 @@
 #!/usr/bin/env python
 
+import logging
+LOGGER = logging.getLogger(__name__)
 import os
 import sys
 root_dir = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
@@ -12,7 +14,6 @@ import run_inference
 import aa_model
 import glob
 import numpy as np
-from icecream import ic
 from collections import defaultdict
 
 def aux_file(rundir, pdb, ligand, kind):
@@ -28,9 +29,9 @@ def convert_all(indir):
         pdb_ligand.add((trb['config']['inference']['input_pdb'], trb['config']['inference']['ligand']))
         pdb_ligand_count[((trb['config']['inference']['input_pdb'], trb['config']['inference']['ligand']))].append(trb_path)
     
-    ic(pdb_ligand_count)
+    LOGGER.debug(pdb_ligand_count)
     pdb_ligand_count = {k: len(v) for k,v in pdb_ligand_count.items()}
-    ic(pdb_ligand_count)
+    LOGGER.debug(pdb_ligand_count)
 
     for pdb, ligand in pdb_ligand:
         if ligand is None:

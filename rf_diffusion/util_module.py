@@ -5,7 +5,6 @@ import torch.nn.functional as F
 from opt_einsum import contract as einsum
 import copy
 import dgl
-from pdb import set_trace
 from util import base_indices, RTs_by_torsion, xyzs_in_base_frame, rigid_from_3_points
 
 def init_lecun_normal(module, scale=1.0):
@@ -221,8 +220,6 @@ def make_rot_axis(angs, u, eps=1e-6):
 class ComputeAllAtomCoords(nn.Module):
     def __init__(self):
         super(ComputeAllAtomCoords, self).__init__()
-
-        # set_trace()
         assert 0, "just doing this to track shit down"
 
         self.base_indices = nn.Parameter(base_indices, requires_grad=False)
@@ -230,9 +227,6 @@ class ComputeAllAtomCoords(nn.Module):
         self.xyzs_in_base_frame = nn.Parameter(xyzs_in_base_frame, requires_grad=False)
 
     def forward(self, seq, xyz, alphas, non_ideal=False, use_H=True):
-
-        
-        # set_trace()
         assert 0, "just doing this to track shit down"
 
         B,L = xyz.shape[:2]

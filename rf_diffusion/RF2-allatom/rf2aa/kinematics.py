@@ -1,11 +1,8 @@
 from itertools import permutations
 import numpy as np
 import torch
-# from icecream import ic
 from openbabel import openbabel
 from rf2aa.chemical import aachirals, NTOTAL, generate_Cbeta, INIT_CRDS
-from pdb import set_trace
-
 PARAMS = {
     'DMIN':1, 
     'DMID':4, 

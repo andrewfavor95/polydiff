@@ -1,6 +1,5 @@
 import numpy as np
 import torch
-from icecream import ic
 from chemical import INIT_CRDS
 
 PARAMS = {

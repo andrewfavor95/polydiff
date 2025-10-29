@@ -1,3 +1,5 @@
+import logging
+LOGGER = logging.getLogger(__name__)
 # #!/software/conda/envs/SE3nv
 # import diffusion
 # import torch 
@@ -6,7 +8,6 @@
 # from util import writepdb_multi
 # from util_module import ComputeAllAtomCoords
 
-# from icecream import ic 
 
 # def parse_pdb(filename, **kwargs):
 #     '''extract xyz coords for all heavy atoms'''
@@ -128,12 +129,12 @@
 
 # # print('Writing combo slerp / translation pdb')
 # # cum_delta = deltas.cumsum(dim=1)
-# # ic(torch.is_tensor(diffused_frame_crds))
-# # ic(torch.is_tensor(cum_delta))
+# # LOGGER.debug(torch.is_tensor(diffused_frame_crds))
+# # LOGGER.debug(torch.is_tensor(cum_delta))
 # # translated_slerp = torch.from_numpy(diffused_frame_crds) + cum_delta[:,:,None,:]
 
-# # ic(cum_delta[0,10])
-# # ic(diffused_T[0,10])
+# # LOGGER.debug(cum_delta[0,10])
+# # LOGGER.debug(diffused_T[0,10])
 
 # # outpath1 = './slerp_and_translate.pdb'
 # # writepdb_multi(outpath1, translated_slerp.transpose(0,1), torch.ones_like(seq), seq, backbone_only=True)
@@ -159,5 +160,5 @@
 # # Create full atom coords from combined diffusion
 # print('Writing combined diffusion pdb...')
 # outpath1 = './diffuse_all.pdb'
-# # ic(diffused_FA_crds.shape)
+# # LOGGER.debug(diffused_FA_crds.shape)
 # writepdb_multi(outpath1, diffused_FA_crds.squeeze(), torch.ones_like(seq), seq, backbone_only=False)

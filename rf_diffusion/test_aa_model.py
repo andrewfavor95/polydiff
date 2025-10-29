@@ -1,3 +1,5 @@
+import logging
+LOGGER = logging.getLogger(__name__)
 import copy
 import shutil
 import os
@@ -5,8 +7,6 @@ import sys
 import torch
 import assertpy
 import unittest
-from icecream import ic
-
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'RF2-allatom'))
 import rf2aa
 import aa_model
@@ -135,8 +135,8 @@ class AAModelTestCase(unittest.TestCase):
             aa_model.rename_ligand_atoms(input_pdb, out_pdb)
             atoms_by_ligand = aa_model.hetatm_names(out_pdb)
             got_atoms = atoms_by_ligand[ligand_name]
-            ic(got_atoms)
-            ic(want_atoms)
+            LOGGER.debug(got_atoms)
+            LOGGER.debug(want_atoms)
             assertpy.assert_that(want_atoms).is_equal_to(got_atoms)
 
            

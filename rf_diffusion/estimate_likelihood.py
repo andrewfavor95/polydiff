@@ -2,6 +2,7 @@ import pandas as pd
 import numpy as np
 import functools
 import logging
+LOGGER = logging.getLogger(__name__)
 from omegaconf import DictConfig, OmegaConf
 import pickle
 from dataclasses import dataclass
@@ -19,11 +20,8 @@ import hydra
 from hydra import compose, initialize
 from inference import model_runners
 import util
-from icecream import ic
 import matplotlib.pyplot as plt
 import tqdm
-from pdb import set_trace
-
 def get_logged_examples(path):
     d = defaultdict(dict)
     for p in sorted(glob.glob(path + '*')):
@@ -102,7 +100,6 @@ def reverse(sampler, xyz_true, seq_true, mask, final_steps=None, use_true=False,
     torch.tensor(xyz_true),
     seq_true,
     torch.tensor(mask))
-    set_trace()
     forward_traj = torch.cat([xyz_true[None], fa_stack[:,:,:14]])
     
     # x_init, seq_init, forward_traj, aa_masks = sampler.sample_init(return_forward_trajectory=True)
@@ -135,7 +132,7 @@ def reverse(sampler, xyz_true, seq_true, mask, final_steps=None, use_true=False,
         #    denoised_xyz_stack.append(x_t)
         #    seq_stack.append(seq_t)
 
-        #ic(seq_t.shape, x_t.shape, seq_init.shape)
+        #LOGGER.debug(seq_t.shape, x_t.shape, seq_init.shape)
         if inject_true_x0:
             if t > 1:
                 x_t, seq_t, tors_t, px0 = sampler.denoiser.get_next_pose(
@@ -282,13 +279,13 @@ def reverse_simple(sampler, feed_true_xt=False, stop_after=99999):
     # Loop over number of reverse diffusion time steps.
     for t in itertools.islice(tqdm.tqdm(range(sampler.t_step_input, 0, -1)), stop_after):
         if feed_true_xt:
-            #ic(forward_traj.shape, aa_masks.shape)
+            #LOGGER.debug(forward_traj.shape, aa_masks.shape)
             x_t = forward_traj[t,:,:14]
             aa_mask = aa_masks[t-1]
             seq_t = torch.full_like(seq_orig, 21)
             seq_t[aa_mask] = seq_orig[aa_mask]
             if t == sampler.t_step_input:
-                ic('asserting seq_t matches seq_init')
+                LOGGER.debug('asserting seq_t matches seq_init')
                 torch.testing.assert_close(seq_t, seq_init)
 
         logits = torch.zeros(5)
@@ -315,4 +312,3 @@ def reverse_simple(sampler, feed_true_xt=False, stop_after=99999):
     logits_stack = torch.flip(logits_stack, [0,])
     #return denoised_xyz_stack, px0_xyz_stack, forward_traj, seq_stack
     return Trajectory(denoised_xyz_stack, px0_xyz_stack, forward_traj.cpu(), seq_stack, logits_stack, sampler.mask_str[0]), {'x_init': x_init, 'mask_str':sampler.mask_str[0]}
-

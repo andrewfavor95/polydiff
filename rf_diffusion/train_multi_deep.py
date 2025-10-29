@@ -16,7 +16,6 @@ from datetime import date
 from contextlib import ExitStack
 import torch
 import torch.nn as nn
-from pdb import set_trace
 from torch.utils import data
 import math 
 
@@ -56,7 +55,7 @@ from scheduler import get_stepwise_decay_schedule_with_warmup
 import rotation_conversions as rot_conv
 # import so3_utils
 #added for inpainting training
-from icecream import ic
+import logging
 from apply_masks import mask_inputs
 import random
 import model_input_logger
@@ -77,6 +76,8 @@ torch.backends.cudnn.benchmark = False
 torch.backends.cudnn.deterministic = True
 # import matplotlib.pyplot as plt
 #torch.autograd.set_detect_anomaly(True)
+
+LOGGER = logging.getLogger(__name__)
 
 global N_EXAMPLE_PER_EPOCH
 global DEBUG 
@@ -120,7 +121,7 @@ class EMA(nn.Module):
     @torch.no_grad()
     def update(self):
         if not self.training:
-            print("EMA update should only be called during training", file=stderr, flush=True)
+            LOGGER.warning("EMA update should only be called during training")
             return
 
         model_params = OrderedDict(self.model.named_parameters())
@@ -189,7 +190,7 @@ class Trainer():
         self.polymer_frac_cutoff=polymer_frac_cutoff
 
         self.outdir = self.outdir or f'./train_session{get_datetime()}'
-        ic(self.outdir)
+        LOGGER.debug('Training output directory: %s', self.outdir)
         if os.path.isdir(self.outdir) and not DEBUG:
             sys.exit('EXITING: self.outdir already exists. Dont clobber')
         os.makedirs(self.outdir, exist_ok=True)
@@ -201,7 +202,7 @@ class Trainer():
         self.valid_param['SEQID'] = 150.0
         self.loss_param = loss_param
         # self.loss_param_ref = loss_param.copy() # keeping reference copy in case we conditionally change loss weights
-        ic(self.loss_param)
+        LOGGER.debug('Loss parameters: %s', self.loss_param)
         self.ACCUM_STEP = accum_step
         self.batch_size = batch_size
 
@@ -241,23 +242,23 @@ class Trainer():
                          }
 
         if not seq_diff_type:
-            print('Training with autoregressive sequence decoding')
+            LOGGER.info('Training with autoregressive sequence decoding')
             self.seq_diffuser = None
 
         elif seq_diff_type == 'uniform':
-            print('Training with discrete sequence diffusion')
+            LOGGER.info('Training with discrete sequence diffusion')
             seqdiff_kwargs['rate_matrix'] = 'uniform'
             seqdiff_kwargs['lamda'] = diffusion_param['seqdiff_lambda']
 
             self.seq_diffuser = DiscreteSeqDiffuser(**seqdiff_kwargs)
 
         elif seq_diff_type == 'continuous':
-            print('Training with continuous sequence diffusion')
+            LOGGER.info('Training with continuous sequence diffusion')
 
             self.seq_diffuser = ContinuousSeqDiffuser(**seqdiff_kwargs)
 
         else: 
-            print(f'Sequence diffusion with type {seq_diff_type} is not implemented')
+            LOGGER.error('Sequence diffusion with type %s is not implemented', seq_diff_type)
             raise NotImplementedError()
 
         # for all-atom str loss
@@ -280,8 +281,7 @@ class Trainer():
         self.loss_param.pop('scheduled_losses')
         self.loss_param.pop('scheduled_types')
         self.loss_param.pop('scheduled_params')
-        print('These are the loss names which have t_scheduling activated')
-        print(self.loss_schedules.keys())
+        LOGGER.info('Loss names with t_scheduling activated: %s', list(self.loss_schedules.keys()))
 
         self.hbtypes = rf2aa.util.hbtypes
         self.hbbaseatoms = rf2aa.util.hbbaseatoms
@@ -298,13 +298,13 @@ class Trainer():
 
         self.maxcycle = maxcycle
         
-        print (model_param, loader_param, loss_param)
+        LOGGER.debug('Trainer params: model=%s loader=%s loss=%s', model_param, loader_param, loss_param)
         
         # Assemble "Config" for inference
         self.diff_kwargs = diff_kwargs
         self.seqdiff_kwargs = seqdiff_kwargs
         self.assemble_config()
-        ic(self.config_dict) 
+        LOGGER.debug('Config dictionary: %s', self.config_dict)
 
         self.assemble_train_args()
 
@@ -320,7 +320,7 @@ class Trainer():
         # Add seq_diff_type
         config_dict['seq_diffuser']['seqdiff'] = self.seq_diff_type
         config_dict['preprocess'] = self.preprocess_param
-        ic(self.preprocess_param)
+        LOGGER.debug('Preprocess parameters: %s', self.preprocess_param)
         self.config_dict = config_dict
 
     def assemble_train_args(self) -> None:
@@ -457,19 +457,16 @@ class Trainer():
 
 
         # loss_weights['frame_sqL2'] = loss_weights['frame_sqL2'] * score_frames # only apply frame_sqL2 loss if score_frames is True
-        ic(loss_weights['frame_sqL2'])
+        LOGGER.debug('frame_sqL2 weight: %s', loss_weights['frame_sqL2'])
 
 
-        if ss_mask_2d.sum() > 0:
-            had_ss_shown = True
-        else:
-            had_ss_shown = False
+        had_ss_shown = ss_mask_2d.sum() > 0
+        if not had_ss_shown:
             loss_weights['ss_fape'] = loss_weights['ss_fape']*0.0
 
 
 
-
-
+        LOGGER.debug('had_ss_shown=%s', had_ss_shown)
 
         # Displacement prediction loss between xyz prev and xyz_true
         if unclamp:
@@ -580,7 +577,7 @@ class Trainer():
             else:
                 # Discrete Diffusion 
                 # Reshape logit_aa_s from [B,21,L] to [B,L,20]. 20 aa since seq diffusion cannot handle gap character
-                print('TRYING TO ADD MORE TOKENS!')
+                LOGGER.debug('Discrete diffusion: adjusting token dimensions for seq_diffuser.')
                 p_logit_aa_s = logit_aa_s[:,:rf2aa.chemical.NNAPROTAAS].transpose(1,2) # [B,L,21]
 
                 intseq_t = torch.argmax(seq_t, dim=-1)
@@ -697,7 +694,7 @@ class Trainer():
             tot_ss_fape = float('nan')
             # tot_ss_fape = 0.0
 
-        print(f'had_ss_shown={had_ss_shown}')
+        LOGGER.debug('had_ss_shown=%s', had_ss_shown)
 
         # tot_ss_fape, _ = calc_str_loss(pred, true, ss_mask_2d.to(device=pred.device), same_chain, negative=negative, fape_scale_vec=None,
         #                                      A=norm_fape/2, d_clamp=None if unclamp else clamp_fape/2, gamma=1.0)
@@ -1191,7 +1188,7 @@ class Trainer():
 
         loss_execution_time = time.time() - loss_time_start  #AFAV DELETE LATER!!!
 
-        print(f'TIME TO COMPUTE LOSS: {loss_execution_time}')
+        LOGGER.debug('Time to compute loss: %s', loss_execution_time)
 
 
         return tot_loss, loss_dict, loss_weights
@@ -1241,10 +1238,9 @@ class Trainer():
             return 0, best_valid_loss
         if not os.path.exists(chk_fn):
             raise Exception(f'no model found at path: {chk_fn}, pass -zero_weights if you intend to train the model with no initialization and no starting weights')
-        print('*** FOUND MODEL CHECKPOINT ***')
-        print('Located at ',chk_fn)
+        LOGGER.info('Found model checkpoint at %s', chk_fn)
 
-        ic(rank)
+        LOGGER.debug('Loading checkpoint on rank %s', rank)
         if isinstance(rank, str):
             # For CPU debugging
             map_location = {"cuda:%d"%0: "cpu"}
@@ -1307,7 +1303,7 @@ class Trainer():
     #   - if interactive, launch one job for each GPU on node
     def run_model_training(self, world_size):
         if ('MASTER_ADDR' not in os.environ or os.environ['MASTER_ADDR'] == ''):
-            ic('setting master_addr')
+            LOGGER.debug('Setting MASTER_ADDR to localhost')
             os.environ['MASTER_ADDR'] = 'localhost' # multinode requires this set in submit script
         if ('MASTER_PORT' not in os.environ):
             os.environ['MASTER_PORT'] = '%d'%self.port
@@ -1315,12 +1311,12 @@ class Trainer():
         if (not self.interactive and "SLURM_NTASKS" in os.environ and "SLURM_PROCID" in os.environ):
             world_size = int(os.environ["SLURM_NTASKS"])
             rank = int (os.environ["SLURM_PROCID"])
-            print ("Launched from slurm", rank, world_size)
+            LOGGER.info("Launched from slurm rank=%s world_size=%s", rank, world_size)
             self.train_model(rank, world_size)
         else:
-            print ("Launched from interactive")
+            LOGGER.info("Launched from interactive session")
             world_size = torch.cuda.device_count()
-            ic(world_size)
+            LOGGER.debug("Detected %s CUDA devices", world_size)
             if world_size <= 1:
                 self.train_model(0, 1)
             else:
@@ -1332,11 +1328,11 @@ class Trainer():
         # save git diff from most recent commit
         gitdiff_fn = open(f'{self.outdir}/git_diff.txt','w')
         git_diff = subprocess.Popen(["git diff"], cwd = os.getcwd(), shell = True, stdout = gitdiff_fn, stderr = subprocess.PIPE)
-        print('Saved git diff between current state and last commit')
+        LOGGER.info('Saved git diff between current state and last commit')
 
 
         if WANDB and rank == 0:
-            print('initializing wandb')
+            LOGGER.info('Initializing wandb')
             resume = None
             name='_'.join([self.wandb_prefix, self.outdir.replace('./','')])
             id = None
@@ -1359,7 +1355,7 @@ class Trainer():
 
 
             
-            print(f'{wandb.run.id=}')
+            LOGGER.info('wandb run id=%s', wandb.run.id)
 
             all_param = {}
             all_param.update(self.loader_param)
@@ -1370,10 +1366,11 @@ class Trainer():
             # wandb.config.update(all_param)
             wandb.config = all_param
             wandb.save(os.path.join(os.getcwd(), self.outdir, 'git_diff.txt'))
-        ic(os.environ['MASTER_ADDR'], rank, world_size, torch.cuda.device_count())
-        print(f'{rank=} {world_size=} initializing process group')
+        LOGGER.debug('MASTER_ADDR=%s rank=%s world_size=%s cuda_devices=%s',
+                     os.environ['MASTER_ADDR'], rank, world_size, torch.cuda.device_count())
+        LOGGER.info('Initializing process group rank=%s world_size=%s', rank, world_size)
         dist.init_process_group(backend="gloo", world_size=world_size, rank=rank)
-        print(f'{rank=} {world_size=} initialized process group')
+        LOGGER.info('Initialized process group rank=%s world_size=%s', rank, world_size)
         if torch.cuda.device_count():
             gpu = rank % torch.cuda.device_count()
             torch.cuda.set_device("cuda:%d"%gpu)
@@ -1385,8 +1382,8 @@ class Trainer():
 
         dataset_configs, homo = default_dataset_configs(self.loader_param, debug=DEBUG)
         
-        print('Making train sets')
-        ic(self.config_dict)
+        LOGGER.info('Making train sets')
+        LOGGER.debug('Config dict for dataset creation: %s', self.config_dict)
         train_set = DistilledDataset(dataset_configs, 
                                      self.loader_param, self.diffuser, self.seq_diffuser, self.ti_dev, self.ti_flip, self.ang_ref,
                                      self.diffusion_param, self.preprocess_param, self.model_param, self.config_dict, homo)
@@ -1402,8 +1399,7 @@ class Trainer():
                                                    num_example_per_epoch=N_EXAMPLE_PER_EPOCH,
                                                    num_replicas=world_size, rank=rank, replacement=True)
         
-        print('THIS IS LOAD PARAM GOING INTO DataLoader inits')
-        print(LOAD_PARAM)
+        LOGGER.debug('DataLoader parameters: %s', LOAD_PARAM)
 
         train_loader = data.DataLoader(train_set, sampler=train_sampler, batch_size=self.batch_size, collate_fn=no_batch_collate_fn, **LOAD_PARAM)
 
@@ -1430,8 +1426,8 @@ class Trainer():
         #self.model_param['input_seq_onehot'] = True
         
         # define model
-        print('Making model...')
-        ic(self.model_param)
+        LOGGER.info('Making model...')
+        LOGGER.debug('Model parameters: %s', self.model_param)
         # Set to zero in rf_diffusion
         # model_param.pop('d_time_emb')
         # model_param.pop('d_time_emb_proj')
@@ -1490,7 +1486,7 @@ class Trainer():
         for epoch in range(loaded_epoch+1, self.n_epoch+1):
             train_sampler.set_epoch(epoch)
             
-            print('Just before calling train cycle...')
+            LOGGER.debug('Starting train cycle for epoch %s', epoch)
             train_tot, train_loss, train_acc = self.train_cycle(ddp_model, train_loader, optimizer, scheduler, scaler, rank, gpu, world_size, epoch)
             #valid_tot, valid_loss, valid_acc = self.valid_pdb_cycle(ddp_model, valid_pdb_loader, rank, gpu, world_size, epoch)
             #_, _, _ = self.valid_pdb_cycle(ddp_model, valid_homo_loader, rank, gpu, world_size, epoch, header="Homo")
@@ -1505,7 +1501,7 @@ class Trainer():
     def save_model(self, suffix, ddp_model, optimizer, scheduler, scaler):
         #save every epoch     
         model_path = self.checkpoint_fn(self.model_name, str(suffix))
-        print(f'saving model to {model_path}')
+        LOGGER.info('Saving model to %s', model_path)
         torch.save({'epoch': suffix,
                     #'model_state_dict': ddp_model.state_dict(),
                     'model_state_dict': ddp_model.module.shadow.state_dict(),
@@ -1539,11 +1535,11 @@ class Trainer():
         
         if self.log_inputs:
             pickle_dir, self.pickle_counter = pickle_function_call(model, 'forward', 'training', minifier=aa_model.minifier)
-            print(f'pickle_dir: {pickle_dir}')
+            LOGGER.debug('Logging inputs to %s', pickle_dir)
         if self.verbose_checks:
             model.verbose_checks = True
         model = EMA(model, 0.999)
-        print('Instantiating DDP')
+        LOGGER.info('Instantiating DDP wrapper')
         ddp_model = model
         if torch.cuda.device_count():
             ddp_model = DDP(model, device_ids=[device], find_unused_parameters=False, broadcast_buffers=False)
@@ -1562,11 +1558,11 @@ class Trainer():
         scaler = torch.cuda.amp.GradScaler(enabled=USE_AMP)
        
         # load model
-        print('About to load model...')
+        LOGGER.info('About to load model...')
         loaded_epoch, best_valid_loss = self.load_model(ddp_model, optimizer, scheduler, scaler, 
                                                        self.model_name, device, resume_train=False)
 
-        print('Done loading model')
+        LOGGER.info('Done loading model')
 
         return ddp_model, optimizer, scheduler, scaler, loaded_epoch
 
@@ -1576,7 +1572,7 @@ class Trainer():
 
     def train_cycle(self, ddp_model, train_loader, optimizer, scheduler, scaler, rank, gpu, world_size, epoch):
 
-        print('Entering self.train_cycle')
+        LOGGER.debug('Entering train_cycle for epoch %s', epoch)
         # Turn on training mode
         ddp_model.train()
         
@@ -1588,7 +1584,7 @@ class Trainer():
         
         counter = 0
         
-        print('About to enter train loader loop')
+        LOGGER.debug('About to enter train loader loop')
         for loader_out in train_loader:
 
 
@@ -1636,7 +1632,7 @@ class Trainer():
 
                 # Checking whether this example was of poor quality and the dataloader just returned None - NRB
                 if indep.seq.shape[0] == 0:
-                    ic('Train cycle received bad example, skipping')
+                    LOGGER.debug('Train cycle received bad example, skipping')
                     continue
 
                 # Save trues for writing pdbs later.
@@ -1848,7 +1844,11 @@ class Trainer():
                         report_gradient_norms(loss_dict, ddp_model, scaler, optimizer, int(little_t))
 
                     if gpu != 'cpu':
-                        print(f'DEBUG: {rank=} {gpu=} {counter=} size: {indep.xyz.shape[0]} {torch.cuda.max_memory_reserved(gpu) / 1024**3:.2f} GB reserved {torch.cuda.max_memory_allocated(gpu) / 1024**3:.2f} GB allocated {torch.cuda.get_device_properties(gpu).total_memory / 1024**3:.2f} GB total')
+                        LOGGER.debug('GPU stats rank=%s device=%s counter=%s size=%s reserved=%.2fGB allocated=%.2fGB total=%.2fGB',
+                                     rank, gpu, counter, indep.xyz.shape[0],
+                                     torch.cuda.max_memory_reserved(gpu) / 1024**3,
+                                     torch.cuda.max_memory_allocated(gpu) / 1024**3,
+                                     torch.cuda.get_device_properties(gpu).total_memory / 1024**3)
                     if not torch.isnan(loss):
                         if DEBUG:
                             with torch.autograd.set_detect_anomaly(True):
@@ -1856,13 +1856,12 @@ class Trainer():
                                 # try:
                                 #     scaler.scale(loss).backward()
                                 # except:
-                                #     set_trace()
                         else:
                             scaler.scale(loss).backward()
                     else:
                         msg = f'NaN loss encountered, skipping: {context_msg}'
                         if not DEBUG:
-                            print(msg)
+                            LOGGER.warning(msg)
                         else:
                             raise Exception(msg)
 
@@ -1996,7 +1995,7 @@ class Trainer():
 
                     if self.log_inputs:
                         shutil.copy(self.pickle_counter.last_pickle, f'{prefix}_input_pickle.pkl')
-                    print(f'writing training PDBs with prefix: {prefix}')
+                    LOGGER.info('Writing training PDBs with prefix %s', prefix)
 
                 # Expected epoch time logging
                 if rank == 0:
@@ -2005,7 +2004,8 @@ class Trainer():
                     expected_epoch_time = int(self.n_train / mean_rate)
                     m, s = divmod(expected_epoch_time, 60)
                     h, m = divmod(m, 60)
-                    print(f'Expected time per epoch of size ({self.n_train}) (h:m:s) based off {n_processed} measured pseudo batch times: {h:d}:{m:02d}:{s:.0f}')
+                    LOGGER.info('Expected time per epoch of size (%s) based on %s batches: %d:%02d:%02d (h:m:s)',
+                                self.n_train, n_processed, h, m, s)
 
                 if self.saves_per_epoch and rank==0:
                     n_processed_next = self.batch_size*world_size * (counter+1)
@@ -2051,7 +2051,7 @@ def make_trainer(args, model_param, loader_param, loss_param, diffusion_param, p
     global LOAD_PARAM2
     # set epoch size 
     N_EXAMPLE_PER_EPOCH = args.epoch_size 
-    ic(N_EXAMPLE_PER_EPOCH)
+    LOGGER.info('Epoch size set to %s examples', N_EXAMPLE_PER_EPOCH)
 
     # set global debug and wandb params 
     if args.debug:
@@ -2061,8 +2061,7 @@ def make_trainer(args, model_param, loader_param, loss_param, diffusion_param, p
         # loader_param['DATAPKL_AA'] = 'subsampled_all-atom-dataset.pkl'
         os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
         os.environ['TORCH_DISTRIBUTED_DEBUG'] = 'DETAIL'
-        print('set os.environ variables')
-        ic.configureOutput(includeContext=True)
+        LOGGER.debug('Set CUDA_LAUNCH_BLOCKING and TORCH_DISTRIBUTED_DEBUG for debug mode')
     else:
         DEBUG = False 
         WANDB = True 

@@ -9,7 +9,6 @@ import util
 import gzip
 import rf2aa.util
 import rf2aa.parsers
-from pdb import set_trace
 to1letter = {
     "ALA":'A', "ARG":'R', "ASN":'N', "ASP":'D', "CYS":'C',
     "GLN":'Q', "GLU":'E', "GLY":'G', "HIS":'H', "ILE":'I',
