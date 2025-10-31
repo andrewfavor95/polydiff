@@ -86,9 +86,10 @@ Equivalent python environments can be set up using conda, or an environment mana
 All dependencies and packages are specified in the files found in `rf_diffusion/environment` (see `environment.yml` and `SE3nv.spec`) 
 
 ## Testing that everything works (the *DEMO*):
-Change directory to wherever you want to perform design, and run example inference script:
+Change directory to run from within the RFDpoly directory useful for filepath searches if you are not providing an input pdb), and run example inference script.
+Be sure to specify your desired output directory with `$DESIGN_DIR`.
 ```Bash
-cd $DESIGN_DIR
+cd $DESIGN_DIR/
 
 $APPTAINER_PATH $RFDPOLY_DIR/polydiff/rf_diffusion/run_inference.py --config-name=multi_polymer \
 diffuser.T=50 \
@@ -101,7 +102,26 @@ inference.output_prefix=$DESIGN_DIR/test_outputs/basic_uncond_test01
 The initial run will take a little while to precompute the IGSO3 cache, but subsequent runs will be more direct and quick.
 
 
-If the example command above works, proceed to exploration of the full [design tutorial](https://github.com/andrewfavor95/polydiff/blob/main/RFDpoly_tutorial.pdf).
+if that throws errors, then try:
+```
+$APPTAINER_PATH $RFDPOLY_DIR/polydiff/rf_diffusion/run_inference.py --config-name=multi_polymer \
+diffuser.T=50 \
+inference.input_pdb=$RFDPOLY_DIR/polydiff/rf_diffusion/test_data/DBP035.pdb \
+inference.num_designs=3 \
+contigmap.contigs=[\'33\ 33\ 75\'] \
+contigmap.polymer_chains=[\'dna\',\'rna\',\'protein\'] \
+inference.output_prefix=$DESIGN_DIR/test_outputs/basic_uncond_test01
+
+
+```
+explanation: model initialization searches for an input pdb filepath, even if you aren't performing motif scaffolding. Providing a (real) dummy filepath will fix this is the default search paths are unsuccessful.
+
+**Expected output:** a three chain .pdb file, containing a complex of DNA (chain A), RNA (chain B), and protein (chain C).
+
+
+## If the example (demo) command above works, proceed to exploration of the full [design tutorial](https://github.com/andrewfavor95/polydiff/blob/main/RFDpoly_tutorial.pdf).
+The full design tutorial contains many inference commands for the types of designs reported in the RFDpoly paper.
+The design tutorial also is intented to provide documentation, and explain arguments in the context of their use-cases.
 
 
 
@@ -123,12 +143,16 @@ If the example command above works, proceed to exploration of the full [design t
   - Minimum: 16 GB RAM and 40 GB free disk space for the repository, checkpoints, and cache.
   - Recommended: NVIDIA GPU with ≥ 16 GB VRAM for practical throughput. CPU-only execution is supported but 5–10× slower. No additional specialized hardware is required.
 
-## Times to install provided files and run inference (tested on Linux):
+## Times to install provided files and run inference (tested on Linux operating system, Ubuntu 24.04.2):
 - Downloading apptainer .sif file:
   - Total: 1 minute, 15 seconds
 - Downloading model weight .ckpt file:
   - Total: 7 seconds
+- Cloning the repository:
+  - Total: 52 seconds
 - Demo inference run:
-  - first run, including generation of IGSO3 cache: Total: 2 minutes, 13 seconds
-  - subsequent runs (per trajectory): 
+  - first run, including generation of IGSO3 cache: Total: 2 minutes, 26 seconds
+  - subsequent runs (per trajectory): 50 seconds.
 
+## Testing:
+- This software has only been tested on Linux (Ubuntu 24.04.3 LTS).
