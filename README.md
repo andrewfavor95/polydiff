@@ -93,6 +93,7 @@ cd $DESIGN_DIR/
 
 $APPTAINER_PATH $RFDPOLY_DIR/polydiff/rf_diffusion/run_inference.py --config-name=multi_polymer \
 diffuser.T=50 \
+inference.ckpt_path=$MODEL_WEIGHTS_PATH \
 inference.num_designs=1 \
 contigmap.contigs=[\'33\ 33\ 75\'] \
 contigmap.polymer_chains=[\'dna\',\'rna\',\'protein\'] \
@@ -106,6 +107,7 @@ if that throws errors, then try:
 ```
 $APPTAINER_PATH $RFDPOLY_DIR/polydiff/rf_diffusion/run_inference.py --config-name=multi_polymer \
 diffuser.T=50 \
+inference.ckpt_path=$MODEL_WEIGHTS_PATH \
 inference.input_pdb=$RFDPOLY_DIR/polydiff/rf_diffusion/test_data/DBP035.pdb \
 inference.num_designs=3 \
 contigmap.contigs=[\'33\ 33\ 75\'] \
@@ -117,7 +119,7 @@ inference.output_prefix=$DESIGN_DIR/test_outputs/basic_uncond_test01
 explanation: model initialization searches for an input pdb filepath, even if you aren't performing motif scaffolding. Providing a (real) dummy filepath will fix this is the default search paths are unsuccessful.
 
 **Expected output:** a three chain .pdb file, containing a complex of DNA (chain A), RNA (chain B), and protein (chain C).
-
+**NOTE:** using the `--config-name=multi_polymer` specification is the best way to ensure that all settings work together as expected, and are consistent with the behavior reported in the manuscript.
 
 ## If the example (demo) command above works, proceed to exploration of the full [design tutorial](https://github.com/andrewfavor95/polydiff/blob/main/RFDpoly_tutorial.pdf).
 The full design tutorial contains many inference commands for the types of designs reported in the RFDpoly paper.
