@@ -22,7 +22,7 @@ To download model weights:
 This software runs using apptainers. To download the associated apptainer `.sif` file, [click here](https://files.ipd.uw.edu/pub/2025_RFDpoly/SE3nv.sif)
 Equivalent setup instructions for conda are in progress.
 
-Once you have these files, you can follow the [design tutorial](https://github.com/andrewfavor95/polydiff/blob/main/RFDpoly_tutorial.pdf) to see various design tasks and the associated documentation/syntax.
+Once you have these files, you can follow the [design tutorial](https://github.com/RosettaCommons/RFDpoly/blob/main/RFDpoly_tutorial.pdf) to see various design tasks and the associated documentation/syntax.
 
 Contact afavor@uw.edu if you have trouble accessing files or hit any bugs.
 
@@ -53,7 +53,7 @@ mkdir -p $DESIGN_DIR
 2. Navigate to the directory where you want to set up the repo, and clone it:
 ```Bash
 cd $RFDPOLY_DIR
-git clone git@github.com:andrewfavor95/polydiff.git
+git clone git@github.com:RosettaCommons/RFDpoly.git
 
 ```
 
@@ -91,7 +91,7 @@ Be sure to specify your desired output directory with `$DESIGN_DIR`.
 ```Bash
 cd $DESIGN_DIR/
 
-$APPTAINER_PATH $RFDPOLY_DIR/polydiff/rf_diffusion/run_inference.py --config-name=multi_polymer \
+$APPTAINER_PATH $RFDPOLY_DIR/RFDpoly/rf_diffusion/run_inference.py --config-name=multi_polymer \
 diffuser.T=50 \
 inference.ckpt_path=$MODEL_WEIGHTS_PATH \
 inference.num_designs=1 \
@@ -105,10 +105,10 @@ The initial run will take a little while to precompute the IGSO3 cache, but subs
 
 if that throws errors, then try:
 ```
-$APPTAINER_PATH $RFDPOLY_DIR/polydiff/rf_diffusion/run_inference.py --config-name=multi_polymer \
+$APPTAINER_PATH $RFDPOLY_DIR/RFDpoly/rf_diffusion/run_inference.py --config-name=multi_polymer \
 diffuser.T=50 \
 inference.ckpt_path=$MODEL_WEIGHTS_PATH \
-inference.input_pdb=$RFDPOLY_DIR/polydiff/rf_diffusion/test_data/DBP035.pdb \
+inference.input_pdb=$RFDPOLY_DIR/RFDpoly/rf_diffusion/test_data/DBP035.pdb \
 inference.num_designs=3 \
 contigmap.contigs=[\'33\ 33\ 75\'] \
 contigmap.polymer_chains=[\'dna\',\'rna\',\'protein\'] \
@@ -121,7 +121,7 @@ explanation: model initialization searches for an input pdb filepath, even if yo
 **Expected output:** a three chain .pdb file, containing a complex of DNA (chain A), RNA (chain B), and protein (chain C).
 **NOTE:** using the `--config-name=multi_polymer` specification is the best way to ensure that all settings work together as expected, and are consistent with the behavior reported in the manuscript.
 
-## If the example (demo) command above works, proceed to exploration of the full [design tutorial](https://github.com/andrewfavor95/polydiff/blob/main/RFDpoly_tutorial.pdf).
+## If the example (demo) command above works, proceed to exploration of the full [design tutorial](https://github.com/RosettaCommons/RFDpoly/blob/main/RFDpoly_tutorial.pdf).
 The full design tutorial contains many inference commands for the types of designs reported in the RFDpoly paper.
 The design tutorial also is intented to provide documentation, and explain arguments in the context of their use-cases.
 
