@@ -1,4 +1,4 @@
-name: base
+name: RFDpoly_env
 channels:
   - pytorch
   - https://conda.rosettacommons.org
