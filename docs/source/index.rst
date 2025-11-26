@@ -6,12 +6,15 @@
 RFDpoly documentation
 =====================
 
-Add your content using ``reStructuredText`` syntax. See the
-`reStructuredText <https://www.sphinx-doc.org/en/master/usage/restructuredtext/index.html>`_
-documentation for details.
+.. include:: readme_link.rst
 
 
 .. toctree::
-   :maxdepth: 2
+   :titlesonly:
    :caption: Contents:
+
+   readme_link.rst<self>
+   license_link.rst
+   contributing_link.rst
+   installation_guide.md
 

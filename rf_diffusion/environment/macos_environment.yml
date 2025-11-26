@@ -1,0 +1,21 @@
+name: RFDpoly_env
+channels:
+  - pytorch
+  - conda-forge
+  - defaults
+  - https://pose:foldtree@conda.rosettacommons.org/
+dependencies:
+  - python=3.10
+  - biopython
+  - matplotlib  
+  - pytorch=1.13.1
+  - torchaudio
+  - torchvision
+  - pyrosetta=2023.09+release.4388618
+  - hydra-core=1.3.2
+  - omegaconf
+  - pip
+  - pip:
+    - dgl==1.0.1
+    - e3nn==0.5.1
+    - hydra-core==1.3.2

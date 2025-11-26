@@ -32,7 +32,7 @@ html_static_path = ['_static']
 
 html_theme_options = {
     "sidebar_hide_name":False,
-    "announcement": "<em>THIS DOCUMENTATION IS CURRENTLY UNDER CONSTRUCTION</em>",
+    #"announcement": "<em>THIS DOCUMENTATION IS CURRENTLY UNDER CONSTRUCTION</em>",
     "light_css_variables": {
         "color-brand-primary": "#F68A33", # Rosetta Teal
         "color-brand-content": "#37939B", # Rosetta Orange

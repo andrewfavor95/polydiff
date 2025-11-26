@@ -12,15 +12,22 @@ This repository contains the code for the [associated preprint](https://www.bior
   publisher={Cold Spring Harbor Laboratory}
 }
 ```
+## Documentation
+More information and documentation can be found [here](https://rosettacommons.github.io/RFDpoly/).
 
 ## Installation and setup
 
-0. Clone the repository 
+### 1. Clone the repository 
 ```bash
 git clone git@github.com:RosettaCommons/RFDpoly.git
 ```
 
-1. Set environment variables and create directories 
+### 2. Set environment variables and create directories 
+
+*This section is not necessary for running RFDpoly,
+but te example commands below use these environment
+variables.*
+
 
 Set relevant paths for installation and then create the directories the paths point to:
 
@@ -38,7 +45,7 @@ mkdir -p $WEIGHTS_DIR
 mkdir -p $ENV_DIR
 ```
 
-3. Navigate to the directory where you want to save model weights, download them, and set path variable for weights of your choice:
+### 3. Navigate to the directory where you want to save model weights, download them, and set path variable for weights of your choice:
 ```Bash
 # Download model weights:
 cd $WEIGHTS_DIR
@@ -52,7 +59,7 @@ curl -O https://files.ipd.uw.edu/pub/2025_RFDpoly/train_session2024-07-08_172045
 export RFDPOLY_CKPT_PATH=\$WEIGHTS_DIR/train_session2024-07-08_1720455712_BFF_3.00.pt
 ```
 
-4. Setting up the environment:
+### 4. Setting up the environment:
 Navigate to the directory where you want to [Apptainer](https://apptainer.org/) file, download it, and set path variable:
 ```Bash
 cd $ENV_DIR
@@ -61,10 +68,8 @@ APPTAINER_PATH=$ENV_DIR/SE3nv.sif
 ```
 Downloading the `.sif` file may take several minutes. 
 
-<!--Equivalent python environments can be set up using [conda](https://docs.conda.io/projects/conda/en/latest/user-guide/tasks/manage-environments.html), or an environment manager of your choice. Environment files are provided in `rf_diffusion/environment` and can be used as follows:
-```bash
-apptainer build SE3nv.sif SE
-```-->
+You can find alternative installation instructions in the
+[external documentation](https://rosettacommons.github.io/RFDpoly/).
 
 ## Basic Use Case Example: Testing Your Setup
 
@@ -125,10 +130,8 @@ Contact **afavor@uw.edu** if you have trouble accessing files or hit any bugs.
   - Primary workflow: Linux host with [Apptainer](https://apptainer.org/) ≥ 1.1 (or Singularity equivalent). The bundled container image runs Ubuntu 22.04.2 LTS.
   - Alternative workflow: macOS 13+/Windows 11 via Conda (CPU only unless you install CUDA-capable PyTorch wheels).
 - **Software dependencies**
-  - Apptainer runtime to execute `SE3nv.sif`, this can be built from `SE3nv.spec` in `rf_diffusion/environment`
   - For native/Conda installs: Python 3.10, PyTorch 1.13.1, CUDA 11.7 toolchain (if using an NVIDIA GPU), PyRosetta 2023.09+, DGL 1.0.1, e3nn 0.5.1, hydra-core 1.3.2, and the packages listed in `rf_diffusion/environment/environment.yml`.
   - **NOTE:** All dependencies are specified in `rf_diffusion/environment/`, such that users can set up an equivalent working environment on any operating system.
-  - Downloaded assets: model checkpoints (`*.pt`, ~2.3 GB each) and the container image (`SE3nv.sif`, ~8 GB).
 - **Tested configurations**
   - Ubuntu 22.04 host with Apptainer 1.1.9, NVIDIA driver ≥ 515, CUDA 11.7 runtime.
   - PyTorch 1.13.1+cu117, Python 3.10.8, PyRosetta 2023.09 inside the container.

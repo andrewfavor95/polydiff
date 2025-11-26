@@ -27,6 +27,8 @@ When contributing to the code base, please adhere to the [PEP8 style guide](http
 Please write tests for any contributed code or append to 
 existing tests.
 
+Existing tests can be found in `rf_diffusion/test_inference_commands.py`
+
 ### Approving and Merging Pull Requests
 Currently only the original developers and the Devel Team 
 at Rosetta Commons can approve and merge pull requests. PRs
