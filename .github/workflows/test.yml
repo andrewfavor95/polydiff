@@ -2,9 +2,9 @@ name: Run Tests
 
 on: 
     push:
-        branches: ["main", "github-ci"]
+        branches: ["main"]
     pull_request:
-        branches: [ "main", "github-ci" ]
+        branches: ["main"]
 
 jobs:
   test:
