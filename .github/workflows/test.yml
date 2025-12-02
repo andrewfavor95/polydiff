@@ -17,7 +17,7 @@ jobs:
       - name: Set up micromamba
         uses: mamba-org/setup-micromamba@v2
         with:
-          environment-file: rf_diffusion/environment/macos_environment.yml
+          environment-file: rf_diffusion/environment/ci_environment.yml
           init-shell: bash
           cache-environment: true
 

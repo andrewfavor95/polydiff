@@ -1,4 +1,4 @@
-name: RFDpoly_env
+name: RFDpoly_env_macos
 channels:
   - pytorch
   - conda-forge
