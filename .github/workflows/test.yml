@@ -1,0 +1,37 @@
+name: Run Tests
+
+on: 
+    push:
+        branches: ["main"]
+    pull_request:
+        branches: ["main"]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Set up micromamba 
+      - name: Set up micromamba
+        uses: mamba-org/setup-micromamba@v2
+        with:
+          environment-file: rf_diffusion/environment/ci_environment.yml
+          init-shell: bash
+          cache-environment: true
+
+      - name: Install pytest
+        shell: micromamba-shell {0}
+        run: |
+          python -m pip install pytest
+
+      - name: Download weights
+        run: |
+          mkdir weights
+          curl -o weights/train_session2024-07-08_1720455712_BFF_3.00.pt https://files.ipd.uw.edu/pub/2025_RFDpoly/train_session2024-07-08_1720455712_BFF_3.00.pt
+
+      - name: Run tests
+        shell: micromamba-shell {0}
+        run: |
+          python -m pytest test/test_demo.py
