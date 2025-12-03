@@ -28,7 +28,8 @@ jobs:
 
       - name: Download weights
         run: |
-          curl -O https://files.ipd.uw.edu/pub/2025_RFDpoly/train_session2024-07-08_1720455712_BFF_3.00.pt
+          mkdir weights
+          curl -o weights/train_session2024-07-08_1720455712_BFF_3.00.pt https://files.ipd.uw.edu/pub/2025_RFDpoly/train_session2024-07-08_1720455712_BFF_3.00.pt
 
       - name: Run tests
         shell: micromamba-shell {0}
