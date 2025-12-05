@@ -13,7 +13,8 @@ inference:
   two_template: True
   three_template: True
   cautious: True
-  input_pdb: test_data/DBP035.pdb
+  # input_pdb: test_data/DBP035.pdb
+  input_pdb: rf_diffusion/test_data/DBP035.pdb
   ij_visible: null
   motif_only_2d: True
   chainbreak_chunks: True
