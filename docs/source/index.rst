@@ -17,4 +17,5 @@ RFDpoly documentation
    license_link.rst
    contributing_link.rst
    installation_guide.md
+   rfdpoly_usage_examples.md
 
